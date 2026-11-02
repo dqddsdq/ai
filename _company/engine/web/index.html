@@ -104,6 +104,15 @@ button { cursor: pointer; }
 .md blockquote { border-left: 3px solid var(--line-strong); margin: .6em 0; padding: 0 0 0 12px; color: var(--muted); }
 .cursor::after { content: "●"; color: var(--accent); animation: blink 1s infinite; margin-left: 2px; font-size: .8em; }
 @keyframes blink { 50% { opacity: .2; } }
+.tool-card { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
+.tool-card pre.result { margin: 6px 0 10px; }
+.sim-title { font-family: var(--serif); font-weight: 600; font-size: 15.5px; }
+.sim-vars summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.sim-vars { margin-bottom: 12px; }
+.tool-log { font: 12.5px/1.6 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; }
+.tool-foot { font-size: 12px; color: var(--faint); margin-top: 10px; }
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .err { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .msg-actions { margin-top: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .msg.ai:hover .msg-actions { opacity: 1; }
@@ -240,7 +249,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div class="log" id="sim-log" hidden></div>
       </div>
       <div id="sim-out" hidden class="card">
-        <pre class="result" id="sim-result"></pre>
+        <div id="sim-result"></div>
         <div class="md" id="sim-explain" style="margin-top:14px"></div>
         <div class="muted" id="sim-report" style="margin-top:10px"></div>
       </div>
@@ -261,8 +270,9 @@ function inline(t) {
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
+const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN):[^\]]*\]\]/g;
 function md(text) {
-  const lines = esc(text || "").split("\n"); const out = []; let i = 0;
+  const lines = esc((text || "").replace(ACTION_TAG, "").trimEnd()).split("\n"); const out = []; let i = 0;
   const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
   const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
   while (i < lines.length) {
@@ -349,7 +359,7 @@ async function init() {
   as.value = store.get("agent", "auto"); if (!as.value) as.value = "auto";
   $("#model-select").value = store.get("model", "");
   as.onchange = () => store.set("agent", as.value); $("#model-select").onchange = () => store.set("model", $("#model-select").value);
-  const ideas = ["이번 주 유튜브 쇼츠 아이디어 5개", "월 1000만원 가려면 지금 뭐부터 해야 해?", "어도비 스톡 공부 노트 요약해줘", "홈페이지 제작 외주 가격 정하는 법"];
+  const ideas = ["블로그로 1년 안에 월 300만원 가능할까?", "이번 주 유튜브 쇼츠 아이디어 5개", "월 1000만원 가려면 지금 뭐부터 해야 해?", "홈페이지 제작 외주 가격 정하는 법"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
   newChat(); loadConvs(); show("chat");
@@ -378,7 +388,17 @@ function enterThread() {
 async function openConv(id) {
   const c = await api("/api/conversations/" + id); if (c.error) return;
   state.conv = c; show("chat"); enterThread(); $("#messages").innerHTML = "";
-  for (const m of c.messages) m.role === "user" ? addUser(m.content) : addAI(m).body.innerHTML = md(m.content);
+  for (const m of c.messages) {
+    if (m.role === "user") addUser(m.content);
+    else if (m.kind === "tool") {
+      const t = addTool({ label: m.agent, arg: (m.tool || "").split(": ").slice(1).join(": ") }); t.log.hidden = true;
+      const code = m.content.match(/^```\n([\s\S]*?)\n```\n*/);
+      if (code) { t.pre.hidden = false; t.pre.innerHTML = simHTML(code[1]); t.out.innerHTML = md(m.content.slice(code[0].length)); }
+      else t.out.innerHTML = md(m.content);
+      t.foot.textContent = m.footer ? "📝 " + m.footer : "";
+    }
+    else addAI(m).body.innerHTML = md(m.content);
+  }
   $("#top-title").textContent = c.title; scrollDown(true); loadConvs();
 }
 
@@ -400,8 +420,25 @@ function addAI(info = {}) {
     if (agent) who.title = agent.summary;
   };
   setWho(info);
-  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText(el.dataset.raw || body.innerText); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
+  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
   return { el, body, setWho };
+}
+// 시뮬 결과: 확률·범위를 먼저, 가정(변수 목록)은 접어두기
+function simHTML(text) {
+  const lines = text.split("\n");
+  const head = lines.find(l => l.startsWith("📐") || l.startsWith("📈")) || "";
+  const vars = lines.filter(l => /^\s+· /.test(l));
+  const rest = lines.filter(l => l !== head && !/^\s+· /.test(l)).join("\n").trim();
+  const title = head.replace(/^📐\s*/, "").split("  —  ")[0];
+  return `<div class="sim-title">${esc(title || head)}</div><pre class="result">${esc(rest)}</pre>`
+    + (vars.length ? `<details class="sim-vars"><summary>가정 ${vars.length}개 보기</summary><pre class="result">${esc((head.split("  —  ")[1] || "") + "\n" + vars.map(v => v.trim()).join("\n"))}</pre></details>` : "");
+}
+function addTool(info) {
+  const el = document.createElement("div"); el.className = "msg ai";
+  el.innerHTML = `<div class="who"><span class="agent">${esc(info.label)}</span>${info.arg ? `<span class="tag">${esc(info.arg)}</span>` : ""}</div>
+    <div class="tool-card"><div class="tool-log"></div><div class="sim" hidden></div><div class="md"></div><div class="tool-foot"></div></div>`;
+  $("#messages").appendChild(el);
+  return { el, log: el.querySelector(".tool-log"), pre: el.querySelector(".sim"), out: el.querySelector(".md"), foot: el.querySelector(".tool-foot") };
 }
 function scrollDown(force) {
   const s = $("#chat-scroll"); if (force || s.scrollHeight - s.scrollTop - s.clientHeight < 160) s.scrollTop = s.scrollHeight;
@@ -422,7 +459,7 @@ async function send() {
   input.value = ""; autosize(); enterThread(); addUser(text);
   const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
   ai.body.classList.add("cursor"); scrollDown(true);
-  let raw = ""; setBusy(true); state.controller = new AbortController();
+  let raw = "", tool = null; setBusy(true); state.controller = new AbortController();
   try {
     await stream("/api/chat", {
       conversation_id: state.conv?.id, message: text, agent: $("#agent-select").value,
@@ -431,13 +468,24 @@ async function send() {
       meta: (m) => { state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
       delta: (d) => { raw += d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = md(raw); scrollDown(); },
       error: (e) => { ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ ${esc(e.message)}</div>`); },
+      tool_start: (d) => { ai.body.classList.remove("cursor"); ai.body.innerHTML = md(raw); tool = addTool(d); tool.log.innerHTML = `<span class="spin">◌</span> 실행 준비 중...\n`; tool.raw = ""; scrollDown(true); },
+      tool_log: (d) => { tool.log.textContent = tool.log.textContent.replace("◌ 실행 준비 중...\n", "") + d.text + "\n"; scrollDown(); },
+      tool_result: (d) => {
+        tool.log.hidden = true;
+        if (d.text) { tool.pre.hidden = false; tool.pre.innerHTML = simHTML(d.text); tool.out.classList.add("cursor"); }
+        if (d.markdown) tool.out.innerHTML = md(d.markdown);
+        scrollDown();
+      },
+      tool_delta: (d) => { tool.raw += d.text; tool.out.innerHTML = md(tool.raw); scrollDown(); },
+      tool_done: (d) => { tool.out.classList.remove("cursor"); tool.foot.textContent = d.footer || ""; scrollDown(); },
+      tool_error: (e) => { tool.log.hidden = false; tool.out.classList.remove("cursor"); tool.log.textContent += "⚠️ " + e.message + "\n"; },
       done: () => {},
     }, state.controller.signal);
   } catch (e) {
     if (e.name !== "AbortError") ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ 연결 오류: ${esc(e.message)}</div>`);
     else ai.body.insertAdjacentHTML("beforeend", `<div class="muted">(중지됨)</div>`);
   } finally {
-    ai.body.classList.remove("cursor"); setBusy(false); loadConvs(); input.focus();
+    ai.body.classList.remove("cursor"); tool?.out.classList.remove("cursor"); setBusy(false); loadConvs(); input.focus();
   }
 }
 
@@ -488,7 +536,7 @@ $("#sim-btn").onclick = async () => {
   try {
     await stream("/api/simulate", body, {
       log: (d) => { log.textContent += d.text + "\n"; },
-      result: (d) => { $("#sim-out").hidden = false; $("#sim-result").textContent = d.text; $("#sim-explain").innerHTML = ""; $("#sim-explain").classList.add("cursor"); $("#sim-report").textContent = ""; },
+      result: (d) => { $("#sim-out").hidden = false; $("#sim-result").innerHTML = simHTML(d.text); $("#sim-explain").innerHTML = ""; $("#sim-explain").classList.add("cursor"); $("#sim-report").textContent = ""; },
       delta: (d) => { raw += d.text; $("#sim-explain").innerHTML = md(raw); },
       error: (e) => { log.textContent += "⚠️ " + e.message + "\n"; },
       done: (d) => { $("#sim-report").textContent = d.report ? "📝 보고서 저장: " + d.report : ""; log.hidden = true; },

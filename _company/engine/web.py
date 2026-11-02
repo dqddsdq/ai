@@ -40,6 +40,72 @@ MODEL_CHOICES = [
 ]
 
 
+# ── 채팅 중 자동 실행 (시뮬레이션 / 공부) ─────────────────────────────────
+ACTION_GUIDE = """[자동 실행 기능]
+답변 맨 마지막 줄에 아래 태그 중 하나를 쓰면, 시스템이 실제로 실행하고 결과를 이 대화에 바로 붙여줍니다.
+- [[SIMULATE: 목표 한 문장]] — 사용자가 "~할 수 있을까?", "가능해?", 달성 확률·기간·예상 수익을 물을 때.
+  예: [[SIMULATE: 애드센스 블로그로 2년 안에 월 순수익 1000만원]]
+- [[STOCK: 티커 | 년수 | 목표수익률%]] — 특정 주식/ETF 의 목표 수익률 달성 확률을 물을 때 (한국 주식은 005930.KS 형식).
+  예: [[STOCK: 005930.KS | 1 | 20]]
+- [[LEARN: 주제]] — 참고자료에 없는 최신 정보나 사실 조사가 꼭 필요할 때 (웹을 직접 검색해 노트로 저장).
+규칙: 한 답변에 태그는 최대 1개. 태그를 쓸 때는 본문을 2~4줄로 짧게 — 무엇을 왜 돌리는지만 말하고, 숫자 예측은 결과에 맡기세요.
+필요 없으면 태그를 쓰지 마세요. 사용자가 그냥 대화나 글쓰기를 원하면 평소처럼 답하세요."""
+
+ACTION_RE = re.compile(r"\[\[(SIMULATE|STOCK|LEARN):\s*(.+?)\]\]", re.S)
+
+
+def find_action(reply: str) -> tuple[str, str] | None:
+    m = ACTION_RE.search(reply)
+    return (m.group(1), m.group(2).strip()) if m else None
+
+
+def chat_history(conv: dict) -> list[dict]:
+    """저장된 메시지 → 모델용 history. 연속된 assistant 메시지는 하나로 합칩니다."""
+    out: list[dict] = []
+    for m in conv["messages"]:
+        content = m["content"]
+        if m.get("kind") == "tool":
+            content = f"[자동 실행 결과: {m.get('tool', '')}]\n{content}"
+        if out and out[-1]["role"] == m["role"]:
+            out[-1]["content"] += "\n\n" + content
+        else:
+            out.append({"role": m["role"], "content": content})
+    return out
+
+
+def run_simulation(goal: str, stock: dict | None, spec, log, on_text) -> dict:
+    """시뮬레이션 공통 실행 — 채팅과 시뮬레이션 화면이 함께 씁니다."""
+    from . import simulate as sm
+
+    model, buf = None, io.StringIO()
+    if stock:
+        ticker, years, target = stock["ticker"], float(stock.get("years") or 1), float(stock.get("target") or 10)
+        log(f"📈 {ticker} 가격 데이터 불러오는 중...")
+        result = sm.run_stock(sm.load_prices(ticker, None), years, target)
+        goal = goal or f"{ticker} {years:g}년 +{target:g}%"
+        with contextlib.redirect_stdout(buf):
+            sm.print_stock_result(ticker, result)
+    else:
+        log(f"🧠 시나리오 설계 중... ({spec})")
+        model = sm.build_model(goal, spec)
+        log("🎲 1만 번 시뮬레이션 중...")
+        result = sm.run_model(model)
+        with contextlib.redirect_stdout(buf):
+            sm.print_model_result(model, result)
+    text = buf.getvalue().strip()
+    explanation = sm.explain(spec, goal, model, result, on_text=on_text(text))
+    path = sm.save_report(goal, model, result, explanation)
+    if model:
+        path.with_suffix(".json").write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"text": text, "explanation": explanation, "report": str(path.relative_to(ag.COMPANY_DIR)),
+            "result": result, "model": model}
+
+
+def parse_stock_arg(arg: str) -> dict:
+    parts = [x.strip().rstrip("%") for x in arg.split("|")]
+    return {"ticker": parts[0], "years": parts[1] if len(parts) > 1 else 1, "target": parts[2] if len(parts) > 2 else 10}
+
+
 # ── 대화 저장 ─────────────────────────────────────────────────────────────
 def conv_dir(cid: str) -> Path:
     if not ID_RE.match(cid):
@@ -222,10 +288,14 @@ class Handler(BaseHTTPRequestHandler):
         conv["agent"] = agent_id
 
         spec = pv.parse_model(override or ag.Agent(agent_id).model_spec())
-        history = [{"role": m["role"], "content": m["content"]} for m in conv["messages"]
-                   if m.get("kind") in (None, "chat")]
-        history.append({"role": "user", "content": text})
+        history = chat_history(conv)
+        if history and history[-1]["role"] == "user":
+            history[-1]["content"] += "\n\n" + text
+        else:
+            history.append({"role": "user", "content": text})
         system = ag.Agent(agent_id).system_prompt()
+        if body.get("actions", True):
+            system += "\n\n" + ACTION_GUIDE
         refs = kn.context_for(text) if body.get("knowledge", True) else ""
         sources = sorted({h.source for _, h in kn.search(text)}) if refs else []
         if refs:
@@ -240,7 +310,42 @@ class Handler(BaseHTTPRequestHandler):
         conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id,
                                  "model": str(spec), "sources": sources})
         save_conv(conv)
+        action = find_action(reply) if body.get("actions", True) else None
+        if action:
+            self._run_action(conv, *action, override)
         self._send("done", {"conversation_id": conv["id"]})
+
+    def _run_action(self, conv: dict, kind: str, arg: str, override: str | None):
+        label = {"SIMULATE": "🎲 시뮬레이션", "STOCK": "📈 주식 시뮬레이션", "LEARN": "📖 공부"}[kind]
+        self._send("tool_start", {"kind": kind, "label": label, "arg": arg})
+        log = lambda t: self._send("tool_log", {"text": t})  # noqa: E731
+        try:
+            if kind == "LEARN":
+                spec = pv.parse_model(override or ag.Agent("researcher").model_spec())
+                path = ln.learn(arg, spec, log=log)
+                note = re.sub(r"^---.*?---\n", "", path.read_text(encoding="utf-8"), flags=re.S).strip()
+                content = note
+                footer = f"10_Wiki/{path.relative_to(ln.WIKI_DIR)}"
+                self._send("tool_result", {"markdown": note})
+                self._send("tool_done", {"footer": f"📝 노트 저장: {footer}"})
+            else:
+                spec = pv.parse_model(override or ag.Agent("business").model_spec())
+                stock = parse_stock_arg(arg) if kind == "STOCK" else None
+
+                def on_text(result_text):
+                    self._send("tool_result", {"text": result_text})
+                    return lambda t: self._send("tool_delta", {"text": t})
+
+                out = run_simulation("" if stock else arg, stock, spec, log, on_text)
+                content = f"```\n{out['text']}\n```\n\n{out['explanation']}"
+                footer = out["report"]
+                self._send("tool_done", {"footer": f"📝 보고서: {footer}"})
+        except Exception as e:  # 시뮬/공부 실패해도 대화는 유지
+            self._send("tool_error", {"message": str(e)})
+            content, footer = f"실행 실패: {e}", ""
+        conv["messages"].append({"role": "assistant", "kind": "tool", "tool": f"{label}: {arg}",
+                                 "content": content, "agent": label, "footer": footer})
+        save_conv(conv)
 
     # 공부
     def _learn(self, body: dict):
@@ -258,36 +363,20 @@ class Handler(BaseHTTPRequestHandler):
 
     # 시뮬레이션
     def _simulate(self, body: dict):
-        from . import simulate as sm
-
         goal = (body.get("goal") or "").strip()
         spec = pv.parse_model(body.get("model") or ag.Agent("business").model_spec())
-        model = None
-        buf = io.StringIO()
+        stock = None
         if body.get("stock"):
-            ticker, target = body["stock"].strip(), float(body.get("target") or 10)
-            years = float(body.get("years") or 1)
-            self._send("log", {"text": f"📈 {ticker} 가격 데이터 불러오는 중..."})
-            result = sm.run_stock(sm.load_prices(ticker, None), years, target)
-            goal = goal or f"{ticker} {years:g}년 +{target:g}%"
-            with contextlib.redirect_stdout(buf):
-                sm.print_stock_result(ticker, result)
-        else:
-            if not goal:
-                return self._send("error", {"message": "목표를 적어 주세요"})
-            self._send("log", {"text": f"🧠 시나리오 설계 중... ({spec})"})
-            model = sm.build_model(goal, spec)
-            self._send("log", {"text": "🎲 1만 번 시뮬레이션 중..."})
-            result = sm.run_model(model)
-            with contextlib.redirect_stdout(buf):
-                sm.print_model_result(model, result)
-        self._send("result", {"text": buf.getvalue().strip(), "result": result, "model": model})
-        explanation = sm.explain(spec, goal, model, result,
-                                 on_text=lambda t: self._send("delta", {"text": t}))
-        path = sm.save_report(goal, model, result, explanation)
-        if model:
-            path.with_suffix(".json").write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._send("done", {"report": str(path.relative_to(ag.COMPANY_DIR))})
+            stock = {"ticker": body["stock"].strip(), "years": body.get("years"), "target": body.get("target")}
+        elif not goal:
+            return self._send("error", {"message": "목표를 적어 주세요"})
+
+        def on_text(result_text):
+            self._send("result", {"text": result_text})
+            return lambda t: self._send("delta", {"text": t})
+
+        out = run_simulation(goal, stock, spec, lambda t: self._send("log", {"text": t}), on_text)
+        self._send("done", {"report": out["report"]})
 
 
 def _company_name() -> str:
