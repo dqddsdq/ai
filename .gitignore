@@ -7,3 +7,5 @@ node_modules/
 *.log
 .cache/
 Thumbs.db
+__pycache__/
+*.pyc
