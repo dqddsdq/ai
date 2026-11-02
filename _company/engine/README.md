@@ -77,10 +77,15 @@ python -m engine chat --no-knowledge  # 자료 참고 끄기
 1. 평소처럼 `chat` 으로 일하면 `sessions/*/chat.md` 에 기록이 쌓여요. 마음에 안 드는 답변 세션은 지우세요.
 2. 학습 데이터 만들기: `python -m engine export-training` → `training/dataset.jsonl`
 3. 최소 100~200개 대화는 모아야 효과가 있어요.
-4. LoRA 파인튜닝 (PC 사양에 따라):
-   - **NVIDIA 그래픽카드 (VRAM 8GB 이상)**: Unsloth
-   - **Apple Silicon Mac (M1~M4)**: MLX-LM
-5. 학습된 모델을 GGUF로 변환 → `ollama create 내모델 -f Modelfile` → `python -m engine set-model ceo ollama:내모델`
+4. 학습 (NVIDIA 16GB 기준, Windows 는 WSL2 Ubuntu 안에서):
+   ```bash
+   pip install unsloth
+   python -m engine.finetune                         # Gemma 3 12B, QLoRA
+   python -m engine.finetune --base unsloth/gemma-3-4b-it   # 작게·빠르게
+   ```
+5. 끝나면 출력되는 `ollama create my-company -f ...` 실행 → `python -m engine set-model ceo ollama:my-company`
+
+> RTX 4070 Ti SUPER 16GB 추천 실행 모델: 대화 `ollama pull gemma3:12b`, 분석·시뮬레이션 `ollama pull gpt-oss:20b`
 
 ## 🌐 스스로 인터넷 공부하기
 
