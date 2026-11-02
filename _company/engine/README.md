@@ -81,3 +81,25 @@ python -m engine chat --no-knowledge  # 자료 참고 끄기
    - **NVIDIA 그래픽카드 (VRAM 8GB 이상)**: Unsloth
    - **Apple Silicon Mac (M1~M4)**: MLX-LM
 5. 학습된 모델을 GGUF로 변환 → `ollama create 내모델 -f Modelfile` → `python -m engine set-model ceo ollama:내모델`
+
+## 🌐 스스로 인터넷 공부하기
+
+AI가 직접 검색하고, 페이지를 읽고, 정리한 노트를 `10_Wiki/날짜/주제.md` 에 저장합니다.
+저장된 노트는 위의 자료 검색이 자동으로 찾아 쓰기 때문에, 공부할수록 답변이 좋아져요.
+
+```bash
+python -m engine learn "유튜브 쇼츠 수익화"       # 주제 하나 공부
+python -m engine learn --auto --rounds 3           # goals.md 보고 주제를 스스로 3개 골라 공부
+```
+
+- 검색: 기본은 무료 DuckDuckGo, `.env` 에 `BRAVE_API_KEY` 가 있으면 Brave Search (더 안정적)
+- 모델: `researcher` 에이전트의 모델 (`set-model researcher ...` 로 변경)
+
+**매일 자동으로 공부시키기**
+- 맥/리눅스: `crontab -e` 에 `0 9 * * * cd /경로/ai/_company && python -m engine learn --auto --rounds 2`
+- 윈도우: 작업 스케줄러 → 매일 → 프로그램 `python`, 인수 `-m engine learn --auto --rounds 2`, 시작 위치 `_company`
+
+**안전장치**
+- 하는 일은 검색 → 읽기 → `10_Wiki` 에 노트 쓰기 뿐. 코드 실행·게시·전송·삭제 안 함
+- 웹 페이지 안의 "지시문"은 따르지 않도록 막아둠 (프롬프트 인젝션 방지)
+- 모든 노트에 출처 URL 과 `status: 미검토` 표시 → 틀린 정보가 섞일 수 있으니 가끔 확인하고 `검토완료` 로 바꾸세요

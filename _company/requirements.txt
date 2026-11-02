@@ -3,3 +3,4 @@ openai>=3.42
 google-genai>=2.34
 python-dotenv>=1.0
 requests>=2.31
+ddgs>=9.0

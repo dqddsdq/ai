@@ -15,6 +15,7 @@ import sys
 
 from . import agents as ag
 from . import knowledge as kn
+from . import learn as ln
 from . import providers as pv
 from . import training as tr
 
@@ -174,6 +175,26 @@ def cmd_export(args) -> None:
         print("다음 단계: engine/README.md 의 '내 컴퓨터에서 학습시키기' 참고")
 
 
+def cmd_learn(args) -> None:
+    spec = resolve_model("researcher", args.model)
+    if args.auto:
+        topics = ln.pick_topics(spec, args.rounds)
+        if not topics:
+            sys.exit("새로 공부할 주제를 못 정했어요. 주제를 직접 적어 주세요.")
+        print("🧭 공부할 주제: " + " / ".join(topics))
+    elif args.topic:
+        topics = [" ".join(args.topic)]
+    else:
+        sys.exit('주제를 적거나 --auto 를 쓰세요. 예: python -m engine learn "쇼츠 수익화"')
+    for t in topics:
+        print(f"\n📖 공부 시작: {t}  ({spec})")
+        try:
+            path = ln.learn(t, spec, max_pages=args.pages)
+            print(f"✅ 노트 저장: {path.relative_to(ag.COMPANY_DIR.parent)}  (상태: 미검토)")
+        except pv.ProviderError as e:
+            print(f"⚠️  {e}")
+
+
 def cmd_set_model(args) -> None:
     check_agent(args.agent)
     spec = pv.parse_model(args.spec)
@@ -203,6 +224,13 @@ def main(argv=None) -> None:
     s = sub.add_parser("export-training", help="대화 기록 → 학습 데이터(JSONL)")
     s.add_argument("--no-system", action="store_true", help="system 메시지 빼기")
     s.set_defaults(func=cmd_export)
+    s = sub.add_parser("learn", help="인터넷 검색으로 스스로 공부 → 10_Wiki 노트")
+    s.add_argument("topic", nargs="*")
+    s.add_argument("--auto", action="store_true", help="goals.md 를 보고 주제 스스로 고르기")
+    s.add_argument("--rounds", type=int, default=3, help="--auto 일 때 주제 개수 (기본 3)")
+    s.add_argument("--pages", type=int, default=5, help="주제당 읽을 페이지 수")
+    s.add_argument("--model", help="제공자:모델 (기본: researcher 에이전트 모델)")
+    s.set_defaults(func=cmd_learn)
     s = sub.add_parser("models", help="AI 제공자 상태")
     s.set_defaults(func=cmd_models)
     s = sub.add_parser("set-model", help="에이전트 기본 모델 지정")
