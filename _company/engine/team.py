@@ -13,7 +13,7 @@ from . import agents as ag
 from . import providers as pv
 
 JUDGE_PROMPT = """[심사 단계]
-당신은 지금 '{team}' 팀의 심사위원입니다. 같은 질문에 팀원 {n}명이 각자 관점으로 쓴 답변(<draft>)을 비교하세요.
+당신은 지금 '{team}팀'의 심사위원입니다. 같은 질문에 팀원 {n}명이 각자 관점으로 쓴 답변(<draft>)을 비교하세요.
 
 심사 기준: ① 정확성과 근거 ② 구체성·바로 실행할 수 있는지 ③ 회사 목표와의 연관성 ④ 질문에 딱 맞는지
 - 가장 좋은 답을 뼈대로 삼고, 다른 답의 좋은 점만 합쳐서 최종 답 하나를 쓰세요.
@@ -79,7 +79,7 @@ def run_team(
         raise pv.ProviderError("팀원 모두 답을 못 만들었어요: " + " / ".join(d.error for d in drafts if d.error))
     if len(good) == 1:
         i, d = good[0]
-        text = f"🏆 채택: 팀원{i} ({d.view}) — 다른 팀원 응답 실패\n\n{d.text}"
+        text = f"🏆 채택: 팀원{i} ({d.view}) — 다른 팀원 응답 실패\n\n{d.text}"  # noqa: E501
         if on_text:
             on_text(text)
         return text, drafts, str(lead_spec)
@@ -89,6 +89,7 @@ def run_team(
     question = history[-1]["content"]
     blocks = "\n\n".join(f'<draft member="팀원{i}" view="{d.view}">\n{d.text}\n</draft>' for i, d in good)
     judge_msgs = history[:-1] + [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n{blocks}"}]
-    judge_system = system_for(members[0]) + "\n\n" + JUDGE_PROMPT.format(team=team, n=len(good))
+    display = ag.agent_summary(team).split("`")[0].strip().lstrip("🧭💰🔍💻✍️ ").strip() or team
+    judge_system = system_for(members[0]) + "\n\n" + JUDGE_PROMPT.format(team=display, n=len(good))
     final = pv.chat(lead_spec, judge_system, judge_msgs, on_text=on_text, effort=effort)
     return final, drafts, str(lead_spec)

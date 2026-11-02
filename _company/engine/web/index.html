@@ -113,16 +113,15 @@ button { cursor: pointer; }
 .tool-foot { font-size: 12px; color: var(--faint); margin-top: 10px; }
 .spin { display: inline-block; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.team { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin: 2px 0 10px; font-size: 13px; overflow: hidden; }
-.team-row { border-top: 1px solid var(--line); }
-.team-row:first-child { border-top: 0; }
-.team-row > summary { list-style: none; cursor: pointer; display: flex; gap: 8px; align-items: center; padding: 7px 12px; color: var(--muted); }
-.team-row > summary::-webkit-details-marker { display: none; }
-.team-row[open] > summary { color: var(--text); }
-.team-row .st { width: 16px; text-align: center; }
-.team-row .tview { font-weight: 600; color: var(--text); }
-.team-row .md { padding: 4px 14px 12px; font-size: 13.5px; border-top: 1px dashed var(--line); }
-.team-judge { padding: 7px 12px; border-top: 1px solid var(--line); color: var(--accent); }
+.team { display: grid; gap: 14px; margin: 6px 0 16px; }
+.member { border-left: 3px solid var(--line-strong); padding: 2px 0 2px 14px; }
+.mhead { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+.mhead .st { font-size: 12px; color: var(--muted); }
+.mhead .mname { font-weight: 700; font-size: 15px; }
+.mhead .mview { color: var(--muted); font-size: 13px; }
+.member.pending .md { color: var(--faint); font-size: 13.5px; }
+.final-head { font-weight: 700; font-size: 15px; margin: 4px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
+.team-judge { padding: 4px 2px; color: var(--accent); font-size: 13.5px; }
 .winner { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 3px 10px; font-size: 13px; margin-bottom: 8px; }
 .err { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .msg-actions { margin-top: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
@@ -413,6 +412,7 @@ async function openConv(id) {
     else {
       const a = addAI(m); a.body.innerHTML = finalHTML(m.content); a.el.dataset.raw = m.content;
       (m.drafts || []).forEach((d, i) => a.team.done({ ...d, i: i + 1 }));
+      if ((m.drafts || []).length > 1) a.team.judged();
     }
   }
   $("#top-title").textContent = c.title; scrollDown(true); loadConvs();
@@ -423,14 +423,22 @@ function addUser(text) {
   const el = document.createElement("div"); el.className = "msg user"; el.innerHTML = `<div class="bubble">${esc(text)}</div>`;
   $("#messages").appendChild(el);
 }
+function teamName(id) {
+  const a = state.meta?.agents.find(x => x.id === id);
+  return ((a?.summary || "").split("`")[0].trim() || id || "…") + " 팀";
+}
 function addAI(info = {}) {
   const el = document.createElement("div"); el.className = "msg ai";
-  el.innerHTML = `<div class="who"></div><div class="team" hidden></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
+  el.innerHTML = `<div class="who"></div><div class="team" hidden></div><div class="final-head" hidden></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
   $("#messages").appendChild(el);
-  const who = el.querySelector(".who"), body = el.querySelector(".md");
+  const who = el.querySelector(".who"), body = el.querySelector(".md"), finalHead = el.querySelector(".final-head");
+  let agentId = info.agent;
   const setWho = (i) => {
+    agentId = i.agent || agentId;
     const agent = state.meta?.agents.find(a => a.id === i.agent);
-    who.innerHTML = (i.reason ? `<span>🧭 CEO →</span>` : "") + `<span class="agent">${esc(i.agent || "…")}</span>`
+    const name = agent ? teamName(i.agent) : (i.agent || "…");
+    who.innerHTML = (i.reason ? `<span>🧭 CEO →</span>` : "") + `<span class="agent">${esc(name)}</span>`
+      + (i.team > 1 ? `<span class="tag">👥 ${i.team}명 비교</span>` : "")
       + (i.model ? `<span class="tag">${esc(i.model)}</span>` : "")
       + (i.sources || []).map(s => `<span class="tag src" title="${esc(s)}">📚 ${esc(s.split("/").pop().replace(/\.md$/, ""))}</span>`).join("");
     if (agent) who.title = agent.summary;
@@ -438,22 +446,25 @@ function addAI(info = {}) {
   setWho(info);
   el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").replace(/^\s*`?🏆[^\n]*\n+/, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
   const teamBox = el.querySelector(".team");
-  const rows = {};
+  const cards = {};
   const team = {
     start(d) {
       teamBox.hidden = false;
-      const r = document.createElement("details"); r.className = "team-row";
-      r.innerHTML = `<summary><span class="st"><span class="spin">◌</span></span><span class="tview">팀원${d.i} · ${esc(d.view)}</span><span class="muted">작성 중...</span></summary><div class="md"></div>`;
-      teamBox.appendChild(r); rows[d.i] = r;
+      const c = document.createElement("div"); c.className = "member pending";
+      c.innerHTML = `<div class="mhead"><span class="st"><span class="spin">◌</span></span><span class="mname">팀원${d.i}</span><span class="mview">· ${esc(d.view)}</span></div><div class="md">답변 작성 중...</div>`;
+      teamBox.appendChild(c); cards[d.i] = c;
     },
     done(d) {
-      const r = rows[d.i] || (team.start(d), rows[d.i]);
-      r.querySelector(".st").textContent = d.error ? "⚠️" : "✓";
-      r.querySelector(".muted").textContent = d.error ? "실패" : `${d.text.length.toLocaleString()}자 · 눌러서 보기`;
-      r.querySelector(".md").innerHTML = d.error ? esc(d.error) : md(d.text);
+      const c = cards[d.i] || (team.start(d), cards[d.i]);
+      c.classList.remove("pending");
+      c.querySelector(".st").textContent = d.error ? "⚠️" : "";
+      c.querySelector(".md").innerHTML = d.error ? `<div class="err">⚠️ ${esc(d.error)}</div>` : md(d.text);
     },
-    judge() { teamBox.insertAdjacentHTML("beforeend", `<div class="team-judge"><span class="spin">◌</span> 🏆 답변 비교하고 최고 답 고르는 중...</div>`); },
-    judged() { teamBox.querySelector(".team-judge")?.remove(); },
+    judge() {
+      finalHead.hidden = false;
+      finalHead.innerHTML = `<span class="team-judge"><span class="spin">◌</span> 🏆 팀원 답변 비교 중...</span>`;
+    },
+    judged() { if (!teamBox.hidden) { finalHead.hidden = false; finalHead.textContent = "🏆 최종 답"; } },
   };
   return { el, body, setWho, team };
 }
