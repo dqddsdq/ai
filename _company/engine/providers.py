@@ -75,7 +75,7 @@ class ModelSpec:
 
 def parse_model(spec: str | None) -> ModelSpec:
     """'claude:claude-opus-5-5' → ModelSpec. 접두사 없으면 ollama."""
-    spec = (spec or os.getenv("DEFAULT_MODEL") or "claude").strip()
+    spec = (spec or os.getenv("DEFAULT_MODEL") or "ollama").strip()
     prefix, _, rest = spec.partition(":")
     if prefix.lower() in DEFAULT_MODELS:
         provider = prefix.lower()

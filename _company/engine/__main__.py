@@ -14,7 +14,9 @@ import argparse
 import sys
 
 from . import agents as ag
+from . import knowledge as kn
 from . import providers as pv
+from . import training as tr
 
 try:
     from dotenv import load_dotenv
@@ -22,6 +24,9 @@ try:
     load_dotenv(ag.COMPANY_DIR / ".env")
 except ImportError:
     pass
+
+
+USE_KNOWLEDGE = True
 
 
 def resolve_model(agent_id: str, override: str | None) -> pv.ModelSpec:
@@ -39,8 +44,12 @@ def pick_agent(text: str, requested: str, override: str | None) -> tuple[str, st
 def answer(agent_id: str, history: list[dict], override: str | None, effort: str) -> str:
     agent = ag.Agent(agent_id)
     spec = resolve_model(agent_id, override)
-    print(f"\n🤖 {agent_id} ({spec})\n", flush=True)
-    text = pv.chat(spec, agent.system_prompt(), history,
+    system = agent.system_prompt()
+    refs = kn.context_for(history[-1]["content"]) if USE_KNOWLEDGE else ""
+    if refs:
+        system += "\n\n" + refs
+    print(f"\n🤖 {agent_id} ({spec}){'  📚 자료 참고' if refs else ''}\n", flush=True)
+    text = pv.chat(spec, system, history,
                    on_text=lambda t: print(t, end="", flush=True), effort=effort)
     print("\n")
     return text
@@ -150,6 +159,21 @@ def cmd_models(_args) -> None:
         print(f"  {a:12} {models.get(a, '(기본값)')}")
 
 
+def cmd_search(args) -> None:
+    hits = kn.search(" ".join(args.query), k=5)
+    if not hits:
+        print("관련 자료를 못 찾았어요. 00_Raw/ 에 .md 파일을 넣어 보세요.")
+    for score, c in hits:
+        print(f"\n[{score:.0%}] {c.source}\n{c.text[:300]}")
+
+
+def cmd_export(args) -> None:
+    out, n = tr.export(include_system=not args.no_system)
+    print(f"학습 데이터 {n}개 → {out}")
+    if n:
+        print("다음 단계: engine/README.md 의 '내 컴퓨터에서 학습시키기' 참고")
+
+
 def cmd_set_model(args) -> None:
     check_agent(args.agent)
     spec = pv.parse_model(args.spec)
@@ -164,6 +188,7 @@ def main(argv=None) -> None:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--agent", default="auto", help="에이전트 이름 또는 auto (기본)")
     common.add_argument("--model", help="제공자:모델 (예: claude:claude-opus-5-5)")
+    common.add_argument("--no-knowledge", action="store_true", help="내 자료(00_Raw) 참고 끄기")
     common.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"],
                         help="생각 깊이 (Claude 전용)")
 
@@ -172,6 +197,12 @@ def main(argv=None) -> None:
     s = sub.add_parser("ask", parents=[common], help="한 번 질문")
     s.add_argument("question", nargs="+")
     s.set_defaults(func=cmd_ask)
+    s = sub.add_parser("search", help="내 자료에서 검색")
+    s.add_argument("query", nargs="+")
+    s.set_defaults(func=cmd_search)
+    s = sub.add_parser("export-training", help="대화 기록 → 학습 데이터(JSONL)")
+    s.add_argument("--no-system", action="store_true", help="system 메시지 빼기")
+    s.set_defaults(func=cmd_export)
     s = sub.add_parser("models", help="AI 제공자 상태")
     s.set_defaults(func=cmd_models)
     s = sub.add_parser("set-model", help="에이전트 기본 모델 지정")
@@ -180,6 +211,8 @@ def main(argv=None) -> None:
     s.set_defaults(func=cmd_set_model)
 
     args = p.parse_args(argv)
+    global USE_KNOWLEDGE
+    USE_KNOWLEDGE = not getattr(args, "no_knowledge", False)
     try:
         args.func(args)
     except pv.ProviderError as e:
