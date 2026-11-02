@@ -14,3 +14,6 @@ __pycache__/
 .env
 _company/.env
 !.env.example
+
+# 캐시·업로드 이미지 (토큰, 화면 캡처)
+_company/_cache/

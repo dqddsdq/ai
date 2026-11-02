@@ -11,7 +11,9 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
+import time
 import threading
 import webbrowser
 from datetime import datetime
@@ -26,6 +28,10 @@ from . import providers as pv
 from . import team as tm
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
+UPLOAD_DIR = ag.COMPANY_DIR / "_cache" / "uploads"   # git 에 안 올라감
+IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+UPLOAD_RE = re.compile(r"^[\w\-]+\.(png|jpg|webp|gif)$")
 CONV_FILE = "conversation.json"
 ID_RE = re.compile(r"^[\w\-]+$")
 MODEL_CHOICES = [
@@ -219,6 +225,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(load_conv(m.group(1)))
             except (FileNotFoundError, ValueError):
                 return self._json({"error": "없는 대화"}, 404)
+        m = re.match(r"^/api/upload/([\w\-]+\.(?:png|jpg|webp|gif))$", path)
+        if m and (UPLOAD_DIR / m.group(1)).is_file():
+            ext = m.group(1).rsplit(".", 1)[1]
+            body = (UPLOAD_DIR / m.group(1)).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", {"jpg": "image/jpeg"}.get(ext, f"image/{ext}"))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
         if path == "/api/wiki":
             return self._json(_wiki_list())
         m = re.match(r"^/api/wiki/(.+)$", path)
@@ -260,6 +275,10 @@ class Handler(BaseHTTPRequestHandler):
                 with contextlib.suppress(Exception):
                     self._send("error", {"message": str(e)})
             return
+        if path == "/api/upload":
+            return self._upload(body)
+        if path == "/api/capture":
+            return self._capture(body)
         m = re.match(r"^/api/conversations/([\w\-]+)/delete$", path)
         if m:
             import shutil
@@ -269,9 +288,73 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         self._json({"error": "not found"}, 404)
 
+    # 이미지 (붙여넣기·첨부·화면 캡처)
+    def _save_image(self, data: bytes, ext: str) -> str:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        name = datetime.now().strftime("%Y%m%d-%H%M%S-") + os.urandom(3).hex() + ext
+        (UPLOAD_DIR / name).write_bytes(data)
+        return name
+
+    def _upload(self, body: dict):
+        import base64
+
+        m = re.match(r"^data:(image/[a-z]+);base64,(.+)$", body.get("data") or "", re.S)
+        if not m or m.group(1) not in IMAGE_TYPES:
+            return self._json({"error": "PNG, JPG, WEBP, GIF 이미지만 올릴 수 있어요"}, 400)
+        data = base64.b64decode(m.group(2))
+        if len(data) > MAX_IMAGE_BYTES:
+            return self._json({"error": "이미지가 너무 커요 (최대 10MB)"}, 400)
+        return self._json({"id": self._save_image(data, IMAGE_TYPES[m.group(1)])})
+
+    def _capture(self, body: dict):
+        """내 PC 화면을 찍습니다 (토스 창을 띄워둔 상태에서). 읽기만 하고 아무것도 클릭하지 않아요."""
+        try:
+            from PIL import ImageGrab
+        except ImportError:
+            return self._json({"error": "화면 캡처 패키지가 없어요: pip install pillow"}, 400)
+        time.sleep(max(0.0, min(float(body.get("delay") or 3), 10.0)))
+        try:
+            img = ImageGrab.grab()
+        except Exception as e:
+            return self._json({"error": f"화면 캡처 실패: {e}"}, 500)
+        if img.width > 2400:  # 너무 크면 줄여서 저장 (글자는 읽히는 크기)
+            img = img.resize((2400, int(img.height * 2400 / img.width)))
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, "PNG", optimize=True)
+        return self._json({"id": self._save_image(buf.getvalue(), ".png")})
+
+    def _market_context(self, agent_id: str, text: str, history: list[dict], spec) -> str:
+        """주식 팀: 질문에서 종목을 찾아 무료 시세·차트 지표를 가져와 팀원들에게 붙여줍니다."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        from . import market as mk
+
+        if not tm.team_config(agent_id).get("market_data"):
+            return ""
+        self._send("status", {"text": "📈 종목 찾는 중..."})
+        recent = "\n".join(m["content"][:500] for m in history[-3:])
+        try:
+            reply = pv.chat(spec, mk.TICKER_PROMPT, [{"role": "user", "content": recent}], effort="low")
+            tickers = [t for t in ln._json_list(reply) if t][:5]
+        except pv.ProviderError:
+            tickers = []
+        if not tickers:
+            self._send("status", {"text": ""})
+            return ""
+        self._send("status", {"text": "📈 " + ", ".join(tickers) + " 시세·차트 지표 가져오는 중..."})
+        with ThreadPoolExecutor(max_workers=len(tickers)) as pool:
+            snaps = list(pool.map(mk.snapshot, tickers))
+        self._send("market", {"items": [s.brief() for s in snaps]})
+        self._send("status", {"text": ""})
+        return mk.format_for_prompt(snaps)
+
     # 채팅
     def _chat(self, body: dict):
         text = (body.get("message") or "").strip()
+        image_ids = [i for i in (body.get("images") or []) if UPLOAD_RE.match(str(i)) and (UPLOAD_DIR / i).is_file()][:6]
+        images = [str(UPLOAD_DIR / i) for i in image_ids]
+        if not text and images:
+            text = "첨부한 화면을 분석해 줘."
         if not text:
             return self._send("error", {"message": "메시지가 비어 있어요"})
         cid = body.get("conversation_id")
@@ -305,13 +388,18 @@ class Handler(BaseHTTPRequestHandler):
         members = ag.team_members(agent_id)
         use_team = body.get("team", True) and len(members) > 1
 
-        conv["messages"].append({"role": "user", "content": text})
+        if images:
+            history[-1]["content"] += f"\n\n[화면 캡처 {len(images)}장 첨부]"
+        conv["messages"].append({"role": "user", "content": text, "images": image_ids})
         save_conv(conv)
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
                             "model": str(spec), "reason": reason, "sources": sources,
                             "team": len(members) if use_team else 1})
         delta = lambda t: self._send("delta", {"text": t})  # noqa: E731
         effort = body.get("effort") or "medium"
+        market = self._market_context(agent_id, text, history, spec)
+        if market:
+            extra += "\n\n" + market
         drafts = []
         if use_team:
             reply, drafts, _ = tm.run_team(
@@ -321,11 +409,13 @@ class Handler(BaseHTTPRequestHandler):
                                                                       "text": d.text, "error": d.error}),
                 on_judge_start=lambda: self._send("judge_start", {}),
                 on_text=delta,
+                images=images,
             )
         else:
             lead = members[0]
             system = ag.Agent(lead).system_prompt() + ("\n\n" + extra if extra else "")
-            reply = pv.chat(spec, system, history, on_text=delta, effort=effort)
+            reply = pv.chat(spec, system, history, on_text=delta, effort=effort,
+                            web=bool(tm.team_config(agent_id).get("web")), images=images)
         conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id,
                                  "model": str(spec), "sources": sources,
                                  "drafts": [{"member": d.member, "view": d.view, "text": d.text, "error": d.error}
@@ -350,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send("tool_result", {"markdown": note})
                 self._send("tool_done", {"footer": f"📝 노트 저장: {footer}"})
             else:
-                spec = pv.parse_model(override or ag.Agent("business").model_spec())
+                spec = pv.parse_model(override or ag.Agent("startup").model_spec())
                 stock = parse_stock_arg(arg) if kind == "STOCK" else None
 
                 def on_text(result_text):
@@ -385,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
     # 시뮬레이션
     def _simulate(self, body: dict):
         goal = (body.get("goal") or "").strip()
-        spec = pv.parse_model(body.get("model") or ag.Agent("business").model_spec())
+        spec = pv.parse_model(body.get("model") or ag.Agent("startup").model_spec())
         stock = None
         if body.get("stock"):
             stock = {"ticker": body["stock"].strip(), "years": body.get("years"), "target": body.get("target")}

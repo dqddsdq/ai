@@ -34,7 +34,7 @@ def list_agents() -> list[str]:
 
 
 def team_of(agent_id: str) -> str:
-    """'business-3' → 'business'"""
+    """'stock-3' → 'stock'"""
     return re.sub(r"-\d+$", "", agent_id)
 
 

@@ -290,7 +290,7 @@ def main(argv=None) -> None:
     s.add_argument("--years", type=float, default=1.0, help="주식: 몇 년 후 (기본 1)")
     s.add_argument("--target", type=float, help="주식: 목표 수익률 %%")
     s.add_argument("--runs", type=int, default=10000, help="시뮬레이션 횟수")
-    s.add_argument("--agent", default="business", help="시나리오를 설계할 에이전트 (기본 business)")
+    s.add_argument("--agent", default="startup", help="시나리오를 설계할 에이전트 (기본 startup)")
     s.add_argument("--model", help="제공자:모델")
     s.set_defaults(func=cmd_simulate)
     s = sub.add_parser("web", help="브라우저 화면 열기 (Claude 앱 스타일)")

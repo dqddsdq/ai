@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
 from dataclasses import dataclass
 from typing import Callable
 
@@ -20,7 +21,16 @@ JUDGE_PROMPT = """[심사 단계]
 - 틀렸거나 근거 없는 주장, 팀원끼리 충돌하는 부분은 더 근거 있는 쪽을 택하고 나머지는 버리세요.
 - 첫 줄은 반드시 이 형식: `🏆 채택: 팀원N (관점) — 한 줄 이유` (다른 팀원 내용을 반영했으면 "+ 팀원M의 ○○ 반영")
 - 그다음 빈 줄, 그리고 사용자에게 줄 최종 답만. '팀원', '초안' 같은 말은 최종 답 본문에 쓰지 마세요.
-- 팀원 답에 [[...]] 실행 태그가 있었고 여전히 필요하면, 최종 답 마지막 줄에 태그 하나만 남기세요."""
+- 팀원 답에 [[...]] 실행 태그가 있었고 여전히 필요하면, 최종 답 마지막 줄에 태그 하나만 남기세요.
+- 팀원들이 사장님께 화면 캡처(📸)나 추가 정보를 요청했다면, 겹치는 요청을 합쳐서 최종 답 끝에 한 번만 구체적으로 요청하세요."""
+
+
+def team_config(team: str) -> dict:
+    """_agents/<팀>/team.json — 예: {"web": true, "market_data": true}"""
+    try:
+        return json.loads((ag.AGENTS_DIR / team / "team.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
 
 
 @dataclass
@@ -41,6 +51,7 @@ def run_team(
     on_draft_done: Callable[[int, Draft], None] | None = None,
     on_judge_start: Callable[[], None] | None = None,
     on_text: Callable[[str], None] | None = None,
+    images: list[str] | None = None,
 ) -> tuple[str, list[Draft], str]:
     """(최종 답, 팀원 초안들, 심사 모델) — 팀원이 1명이면 심사 없이 그 답 그대로."""
     members = ag.team_members(team)
@@ -51,8 +62,10 @@ def run_team(
         return ag.Agent(member).system_prompt() + ("\n\n" + extra_system if extra_system else "")
 
     lead_spec = pv.parse_model(override or ag.Agent(members[0]).model_spec())
+    web = bool(team_config(team).get("web"))
     if len(members) == 1:
-        text = pv.chat(lead_spec, system_for(members[0]), history, on_text=on_text, effort=effort)
+        text = pv.chat(lead_spec, system_for(members[0]), history, on_text=on_text, effort=effort,
+                       web=web, images=images)
         return text, [Draft(members[0], ag.member_view(members[0]), text)], str(lead_spec)
 
     drafts = [Draft(m, ag.member_view(m)) for m in members]
@@ -63,7 +76,7 @@ def run_team(
     def work(d: Draft) -> Draft:
         spec = pv.parse_model(override or ag.Agent(d.member).model_spec())
         try:
-            d.text = pv.chat(spec, system_for(d.member), history, effort=effort)
+            d.text = pv.chat(spec, system_for(d.member), history, effort=effort, web=web, images=images)
         except pv.ProviderError as e:
             d.error = str(e)
         return d

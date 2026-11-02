@@ -150,14 +150,21 @@ def chat(
     on_text: OnText | None = None,
     effort: str = "medium",
     web: bool = False,
+    images: list[str] | None = None,
 ) -> str:
     """모델에 대화를 보내고 전체 답변 텍스트를 돌려줍니다.
 
     on_text 가 있으면 답변이 생성되는 대로 조각을 넘겨줍니다(스트리밍).
     """
+    if images:
+        if spec.provider == "claude":
+            messages = _with_images_claude(messages, images)
+        elif spec.provider != "claudecode":
+            note = f"\n\n[사용자가 이미지 {len(images)}장을 첨부했지만 이 모델({spec})로는 볼 수 없어요. 이미지가 필요하면 Claude 모델로 바꾸라고 안내하세요.]"
+            messages = messages[:-1] + [{"role": "user", "content": messages[-1]["content"] + note}]
     if spec.provider == "claudecode":
         try:
-            return _chat_claudecode(spec, system, messages, on_text, effort, web)
+            return _chat_claudecode(spec, system, messages, on_text, effort, web, images or [])
         except ProviderError:
             raise
         except Exception as e:
@@ -192,7 +199,21 @@ def _emit(on_text: OnText | None, chunks: Iterable[str]) -> str:
 CLAUDECODE_TIMEOUT = 900
 
 
-def _chat_claudecode(spec, system, messages, on_text, effort, web):
+def _with_images_claude(messages: list[Message], images: list[str]) -> list[Message]:
+    import base64
+    import mimetypes
+
+    blocks = []
+    for path in images:
+        mt = mimetypes.guess_type(path)[0] or "image/png"
+        with open(path, "rb") as f:
+            data = base64.standard_b64encode(f.read()).decode()
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+    blocks.append({"type": "text", "text": messages[-1]["content"]})
+    return messages[:-1] + [{"role": "user", "content": blocks}]
+
+
+def _chat_claudecode(spec, system, messages, on_text, effort, web, images=()):
     exe = claude_cli()
     if not exe:
         raise ProviderError("Claude Code(claude 명령)를 못 찾았어요. 설치 후 `claude` 로 한 번 로그인하세요.")
@@ -206,6 +227,9 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web):
             parts.append(f"[{who}]\n{m['content']}")
         parts.append("</conversation_so_far>")
     parts += ["<user_message>", messages[-1]["content"] if messages else "", "</user_message>"]
+    if images:
+        parts.append("<attached_images>\n사용자가 화면 캡처 이미지를 첨부했어요. 답하기 전에 Read 도구로 아래 파일을 전부 열어서 보세요:\n"
+                     + "\n".join(os.path.abspath(p) for p in images) + "\n</attached_images>")
     prompt = "\n\n".join(parts)
 
     cmd = [
@@ -213,12 +237,15 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web):
         "--system-prompt", "You are an AI agent inside the user's one-person company. Follow <instructions> exactly "
                            "and reply only to <user_message>, in Korean unless asked otherwise.",
         "--output-format", "text",
-        "--tools", "WebSearch,WebFetch" if web else "",
+        "--tools", ",".join((["WebSearch", "WebFetch"] if web else []) + (["Read"] if images else [])),
         "--no-session-persistence",
         "--strict-mcp-config",
     ]
-    if web:
-        cmd += ["--allowedTools", "WebSearch,WebFetch"]
+    allowed = (["WebSearch", "WebFetch"] if web else []) + (["Read"] if images else [])
+    if allowed:
+        cmd += ["--allowedTools", ",".join(allowed)]
+    if images:
+        cmd += ["--add-dir", os.path.dirname(os.path.abspath(images[0]))]
     if spec.model and spec.model != "default":
         cmd += ["--model", spec.model]
 

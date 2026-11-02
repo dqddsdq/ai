@@ -1,14 +1,20 @@
 {
-  "business": "claudecode",
-  "business-2": "claudecode",
-  "business-3": "claudecode",
   "ceo": "claudecode",
   "ceo-2": "claudecode",
   "developer": "claudecode",
   "developer-2": "claudecode",
+  "legal": "claudecode",
+  "legal-2": "claudecode",
+  "legal-3": "claudecode",
   "researcher": "claudecode",
   "researcher-2": "claudecode",
   "researcher-3": "claudecode",
+  "startup": "claudecode",
+  "startup-2": "claudecode",
+  "startup-3": "claudecode",
+  "stock": "claudecode",
+  "stock-2": "claudecode",
+  "stock-3": "claudecode",
   "writer": "claudecode",
   "writer-2": "claudecode"
 }

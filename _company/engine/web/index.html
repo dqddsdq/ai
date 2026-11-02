@@ -123,6 +123,27 @@ button { cursor: pointer; }
 .final-head { font-weight: 700; font-size: 15px; margin: 4px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
 .team-judge { padding: 4px 2px; color: var(--accent); font-size: 13.5px; }
 .winner { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 3px 10px; font-size: 13px; margin-bottom: 8px; }
+.attach-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.attach-row:empty { display: none; }
+.thumb { position: relative; width: 64px; height: 64px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--code-bg); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumb button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; line-height: 20px; padding: 0; }
+.thumb.loading::after { content: "…"; position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.25); color: #fff; }
+.tool-btn { border: 0; background: none; color: var(--muted); font-size: 16px; width: 32px; height: 32px; border-radius: 8px; }
+.tool-btn:hover { background: var(--code-bg); color: var(--text); }
+.msg.user .imgs { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-bottom: 6px; }
+.msg.user .imgs img { max-width: 220px; max-height: 160px; border-radius: 12px; border: 1px solid var(--line); cursor: zoom-in; }
+.msg.user { flex-direction: column; align-items: flex-end; }
+.status-line { font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
+.market { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 10px; }
+.mchip { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 4px 10px; font-size: 12.5px; }
+.mchip b { font-weight: 600; } .up { color: #d1453b; } .down { color: #2f6fd1; }
+.mchip .src { color: var(--faint); font-size: 11px; margin-left: 4px; }
+.drop-hint { position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 3px dashed var(--accent); display: grid; place-items: center; font-size: 20px; color: var(--accent); z-index: 50; pointer-events: none; }
+.countdown { position: fixed; inset: 0; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; text-align: center; z-index: 60; font-size: 18px; }
+.countdown b { font-size: 64px; display: block; font-family: var(--serif); }
+#lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: grid; place-items: center; z-index: 70; cursor: zoom-out; }
+#lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 8px; }
 .err { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .msg-actions { margin-top: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .msg.ai:hover .msg-actions { opacity: 1; }
@@ -207,8 +228,12 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
     <div class="scroll" id="chat-scroll" hidden><div class="column" id="messages"></div></div>
     <div class="composer-wrap" id="composer-home">
       <div class="composer" id="composer">
-        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요. CEO가 알맞은 담당자에게 넘겨요."></textarea>
+        <div class="attach-row" id="attach-row"></div>
+        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요. 차트 화면은 📸 캡처하거나 Ctrl+V로 붙여넣으세요."></textarea>
         <div class="composer-row">
+          <button class="tool-btn" id="attach-btn" title="이미지 첨부 (Ctrl+V 붙여넣기, 끌어다 놓기도 돼요)">📎</button>
+          <button class="tool-btn" id="capture-btn" title="내 화면 캡처 — 누르고 3초 안에 토스 창으로 바꾸세요">📸</button>
+          <input type="file" id="file-input" accept="image/*" multiple hidden>
           <select id="agent-select" title="담당 에이전트"></select>
           <select id="model-select" title="AI 모델"></select>
           <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료</label>
@@ -371,7 +396,7 @@ async function init() {
   $("#model-select").value = store.get("model", "");
   as.onchange = () => store.set("agent", as.value); $("#model-select").onchange = () => store.set("model", $("#model-select").value);
   $("#team-toggle").checked = store.get("team", "1") === "1"; $("#team-toggle").onchange = () => store.set("team", $("#team-toggle").checked ? "1" : "0");
-  const ideas = ["블로그로 1년 안에 월 300만원 가능할까?", "이번 주 유튜브 쇼츠 아이디어 5개", "월 1000만원 가려면 지금 뭐부터 해야 해?", "홈페이지 제작 외주 가격 정하는 법"];
+  const ideas = ["삼성전자 지금 들어가도 될까?", "엔비디아 차트 분석해줘", "전세 보증금 못 돌려받으면 어떻게 해?", "1인 창업 사업자등록 절차랑 세금", "온라인 쇼핑몰로 1년 안에 월 300만원 가능할까?"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
   newChat(); loadConvs(); show("chat");
@@ -401,7 +426,7 @@ async function openConv(id) {
   const c = await api("/api/conversations/" + id); if (c.error) return;
   state.conv = c; show("chat"); enterThread(); $("#messages").innerHTML = "";
   for (const m of c.messages) {
-    if (m.role === "user") addUser(m.content);
+    if (m.role === "user") addUser(m.content, m.images || []);
     else if (m.kind === "tool") {
       const t = addTool({ label: m.agent, arg: (m.tool || "").split(": ").slice(1).join(": ") }); t.log.hidden = true;
       const code = m.content.match(/^```\n([\s\S]*?)\n```\n*/);
@@ -419,8 +444,10 @@ async function openConv(id) {
 }
 
 // ── 메시지 그리기 ──
-function addUser(text) {
-  const el = document.createElement("div"); el.className = "msg user"; el.innerHTML = `<div class="bubble">${esc(text)}</div>`;
+function addUser(text, images = []) {
+  const el = document.createElement("div"); el.className = "msg user";
+  el.innerHTML = (images.length ? `<div class="imgs">${images.map(i => `<img src="/api/upload/${esc(i)}" alt="첨부 이미지">`).join("")}</div>` : "") + `<div class="bubble">${esc(text)}</div>`;
+  el.querySelectorAll("img").forEach(img => img.onclick = () => lightbox(img.src));
   $("#messages").appendChild(el);
 }
 function teamName(id) {
@@ -429,7 +456,7 @@ function teamName(id) {
 }
 function addAI(info = {}) {
   const el = document.createElement("div"); el.className = "msg ai";
-  el.innerHTML = `<div class="who"></div><div class="team" hidden></div><div class="final-head" hidden></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
+  el.innerHTML = `<div class="who"></div><div class="status-line" hidden></div><div class="market" hidden></div><div class="team" hidden></div><div class="final-head" hidden></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
   $("#messages").appendChild(el);
   const who = el.querySelector(".who"), body = el.querySelector(".md"), finalHead = el.querySelector(".final-head");
   let agentId = info.agent;
@@ -466,7 +493,17 @@ function addAI(info = {}) {
     },
     judged() { if (!teamBox.hidden) { finalHead.hidden = false; finalHead.textContent = "🏆 최종 답"; } },
   };
-  return { el, body, setWho, team };
+  const statusLine = el.querySelector(".status-line"), marketBox = el.querySelector(".market");
+  const status = (t) => { statusLine.hidden = !t; statusLine.innerHTML = t ? `<span class="spin">◌</span> ${esc(t)}` : ""; };
+  const market = (items) => {
+    marketBox.hidden = !items.length;
+    marketBox.innerHTML = items.map(m => m.error && m.price == null
+      ? `<span class="mchip">⚠️ ${esc(m.ticker)} 데이터 못 가져옴</span>`
+      : `<span class="mchip"><b>${esc(m.name || m.ticker)}</b> ${m.price != null ? Number(m.price).toLocaleString(undefined, { maximumFractionDigits: 2 }) : "-"}
+         ${m.change_pct != null ? `<span class="${m.change_pct >= 0 ? "up" : "down"}">${m.change_pct >= 0 ? "▲" : "▼"}${Math.abs(m.change_pct).toFixed(2)}%</span>` : ""}
+         <span class="src">${esc((m.source || "").replace(/\s*\(.*\)/, ""))} · ${esc(m.asof || "")}</span></span>`).join("");
+  };
+  return { el, body, setWho, team, status, market };
 }
 // 심사 결과 첫 줄(🏆 채택: ...)은 배지로 표시
 function finalHTML(raw) {
@@ -496,7 +533,51 @@ function scrollDown(force) {
 
 // ── 보내기 ──
 const input = $("#input"), sendBtn = $("#send-btn");
-function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 240) + "px"; sendBtn.disabled = !state.busy && !input.value.trim(); }
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 240) + "px"; sendBtn.disabled = !state.busy && !input.value.trim() && !attachments.length; }
+
+// ── 이미지 첨부 / 붙여넣기 / 화면 캡처 ──
+let attachments = [];  // {id?, url, loading}
+function renderAttachments() {
+  const row = $("#attach-row");
+  row.innerHTML = attachments.map((a, i) => `<div class="thumb${a.id ? "" : " loading"}"><img src="${a.url}" alt=""><button data-rm="${i}" title="빼기">✕</button></div>`).join("");
+  row.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { attachments.splice(+b.dataset.rm, 1); renderAttachments(); autosize(); });
+  autosize();
+}
+async function uploadBlob(blob) {
+  if (!blob.type.startsWith("image/")) return;
+  if (attachments.length >= 6) return alert("이미지는 한 번에 6장까지 올릴 수 있어요");
+  const url = URL.createObjectURL(blob); const item = { url }; attachments.push(item); renderAttachments();
+  const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+  const res = await api("/api/upload", { data });
+  if (res.id) item.id = res.id; else { attachments = attachments.filter(a => a !== item); alert(res.error || "업로드 실패"); }
+  renderAttachments();
+}
+$("#attach-btn").onclick = () => $("#file-input").click();
+$("#file-input").onchange = (e) => { [...e.target.files].forEach(uploadBlob); e.target.value = ""; };
+input.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.items || [])].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile());
+  if (files.length) { e.preventDefault(); files.forEach(uploadBlob); }
+});
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => { if ([...e.dataTransfer.types].includes("Files") && ++dragDepth === 1) document.body.insertAdjacentHTML("beforeend", `<div class="drop-hint" id="drop-hint">이미지를 여기에 놓으세요</div>`); });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop-hint")?.remove(); } });
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("#drop-hint")?.remove(); [...e.dataTransfer.files].forEach(uploadBlob); });
+$("#capture-btn").onclick = async () => {
+  const delay = 3;
+  const ov = document.createElement("div"); ov.className = "countdown";
+  ov.innerHTML = `<div><b id="cd-n">${delay}</b>지금 토스 창(차트 화면)으로 바꿔 주세요<br><span style="font-size:14px;opacity:.8">화면을 찍기만 하고 아무것도 누르지 않아요</span></div>`;
+  document.body.appendChild(ov);
+  const req = api("/api/capture", { delay });
+  for (let n = delay - 1; n >= 0; n--) { await new Promise(r => setTimeout(r, 1000)); const el = $("#cd-n"); if (el) el.textContent = n || "📸"; }
+  const res = await req; ov.remove();
+  if (res.id) { attachments.push({ id: res.id, url: "/api/upload/" + res.id }); renderAttachments(); input.focus(); }
+  else alert(res.error || "캡처 실패");
+};
+function lightbox(src) {
+  const lb = document.createElement("div"); lb.id = "lightbox"; lb.innerHTML = `<img src="${src}" alt="">`;
+  lb.onclick = () => lb.remove(); document.body.appendChild(lb);
+}
 input.addEventListener("input", autosize);
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!state.busy) send(); }
@@ -505,18 +586,22 @@ sendBtn.onclick = () => state.busy ? state.controller?.abort() : send();
 function setBusy(b) { state.busy = b; sendBtn.classList.toggle("stop", b); sendBtn.textContent = b ? "■" : "↑"; sendBtn.title = b ? "중지" : "보내기 (Enter)"; autosize(); }
 
 async function send() {
-  const text = input.value.trim(); if (!text || state.busy) return;
-  input.value = ""; autosize(); enterThread(); addUser(text);
+  const text = input.value.trim(); const images = attachments.filter(a => a.id).map(a => a.id);
+  if ((!text && !images.length) || state.busy) return;
+  if (attachments.some(a => !a.id)) return alert("이미지 올리는 중이에요. 잠시만요.");
+  input.value = ""; attachments = []; renderAttachments(); autosize(); enterThread(); addUser(text || "첨부한 화면을 분석해 줘.", images);
   const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
   ai.body.classList.add("cursor"); scrollDown(true);
   let raw = "", tool = null; setBusy(true); state.controller = new AbortController();
   try {
     await stream("/api/chat", {
-      conversation_id: state.conv?.id, message: text, agent: $("#agent-select").value,
+      conversation_id: state.conv?.id, message: text, images, agent: $("#agent-select").value,
       model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-toggle").checked,
     }, {
       meta: (m) => { state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
-      draft_start: (d) => { ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
+      status: (d) => ai.status(d.text),
+      market: (d) => ai.market(d.items || []),
+      draft_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
       draft_done: (d) => { ai.team.done(d); },
       judge_start: () => { ai.team.judge(); scrollDown(); },
       delta: (d) => { if (!raw) { ai.team.judged(); ai.body.classList.add("cursor"); } raw += d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); scrollDown(); },
