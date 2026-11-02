@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from pathlib import Path
 
 from . import agents as ag
 from . import knowledge as kn
@@ -195,6 +197,45 @@ def cmd_learn(args) -> None:
             print(f"⚠️  {e}")
 
 
+def cmd_simulate(args) -> None:
+    from . import simulate as sm
+
+    spec = resolve_model(args.agent, args.model)
+    goal = " ".join(args.goal)
+    model = None
+    try:
+        if args.stock:
+            if args.target is None:
+                sys.exit("--target 수익률(%)을 적어 주세요. 예: --target 20")
+            prices = sm.load_prices(args.stock, args.csv)
+            result = sm.run_stock(prices, args.years, args.target, runs=args.runs)
+            goal = goal or f"{args.stock} {args.years}년 +{args.target}%"
+            sm.print_stock_result(args.stock, result)
+        else:
+            if args.scenario:
+                model = json.loads(Path(args.scenario).read_text(encoding="utf-8"))
+                goal = goal or model.get("title", args.scenario)
+            elif goal:
+                print(f"🧠 시나리오 설계 중... ({spec})")
+                model = sm.build_model(goal, spec)
+            else:
+                sys.exit('목표를 적어 주세요. 예: python -m engine simulate "블로그로 월 1000만원"')
+            result = sm.run_model(model, runs=args.runs)
+            sm.print_model_result(model, result)
+    except sm.FormulaError as e:
+        sys.exit(f"⚠️  {e}")
+
+    print("\n💬 해석\n")
+    explanation = sm.explain(spec, goal, model, result, on_text=lambda t: print(t, end="", flush=True))
+    path = sm.save_report(goal, model, result, explanation)
+    print(f"\n\n📝 보고서: {path.relative_to(ag.COMPANY_DIR)}")
+    if model:
+        scen = path.with_suffix(".json")
+        scen.write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"🔧 가정을 바꿔 다시 돌리려면: {scen.relative_to(ag.COMPANY_DIR)} 수정 후 "
+              f"python -m engine simulate --scenario {scen.relative_to(ag.COMPANY_DIR)}")
+
+
 def cmd_set_model(args) -> None:
     check_agent(args.agent)
     spec = pv.parse_model(args.spec)
@@ -231,6 +272,17 @@ def main(argv=None) -> None:
     s.add_argument("--pages", type=int, default=5, help="주제당 읽을 페이지 수")
     s.add_argument("--model", help="제공자:모델 (기본: researcher 에이전트 모델)")
     s.set_defaults(func=cmd_learn)
+    s = sub.add_parser("simulate", help="목표 달성 확률 시뮬레이션 (사업·주식 등)")
+    s.add_argument("goal", nargs="*", help='원하는 것. 예: "블로그로 월 1000만원"')
+    s.add_argument("--scenario", help="저장된 시나리오 JSON 다시 실행")
+    s.add_argument("--stock", help="주식 티커 (예: AAPL, 005930.KS)")
+    s.add_argument("--csv", help="주가 CSV 파일 (Close/종가 열)")
+    s.add_argument("--years", type=float, default=1.0, help="주식: 몇 년 후 (기본 1)")
+    s.add_argument("--target", type=float, help="주식: 목표 수익률 %%")
+    s.add_argument("--runs", type=int, default=10000, help="시뮬레이션 횟수")
+    s.add_argument("--agent", default="business", help="시나리오를 설계할 에이전트 (기본 business)")
+    s.add_argument("--model", help="제공자:모델")
+    s.set_defaults(func=cmd_simulate)
     s = sub.add_parser("models", help="AI 제공자 상태")
     s.set_defaults(func=cmd_models)
     s = sub.add_parser("set-model", help="에이전트 기본 모델 지정")
