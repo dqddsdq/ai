@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1인 기업 AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<style>
+:root {
+  --bg: #faf9f5; --sidebar: #f0eee6; --panel: #ffffff; --line: #e5e2d8; --line-strong: #d6d2c4;
+  --text: #29261b; --muted: #73705f; --faint: #a19d8c;
+  --accent: #c96442; --accent-hover: #b4573a; --accent-soft: #f5e6de;
+  --user-bubble: #eeece2; --code-bg: #f3f1ea; --ok: #4f7a4a; --warn: #b07a20;
+  --shadow: 0 1px 2px rgba(41,38,27,.06), 0 4px 16px rgba(41,38,27,.06);
+  --serif: "Noto Serif KR", Georgia, serif;
+  --sans: Pretendard, "Pretendard Variable", -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #262624; --sidebar: #1f1e1d; --panel: #30302e; --line: #3d3d3a; --line-strong: #4a4a46;
+    --text: #ece9e1; --muted: #a8a496; --faint: #77746a;
+    --accent: #d97757; --accent-hover: #e08a6d; --accent-soft: #4a3329;
+    --user-bubble: #141413; --code-bg: #1d1d1b; --ok: #8bb784; --warn: #d9a54a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #262624; --sidebar: #1f1e1d; --panel: #30302e; --line: #3d3d3a; --line-strong: #4a4a46;
+  --text: #ece9e1; --muted: #a8a496; --faint: #77746a;
+  --accent: #d97757; --accent-hover: #e08a6d; --accent-soft: #4a3329;
+  --user-bubble: #141413; --code-bg: #1d1d1b; --ok: #8bb784; --warn: #d9a54a;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 15px/1.65 var(--sans); display: flex; overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+/* 사이드바 */
+#sidebar { width: 268px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; padding: 14px 10px; gap: 4px; }
+.brand { font-family: var(--serif); font-size: 19px; font-weight: 600; padding: 4px 10px 12px; display: flex; align-items: center; gap: 8px; }
+.brand-mark { width: 26px; height: 26px; border-radius: 7px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 14px; }
+.side-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; background: none;
+  border-radius: 8px; text-align: left; color: var(--text); font-size: 14px; }
+.side-btn:hover { background: rgba(0,0,0,.05); }
+:root[data-theme="dark"] .side-btn:hover { background: rgba(255,255,255,.06); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .side-btn:hover { background: rgba(255,255,255,.06); } }
+.side-btn.active { background: var(--panel); box-shadow: var(--shadow); }
+.side-btn.primary { color: var(--accent); font-weight: 600; }
+.side-btn .ico { width: 18px; text-align: center; }
+.side-label { font-size: 12px; color: var(--faint); padding: 14px 10px 4px; }
+#conv-list { flex: 1; overflow-y: auto; margin: 0 -2px; padding: 0 2px; }
+.conv { position: relative; }
+.conv .side-btn { padding-right: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.conv .del { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none;
+  color: var(--faint); opacity: 0; padding: 2px 6px; border-radius: 6px; }
+.conv:hover .del { opacity: 1; }
+.conv .del:hover { color: var(--accent); }
+.side-foot { border-top: 1px solid var(--line); padding-top: 8px; font-size: 12px; color: var(--faint); display: flex; justify-content: space-between; align-items: center; padding-left: 10px; }
+
+/* 메인 */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+.topbar { height: 52px; display: flex; align-items: center; padding: 0 20px; gap: 10px; border-bottom: 1px solid transparent; }
+.topbar .title { font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#menu-btn { display: none; border: 0; background: none; font-size: 20px; padding: 4px 8px; }
+.view { flex: 1; display: none; flex-direction: column; min-height: 0; }
+.view.active { display: flex; }
+.scroll { flex: 1; overflow-y: auto; }
+.column { max-width: 760px; margin: 0 auto; padding: 8px 24px 24px; }
+
+/* 빈 화면 */
+.hero { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 24px; }
+.hero h1 { font-family: var(--serif); font-weight: 500; font-size: 34px; margin: 0 0 28px; letter-spacing: -.01em; text-align: center; }
+.hero h1 .spark { color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; max-width: 720px; }
+.chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--muted); }
+.chip:hover { border-color: var(--line-strong); color: var(--text); }
+
+/* 메시지 */
+.msg { margin: 22px 0; }
+.msg.user { display: flex; justify-content: flex-end; }
+.msg.user .bubble { background: var(--user-bubble); border-radius: 16px; padding: 10px 16px; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+.msg.ai .who { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.who .agent { font-weight: 600; color: var(--text); }
+.tag { font-size: 11.5px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; color: var(--muted); background: var(--panel); }
+.tag.src { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+.md { word-break: break-word; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md h1, .md h2, .md h3 { font-family: var(--serif); font-weight: 600; line-height: 1.35; margin: 1.2em 0 .5em; }
+.md h1 { font-size: 1.4em; } .md h2 { font-size: 1.2em; } .md h3 { font-size: 1.05em; }
+.md p { margin: .6em 0; } .md ul, .md ol { padding-left: 1.4em; margin: .5em 0; } .md li { margin: .2em 0; }
+.md code { background: var(--code-bg); border-radius: 5px; padding: .1em .35em; font-size: .9em; font-family: ui-monospace, Consolas, monospace; }
+.md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
+.md table { border-collapse: collapse; margin: .8em 0; font-size: .93em; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; }
+.md th { background: var(--code-bg); }
+.md a { color: var(--accent); }
+.md blockquote { border-left: 3px solid var(--line-strong); margin: .6em 0; padding: 0 0 0 12px; color: var(--muted); }
+.cursor::after { content: "●"; color: var(--accent); animation: blink 1s infinite; margin-left: 2px; font-size: .8em; }
+@keyframes blink { 50% { opacity: .2; } }
+.err { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.msg-actions { margin-top: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
+.msg.ai:hover .msg-actions { opacity: 1; }
+.icon-btn { border: 0; background: none; color: var(--faint); font-size: 12.5px; padding: 3px 8px; border-radius: 6px; }
+.icon-btn:hover { background: var(--code-bg); color: var(--text); }
+
+/* 입력창 */
+.composer-wrap { padding: 0 24px 18px; }
+.composer { max-width: 760px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: 18px; box-shadow: var(--shadow); padding: 12px 12px 8px 16px; transition: border-color .15s; }
+.composer:focus-within { border-color: var(--faint); }
+.composer textarea { width: 100%; border: 0; outline: 0; resize: none; background: none; min-height: 26px; max-height: 240px; line-height: 1.55; }
+.composer-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.composer select { border: 1px solid transparent; background: none; color: var(--muted); font-size: 13px; padding: 4px 6px; border-radius: 8px; max-width: 170px; }
+.composer select:hover { background: var(--code-bg); }
+.spacer { flex: 1; }
+.send { width: 34px; height: 34px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 16px; }
+.send:hover { background: var(--accent-hover); }
+.send:disabled { opacity: .35; cursor: default; }
+.send.stop { background: var(--text); }
+.hint { text-align: center; font-size: 11.5px; color: var(--faint); margin-top: 8px; }
+.toggle { display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--muted); padding: 4px 6px; border-radius: 8px; user-select: none; cursor: pointer; }
+.toggle:hover { background: var(--code-bg); }
+
+/* 공부 / 시뮬 */
+.page-head { font-family: var(--serif); font-size: 26px; font-weight: 500; margin: 18px 0 4px; }
+.page-sub { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 12px 0; box-shadow: var(--shadow); }
+.field { width: 100%; border: 1px solid var(--line-strong); background: var(--bg); border-radius: 10px; padding: 9px 12px; outline: 0; }
+.field:focus { border-color: var(--faint); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn { border: 1px solid var(--line-strong); background: var(--panel); border-radius: 10px; padding: 8px 14px; font-size: 14px; }
+.btn:hover { background: var(--code-bg); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn:disabled { opacity: .5; cursor: default; }
+.log { font: 12.5px/1.6 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
+.note-list { display: grid; gap: 6px; }
+.note-item { display: flex; justify-content: space-between; gap: 10px; align-items: center; text-align: left; width: 100%;
+  border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 9px 12px; }
+.note-item:hover { border-color: var(--line-strong); }
+.status { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.status.todo { background: var(--accent-soft); color: var(--accent); }
+.status.done { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 ui-monospace, Consolas, monospace; margin: 0; }
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.tab { border: 0; background: none; padding: 6px 12px; border-radius: 8px; color: var(--muted); }
+.tab.active { background: var(--code-bg); color: var(--text); font-weight: 600; }
+.muted { color: var(--muted); font-size: 13px; }
+
+@media (max-width: 800px) {
+  #sidebar { position: fixed; inset: 0 auto 0 0; z-index: 10; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
+  #sidebar.open { transform: none; }
+  #menu-btn { display: block; }
+  .column, .composer-wrap { padding-left: 16px; padding-right: 16px; }
+  .hero h1 { font-size: 26px; }
+}
+</style>
+</head>
+<body>
+<aside id="sidebar">
+  <div class="brand"><span class="brand-mark">✳</span><span id="company">1인 기업 AI</span></div>
+  <button class="side-btn primary" id="new-chat"><span class="ico">＋</span>새 대화</button>
+  <button class="side-btn nav" data-view="chat"><span class="ico">💬</span>채팅</button>
+  <button class="side-btn nav" data-view="learn"><span class="ico">📚</span>공부 노트</button>
+  <button class="side-btn nav" data-view="sim"><span class="ico">🎲</span>시뮬레이션</button>
+  <div class="side-label">최근 대화</div>
+  <div id="conv-list"></div>
+  <div class="side-foot"><span>내 PC에서만 실행 중</span><button class="icon-btn" id="theme-btn" title="화면 테마">◐</button></div>
+</aside>
+
+<main id="main">
+  <div class="topbar"><button id="menu-btn" aria-label="메뉴">☰</button><div class="title" id="top-title"></div></div>
+
+  <!-- 채팅 -->
+  <section class="view active" id="view-chat">
+    <div class="hero" id="hero">
+      <h1><span class="spark">✳</span> <span id="greet">무엇을 도와드릴까요?</span></h1>
+      <div style="width:100%;max-width:760px" id="hero-slot"></div>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div class="scroll" id="chat-scroll" hidden><div class="column" id="messages"></div></div>
+    <div class="composer-wrap" id="composer-home">
+      <div class="composer" id="composer">
+        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요. CEO가 알맞은 담당자에게 넘겨요."></textarea>
+        <div class="composer-row">
+          <select id="agent-select" title="담당 에이전트"></select>
+          <select id="model-select" title="AI 모델"></select>
+          <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료 참고</label>
+          <div class="spacer"></div>
+          <button class="send" id="send-btn" disabled title="보내기 (Enter)">↑</button>
+        </div>
+      </div>
+      <div class="hint">Enter 보내기 · Shift+Enter 줄바꿈 · AI는 실수할 수 있어요</div>
+    </div>
+  </section>
+
+  <!-- 공부 노트 -->
+  <section class="view" id="view-learn">
+    <div class="scroll"><div class="column">
+      <div class="page-head">공부 노트</div>
+      <p class="page-sub">AI가 스스로 검색하고 읽어서 정리한 노트예요. 채팅할 때 자동으로 참고해요.</p>
+      <div class="card">
+        <div class="row">
+          <input class="field" id="learn-topic" placeholder="공부할 주제 (예: 블로그 애드센스 승인 조건)" style="flex:1;min-width:200px">
+          <button class="btn primary" id="learn-btn">공부시키기</button>
+          <button class="btn" id="learn-auto">주제 알아서 고르기</button>
+        </div>
+        <div class="log" id="learn-log" hidden></div>
+      </div>
+      <div id="note-view" hidden class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <span class="muted" id="note-path"></span><button class="icon-btn" id="note-close">닫기 ✕</button></div>
+        <div class="md" id="note-body"></div></div>
+      <div class="note-list" id="note-list"></div>
+    </div></div>
+  </section>
+
+  <!-- 시뮬레이션 -->
+  <section class="view" id="view-sim">
+    <div class="scroll"><div class="column">
+      <div class="page-head">시뮬레이션</div>
+      <p class="page-sub">원하는 걸 말하면 1만 번 가상으로 돌려서 달성 확률을 알려줘요. 예측이 아니라 "가정이 맞다면"의 결과예요.</p>
+      <div class="card">
+        <div class="tabs"><button class="tab active" data-sim="goal">사업 목표</button><button class="tab" data-sim="stock">주식</button></div>
+        <div id="sim-goal-form">
+          <textarea class="field" id="sim-goal" rows="2" placeholder="예: 애드센스 블로그로 2년 안에 월 1000만원"></textarea>
+        </div>
+        <div id="sim-stock-form" hidden class="row">
+          <input class="field" id="sim-ticker" placeholder="티커 (예: 005930.KS, AAPL)" style="flex:2;min-width:160px">
+          <input class="field" id="sim-years" type="number" step="0.5" value="1" style="flex:1;min-width:80px" title="기간(년)">
+          <input class="field" id="sim-target" type="number" value="20" style="flex:1;min-width:80px" title="목표 수익률 %">
+        </div>
+        <div class="row" style="margin-top:10px"><div class="spacer"></div><button class="btn primary" id="sim-btn">시뮬레이션 실행</button></div>
+        <div class="log" id="sim-log" hidden></div>
+      </div>
+      <div id="sim-out" hidden class="card">
+        <pre class="result" id="sim-result"></pre>
+        <div class="md" id="sim-explain" style="margin-top:14px"></div>
+        <div class="muted" id="sim-report" style="margin-top:10px"></div>
+      </div>
+    </div></div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const state = { conv: null, meta: null, busy: false, controller: null };
+
+// ── 유틸 ──
+// 가벼운 마크다운 → HTML (먼저 전부 이스케이프하므로 안전, 오프라인 동작)
+function inline(t) {
+  return t
+    .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+function md(text) {
+  const lines = esc(text || "").split("\n"); const out = []; let i = 0;
+  const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${buf.join("\n")}</code></pre>`); continue; }
+    const h = l.match(/^(#{1,4})\s+(.*)$/); if (h) { const n = Math.min(h[1].length, 3); out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { out.push("<hr>"); i++; continue; }
+    if (l.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
+      out.push(`<table><thead><tr>${head.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`); continue;
+    }
+    if (/^&gt;\s?/.test(l)) { const buf = []; while (i < lines.length && /^&gt;\s?/.test(lines[i])) buf.push(inline(lines[i++].replace(/^&gt;\s?/, ""))); out.push(`<blockquote>${buf.join("<br>")}</blockquote>`); continue; }
+    const li = l.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      const ordered = /\d/.test(li[1]); const items = [];
+      while (i < lines.length) {
+        const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        if (m) { items.push({ depth: m[1].length >= 2 ? 1 : 0, text: inline(m[3].replace(/^\[ \]\s*/, "☐ ").replace(/^\[x\]\s*/i, "☑ ")) }); i++; }
+        else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) { items[items.length - 1].text += "<br>" + inline(lines[i].trim()); i++; }
+        else break;
+      }
+      const tag = ordered ? "ol" : "ul"; let html = `<${tag}>`;
+      items.forEach((it, k) => { const next = items[k + 1];
+        html += `<li>${it.text}`; if (next && next.depth > it.depth) html += "<ul>"; else html += "</li>";
+        if (it.depth > 0 && (!next || next.depth < it.depth)) html += "</ul></li>"; });
+      out.push(html + `</${tag}>`); continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const buf = []; while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*([-*+]|\d+[.)])\s|&gt;)/.test(lines[i]) && !(lines[i].includes("|") && isTableSep(lines[i + 1] || ""))) buf.push(inline(lines[i++]));
+    out.push(`<p>${buf.join("<br>")}</p>`);
+  }
+  return out.join("");
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+async function api(path, body) {
+  const opt = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Company-AI": "1" }, body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opt); return r.json();
+}
+// POST + Server-Sent Events 읽기
+async function stream(path, body, handlers, signal) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Company-AI": "1" }, body: JSON.stringify(body), signal });
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  while (true) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, i); buf = buf.slice(i + 2);
+      const ev = (block.match(/^event: (.*)$/m) || [])[1]; const data = (block.match(/^data: (.*)$/m) || [])[1];
+      if (ev && data && handlers[ev]) handlers[ev](JSON.parse(data));
+    }
+  }
+}
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+// ── 테마 ──
+function applyTheme(t) { if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+applyTheme(store.get("theme", ""));
+$("#theme-btn").onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark"; applyTheme(next); store.set("theme", next);
+};
+
+// ── 화면 전환 ──
+function show(view) {
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + view));
+  document.querySelectorAll(".side-btn.nav").forEach(b => b.classList.toggle("active", b.dataset.view === view));
+  $("#sidebar").classList.remove("open");
+  if (view === "learn") loadNotes();
+  $("#top-title").textContent = view === "chat" ? (state.conv?.title || "") : "";
+}
+document.querySelectorAll(".side-btn.nav").forEach(b => b.onclick = () => show(b.dataset.view));
+$("#menu-btn").onclick = () => $("#sidebar").classList.toggle("open");
+
+// ── 초기화 ──
+async function init() {
+  const meta = await api("/api/meta"); state.meta = meta;
+  $("#company").textContent = meta.company; document.title = meta.company + " · AI";
+  const hour = new Date().getHours();
+  $("#greet").textContent = (hour < 12 ? "좋은 아침이에요" : hour < 18 ? "좋은 오후예요" : "좋은 저녁이에요") + ", 사장님";
+  const as = $("#agent-select");
+  as.innerHTML = `<option value="auto">🧭 자동 배정</option>` + meta.agents.map(a => `<option value="${esc(a.id)}">${esc(a.id)}</option>`).join("");
+  $("#model-select").innerHTML = meta.models.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join("");
+  as.value = store.get("agent", "auto"); if (!as.value) as.value = "auto";
+  $("#model-select").value = store.get("model", "");
+  as.onchange = () => store.set("agent", as.value); $("#model-select").onchange = () => store.set("model", $("#model-select").value);
+  const ideas = ["이번 주 유튜브 쇼츠 아이디어 5개", "월 1000만원 가려면 지금 뭐부터 해야 해?", "어도비 스톡 공부 노트 요약해줘", "홈페이지 제작 외주 가격 정하는 법"];
+  $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
+  document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
+  newChat(); loadConvs(); show("chat");
+}
+
+// ── 대화 목록 ──
+async function loadConvs() {
+  const list = await api("/api/conversations");
+  $("#conv-list").innerHTML = list.map(c => `<div class="conv"><button class="side-btn${state.conv?.id === c.id ? " active" : ""}" data-id="${esc(c.id)}" title="${esc(c.title)}">${esc(c.title)}</button><button class="del" data-del="${esc(c.id)}" title="삭제">✕</button></div>`).join("") || `<div class="muted" style="padding:6px 10px">아직 대화가 없어요</div>`;
+  document.querySelectorAll("#conv-list [data-id]").forEach(b => b.onclick = () => openConv(b.dataset.id));
+  document.querySelectorAll("#conv-list [data-del]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation(); if (!confirm("이 대화를 삭제할까요?")) return;
+    await api(`/api/conversations/${b.dataset.del}/delete`, {}); if (state.conv?.id === b.dataset.del) newChat(); loadConvs();
+  });
+}
+function newChat() {
+  state.conv = null; $("#messages").innerHTML = ""; $("#chat-scroll").hidden = true; $("#hero").hidden = false;
+  $("#hero-slot").appendChild($("#composer")); $("#top-title").textContent = ""; show("chat"); $("#input").focus();
+  document.querySelectorAll("#conv-list .side-btn").forEach(b => b.classList.remove("active"));
+}
+$("#new-chat").onclick = newChat;
+function enterThread() {
+  if (!$("#chat-scroll").hidden) return;
+  $("#hero").hidden = true; $("#chat-scroll").hidden = false; $("#composer-home").prepend($("#composer"));
+}
+async function openConv(id) {
+  const c = await api("/api/conversations/" + id); if (c.error) return;
+  state.conv = c; show("chat"); enterThread(); $("#messages").innerHTML = "";
+  for (const m of c.messages) m.role === "user" ? addUser(m.content) : addAI(m).body.innerHTML = md(m.content);
+  $("#top-title").textContent = c.title; scrollDown(true); loadConvs();
+}
+
+// ── 메시지 그리기 ──
+function addUser(text) {
+  const el = document.createElement("div"); el.className = "msg user"; el.innerHTML = `<div class="bubble">${esc(text)}</div>`;
+  $("#messages").appendChild(el);
+}
+function addAI(info = {}) {
+  const el = document.createElement("div"); el.className = "msg ai";
+  el.innerHTML = `<div class="who"></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
+  $("#messages").appendChild(el);
+  const who = el.querySelector(".who"), body = el.querySelector(".md");
+  const setWho = (i) => {
+    const agent = state.meta?.agents.find(a => a.id === i.agent);
+    who.innerHTML = (i.reason ? `<span>🧭 CEO →</span>` : "") + `<span class="agent">${esc(i.agent || "…")}</span>`
+      + (i.model ? `<span class="tag">${esc(i.model)}</span>` : "")
+      + (i.sources || []).map(s => `<span class="tag src" title="${esc(s)}">📚 ${esc(s.split("/").pop().replace(/\.md$/, ""))}</span>`).join("");
+    if (agent) who.title = agent.summary;
+  };
+  setWho(info);
+  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText(el.dataset.raw || body.innerText); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
+  return { el, body, setWho };
+}
+function scrollDown(force) {
+  const s = $("#chat-scroll"); if (force || s.scrollHeight - s.scrollTop - s.clientHeight < 160) s.scrollTop = s.scrollHeight;
+}
+
+// ── 보내기 ──
+const input = $("#input"), sendBtn = $("#send-btn");
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 240) + "px"; sendBtn.disabled = !state.busy && !input.value.trim(); }
+input.addEventListener("input", autosize);
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!state.busy) send(); }
+});
+sendBtn.onclick = () => state.busy ? state.controller?.abort() : send();
+function setBusy(b) { state.busy = b; sendBtn.classList.toggle("stop", b); sendBtn.textContent = b ? "■" : "↑"; sendBtn.title = b ? "중지" : "보내기 (Enter)"; autosize(); }
+
+async function send() {
+  const text = input.value.trim(); if (!text || state.busy) return;
+  input.value = ""; autosize(); enterThread(); addUser(text);
+  const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
+  ai.body.classList.add("cursor"); scrollDown(true);
+  let raw = ""; setBusy(true); state.controller = new AbortController();
+  try {
+    await stream("/api/chat", {
+      conversation_id: state.conv?.id, message: text, agent: $("#agent-select").value,
+      model: $("#model-select").value, knowledge: $("#kn-toggle").checked,
+    }, {
+      meta: (m) => { state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
+      delta: (d) => { raw += d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = md(raw); scrollDown(); },
+      error: (e) => { ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ ${esc(e.message)}</div>`); },
+      done: () => {},
+    }, state.controller.signal);
+  } catch (e) {
+    if (e.name !== "AbortError") ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ 연결 오류: ${esc(e.message)}</div>`);
+    else ai.body.insertAdjacentHTML("beforeend", `<div class="muted">(중지됨)</div>`);
+  } finally {
+    ai.body.classList.remove("cursor"); setBusy(false); loadConvs(); input.focus();
+  }
+}
+
+// ── 공부 노트 ──
+async function loadNotes() {
+  const notes = await api("/api/wiki");
+  $("#note-list").innerHTML = notes.map(n => `<button class="note-item" data-path="${esc(n.path)}"><span>${esc(n.topic)}<br><span class="muted">${esc(n.path.split("/")[0])}</span></span><span class="status ${n.status.includes("완료") ? "done" : "todo"}">${esc(n.status || "—")}</span></button>`).join("")
+    || `<p class="muted">아직 노트가 없어요. 위에서 주제를 넣고 공부시켜 보세요.</p>`;
+  document.querySelectorAll(".note-item").forEach(b => b.onclick = () => openNote(b.dataset.path));
+}
+async function openNote(path) {
+  const n = await api("/api/wiki/" + encodeURIComponent(path)); if (n.error) return;
+  $("#note-path").textContent = n.path; $("#note-body").innerHTML = md(n.content.replace(/^---[\s\S]*?---\n/, ""));
+  $("#note-view").hidden = false; $("#note-view").scrollIntoView({ behavior: "smooth" });
+}
+$("#note-close").onclick = () => $("#note-view").hidden = true;
+async function runLearn(body) {
+  const log = $("#learn-log"); log.hidden = false; log.textContent = "";
+  const btns = [$("#learn-btn"), $("#learn-auto")]; btns.forEach(b => b.disabled = true);
+  try {
+    await stream("/api/learn", { ...body, model: $("#model-select").value }, {
+      log: (d) => { log.textContent += d.text + "\n"; log.scrollTop = log.scrollHeight; },
+      note: (d) => { loadNotes(); openNote(d.path); },
+      error: (e) => { log.textContent += "⚠️ " + e.message + "\n"; },
+      done: () => { log.textContent += "✅ 완료\n"; },
+    });
+  } catch (e) { log.textContent += "⚠️ " + e.message + "\n"; }
+  finally { btns.forEach(b => b.disabled = false); }
+}
+$("#learn-btn").onclick = () => { const t = $("#learn-topic").value.trim(); if (t) runLearn({ topic: t }); else $("#learn-topic").focus(); };
+$("#learn-topic").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) $("#learn-btn").click(); });
+$("#learn-auto").onclick = () => runLearn({ rounds: 1 });
+
+// ── 시뮬레이션 ──
+let simMode = "goal";
+document.querySelectorAll("[data-sim]").forEach(t => t.onclick = () => {
+  simMode = t.dataset.sim; document.querySelectorAll("[data-sim]").forEach(x => x.classList.toggle("active", x === t));
+  $("#sim-goal-form").hidden = simMode !== "goal"; $("#sim-stock-form").hidden = simMode !== "stock";
+});
+$("#sim-btn").onclick = async () => {
+  const body = simMode === "goal" ? { goal: $("#sim-goal").value.trim() }
+    : { stock: $("#sim-ticker").value.trim(), years: $("#sim-years").value, target: $("#sim-target").value };
+  if (simMode === "goal" && !body.goal) return $("#sim-goal").focus();
+  if (simMode === "stock" && !body.stock) return $("#sim-ticker").focus();
+  body.model = $("#model-select").value;
+  const log = $("#sim-log"); log.hidden = false; log.textContent = ""; $("#sim-out").hidden = true;
+  $("#sim-btn").disabled = true; let raw = "";
+  try {
+    await stream("/api/simulate", body, {
+      log: (d) => { log.textContent += d.text + "\n"; },
+      result: (d) => { $("#sim-out").hidden = false; $("#sim-result").textContent = d.text; $("#sim-explain").innerHTML = ""; $("#sim-explain").classList.add("cursor"); $("#sim-report").textContent = ""; },
+      delta: (d) => { raw += d.text; $("#sim-explain").innerHTML = md(raw); },
+      error: (e) => { log.textContent += "⚠️ " + e.message + "\n"; },
+      done: (d) => { $("#sim-report").textContent = d.report ? "📝 보고서 저장: " + d.report : ""; log.hidden = true; },
+    });
+  } catch (e) { log.textContent += "⚠️ " + e.message + "\n"; }
+  finally { $("#sim-btn").disabled = false; $("#sim-explain").classList.remove("cursor"); }
+};
+
+init();
+</script>
+</body>
+</html>

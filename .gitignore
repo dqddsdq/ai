@@ -9,3 +9,8 @@ node_modules/
 Thumbs.db
 __pycache__/
 *.pyc
+
+# 비밀 키
+.env
+_company/.env
+!.env.example

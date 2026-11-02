@@ -240,6 +240,12 @@ def cmd_simulate(args) -> None:
               f"python -m engine simulate --scenario {scen.relative_to(ag.COMPANY_DIR)}")
 
 
+def cmd_web(args) -> None:
+    from . import web
+
+    web.serve(port=args.port, open_browser=not args.no_browser)
+
+
 def cmd_set_model(args) -> None:
     check_agent(args.agent)
     spec = pv.parse_model(args.spec)
@@ -287,6 +293,10 @@ def main(argv=None) -> None:
     s.add_argument("--agent", default="business", help="시나리오를 설계할 에이전트 (기본 business)")
     s.add_argument("--model", help="제공자:모델")
     s.set_defaults(func=cmd_simulate)
+    s = sub.add_parser("web", help="브라우저 화면 열기 (Claude 앱 스타일)")
+    s.add_argument("--port", type=int, default=8765)
+    s.add_argument("--no-browser", action="store_true")
+    s.set_defaults(func=cmd_web)
     s = sub.add_parser("models", help="AI 제공자 상태")
     s.set_defaults(func=cmd_models)
     s = sub.add_parser("set-model", help="에이전트 기본 모델 지정")

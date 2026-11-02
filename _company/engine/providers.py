@@ -226,12 +226,14 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web):
                             text=True, encoding="utf-8", errors="replace", cwd=os.getcwd())
     proc.stdin.write(prompt)
     proc.stdin.close()
-    text = _emit(on_text, iter(proc.stdout.readline, ""))
     try:
+        text = _emit(on_text, iter(proc.stdout.readline, ""))
         proc.wait(timeout=CLAUDECODE_TIMEOUT)
     except subprocess.TimeoutExpired:
-        proc.kill()
         raise ProviderError("Claude Code 응답 시간 초과")
+    finally:
+        if proc.poll() is None:  # 중지 버튼 등으로 중간에 끊기면 claude 프로세스도 정리
+            proc.kill()
     if proc.returncode != 0:
         err = proc.stderr.read().strip()[-500:]
         raise ProviderError(f"Claude Code 오류 (코드 {proc.returncode}): {err or text[-300:]}")
