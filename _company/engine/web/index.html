@@ -144,6 +144,19 @@ button { cursor: pointer; }
 .countdown b { font-size: 64px; display: block; font-family: var(--serif); }
 #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: grid; place-items: center; z-index: 70; cursor: zoom-out; }
 #lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 8px; }
+.share-btn.on { color: #d1453b; background: color-mix(in srgb, #d1453b 12%, transparent); }
+#share-panel { position: fixed; right: 18px; bottom: 150px; width: 300px; background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; z-index: 20; }
+#share-panel video { width: 100%; display: block; background: #000; aspect-ratio: 16/10; object-fit: contain; }
+.share-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 12.5px; }
+.share-head .live { color: #d1453b; font-weight: 700; white-space: nowrap; }
+.share-head .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
+.share-head .spacer { flex: 1; }
+.share-head .icon-btn { white-space: nowrap; flex-shrink: 0; }
+.share-foot { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+.share-foot label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+#share-panel.min video { display: none; }
+@media (max-width: 800px) { #share-panel { width: 200px; bottom: 140px; right: 10px; } }
 .err { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .msg-actions { margin-top: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .msg.ai:hover .msg-actions { opacity: 1; }
@@ -229,10 +242,10 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
     <div class="composer-wrap" id="composer-home">
       <div class="composer" id="composer">
         <div class="attach-row" id="attach-row"></div>
-        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요. 차트 화면은 📸 캡처하거나 Ctrl+V로 붙여넣으세요."></textarea>
+        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요. 🖥️ 로 토스 화면을 공유하면 질문할 때 같이 봐요."></textarea>
         <div class="composer-row">
           <button class="tool-btn" id="attach-btn" title="이미지 첨부 (Ctrl+V 붙여넣기, 끌어다 놓기도 돼요)">📎</button>
-          <button class="tool-btn" id="capture-btn" title="내 화면 캡처 — 누르고 3초 안에 토스 창으로 바꾸세요">📸</button>
+          <button class="tool-btn share-btn" id="share-btn" title="화면 공유 (디스코드 방송처럼) — 토스 창이나 탭을 고르면, 질문할 때마다 그 화면이 자동으로 같이 가요">🖥️</button>
           <input type="file" id="file-input" accept="image/*" multiple hidden>
           <select id="agent-select" title="담당 에이전트"></select>
           <select id="model-select" title="AI 모델"></select>
@@ -291,6 +304,13 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       </div>
     </div></div>
   </section>
+  <div id="share-panel" hidden>
+    <div class="share-head"><span class="live">● 공유 중</span><span class="muted">질문하면 이 화면이 같이 가요</span><div class="spacer"></div>
+      <button class="icon-btn" id="share-min" title="미리보기 접기">－</button><button class="icon-btn" id="share-stop" title="공유 중지">중지</button></div>
+    <video id="share-video" autoplay muted playsinline></video>
+    <div class="share-foot"><label><input type="checkbox" id="share-auto" checked>질문할 때 자동 첨부</label><div class="spacer"></div>
+      <button class="icon-btn" id="share-snap" title="지금 화면을 첨부 목록에 추가">📸 지금 첨부</button></div>
+  </div>
 </main>
 
 <script>
@@ -563,17 +583,48 @@ window.addEventListener("dragenter", (e) => { if ([...e.dataTransfer.types].incl
 window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop-hint")?.remove(); } });
 window.addEventListener("dragover", (e) => e.preventDefault());
 window.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("#drop-hint")?.remove(); [...e.dataTransfer.files].forEach(uploadBlob); });
-$("#capture-btn").onclick = async () => {
-  const delay = 3;
-  const ov = document.createElement("div"); ov.className = "countdown";
-  ov.innerHTML = `<div><b id="cd-n">${delay}</b>지금 토스 창(차트 화면)으로 바꿔 주세요<br><span style="font-size:14px;opacity:.8">화면을 찍기만 하고 아무것도 누르지 않아요</span></div>`;
-  document.body.appendChild(ov);
-  const req = api("/api/capture", { delay });
-  for (let n = delay - 1; n >= 0; n--) { await new Promise(r => setTimeout(r, 1000)); const el = $("#cd-n"); if (el) el.textContent = n || "📸"; }
-  const res = await req; ov.remove();
-  if (res.id) { attachments.push({ id: res.id, url: "/api/upload/" + res.id }); renderAttachments(); input.focus(); }
-  else alert(res.error || "캡처 실패");
+// ── 화면 공유 (브라우저 기본 기능: getDisplayMedia) ──
+// 공유 화면은 내 PC 안에서만 보이고, 질문할 때 그 순간 한 장만 AI에게 보내요.
+const share = {
+  stream: null,
+  async start() {
+    if (!navigator.mediaDevices?.getDisplayMedia) return alert("이 브라우저는 화면 공유를 지원하지 않아요. 크롬이나 엣지를 써 주세요.");
+    try {
+      this.stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 5, width: { ideal: 1920 } }, audio: false,
+        selfBrowserSurface: "exclude", surfaceSwitching: "include", monitorTypeSurfaces: "include",
+      });
+    } catch (e) { if (e.name !== "NotAllowedError") alert("화면 공유 실패: " + e.message); return; }
+    const track = this.stream.getVideoTracks()[0];
+    track.onended = () => this.stop();
+    $("#share-video").srcObject = this.stream;
+    $("#share-panel").hidden = false; $("#share-btn").classList.add("on"); $("#share-btn").title = "화면 공유 중 (누르면 중지)";
+  },
+  stop() {
+    this.stream?.getTracks().forEach(t => t.stop()); this.stream = null;
+    $("#share-video").srcObject = null; $("#share-panel").hidden = true;
+    $("#share-btn").classList.remove("on"); $("#share-btn").title = "화면 공유 (디스코드 방송처럼)";
+  },
+  async frameBlob() {
+    const v = $("#share-video");
+    if (!this.stream || !v.videoWidth) { await new Promise(r => setTimeout(r, 300)); if (!v.videoWidth) return null; }
+    const scale = Math.min(1, 1920 / v.videoWidth);
+    const c = document.createElement("canvas"); c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(r, "image/png"));
+  },
+  async frameId() {
+    const blob = await this.frameBlob(); if (!blob) return null;
+    const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+    const res = await api("/api/upload", { data }); return res.id || null;
+  },
 };
+$("#share-btn").onclick = () => share.stream ? share.stop() : share.start();
+$("#share-stop").onclick = () => share.stop();
+$("#share-min").onclick = () => { const p = $("#share-panel"); p.classList.toggle("min"); $("#share-min").textContent = p.classList.contains("min") ? "＋" : "－"; };
+$("#share-snap").onclick = async () => { const b = await share.frameBlob(); if (b) uploadBlob(b); };
+$("#share-auto").checked = store.get("shareAuto", "1") === "1";
+$("#share-auto").onchange = () => store.set("shareAuto", $("#share-auto").checked ? "1" : "0");
 function lightbox(src) {
   const lb = document.createElement("div"); lb.id = "lightbox"; lb.innerHTML = `<img src="${src}" alt="">`;
   lb.onclick = () => lb.remove(); document.body.appendChild(lb);
@@ -586,9 +637,13 @@ sendBtn.onclick = () => state.busy ? state.controller?.abort() : send();
 function setBusy(b) { state.busy = b; sendBtn.classList.toggle("stop", b); sendBtn.textContent = b ? "■" : "↑"; sendBtn.title = b ? "중지" : "보내기 (Enter)"; autosize(); }
 
 async function send() {
-  const text = input.value.trim(); const images = attachments.filter(a => a.id).map(a => a.id);
-  if ((!text && !images.length) || state.busy) return;
+  const text = input.value.trim();
+  if ((!text && !attachments.length) || state.busy) return;
   if (attachments.some(a => !a.id)) return alert("이미지 올리는 중이에요. 잠시만요.");
+  const images = attachments.filter(a => a.id).map(a => a.id);
+  if (share.stream && $("#share-auto").checked) {
+    const id = await share.frameId(); if (id) images.push(id);
+  }
   input.value = ""; attachments = []; renderAttachments(); autosize(); enterThread(); addUser(text || "첨부한 화면을 분석해 줘.", images);
   const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
   ai.body.classList.add("cursor"); scrollDown(true);

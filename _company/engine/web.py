@@ -332,10 +332,12 @@ class Handler(BaseHTTPRequestHandler):
         if not tm.team_config(agent_id).get("market_data"):
             return ""
         self._send("status", {"text": "📈 종목 찾는 중..."})
-        recent = "\n".join(m["content"][:500] for m in history[-3:])
+        recent = "\n".join(re.sub(r"\[화면 캡처 \d+장 첨부\]", "", m["content"])[:500] for m in history[-3:])
         try:
             reply = pv.chat(spec, mk.TICKER_PROMPT, [{"role": "user", "content": recent}], effort="low")
-            tickers = [t for t in ln._json_list(reply) if t][:5]
+            # 티커 모양만 통과 (6자리.KS/.KQ 또는 영문 티커) — 엉뚱한 글자는 버림
+            tickers = [t.strip().upper() for t in ln._json_list(reply)
+                       if re.fullmatch(r"\d{6}(\.(KS|KQ))?|[A-Za-z][A-Za-z.\-]{0,9}", t.strip())][:5]
         except pv.ProviderError:
             tickers = []
         if not tickers:
