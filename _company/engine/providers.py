@@ -1,22 +1,29 @@
 """AI 제공자(Provider) 모음 — Claude, OpenAI, Gemini, 그리고 OpenAI 호환 API.
 
 모델은 "제공자:모델명" 형식으로 지정합니다.
-  claude:claude-opus-5-5
+  claudecode                (설치된 Claude Code 로그인 사용, API 키 불필요 — 기본값)
+  claude:claude-opus-5-5    (Anthropic API 키 사용)
   openai:gpt-5
   gemini:gemini-2.5-pro
-  ollama:gemma4:latest      (로컬, 무료)
+  local                     (켜져 있는 로컬 실행기 + 로드된 모델 자동 감지, 기본값)
+  lmstudio:gemma-3-12b-it   (LM Studio, 무료)
+  llamacpp:any              (llama.cpp server)
+  vllm:모델명               (vLLM)
+  ollama:gemma4:latest      (Ollama)
   mistral:mistral-large-latest
   groq:llama-3.3-70b-versatile
   xai:grok-4
   echo:test                 (API 없이 테스트용)
 
-접두사가 없으면(예: "gemma4:latest") 기존 설정과 호환되도록 ollama로 처리합니다.
+접두사가 없으면(예: "gemma4:latest") 켜져 있는 로컬 실행기에서 그 모델을 찾습니다.
 중국계 모델은 BLOCKED_MODEL_KEYWORDS로 차단합니다.
 """
 
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
@@ -29,29 +36,43 @@ BLOCKED_MODEL_KEYWORDS = (
 
 # 기본 모델 — .env 에서 바꿀 수 있습니다 (예: OPENAI_MODEL=gpt-5.5)
 DEFAULT_MODELS = {
+    "claudecode": lambda: os.getenv("CLAUDECODE_MODEL", "default"),
     "claude": lambda: os.getenv("CLAUDE_MODEL", "claude-opus-5-5"),
     "openai": lambda: os.getenv("OPENAI_MODEL", "gpt-5"),
     "gemini": lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
-    "ollama": lambda: os.getenv("OLLAMA_MODEL", "gemma4:latest"),
+    "local": lambda: os.getenv("LOCAL_MODEL", "auto"),
+    "lmstudio": lambda: os.getenv("LMSTUDIO_MODEL", "auto"),
+    "llamacpp": lambda: os.getenv("LLAMACPP_MODEL", "auto"),
+    "vllm": lambda: os.getenv("VLLM_MODEL", "auto"),
+    "ollama": lambda: os.getenv("OLLAMA_MODEL", "auto"),
     "mistral": lambda: os.getenv("MISTRAL_MODEL", "mistral-large-latest"),
     "groq": lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
     "xai": lambda: os.getenv("XAI_MODEL", "grok-4"),
     "echo": lambda: "test",
 }
 
-# OpenAI 호환 엔드포인트: (base_url 환경변수/기본값, API 키 환경변수)
+# 내 PC에서 돌아가는 실행기들 (모두 OpenAI 호환 API 제공): (주소 환경변수, 기본 주소)
+LOCAL_SERVERS = {
+    "lmstudio": ("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"),
+    "llamacpp": ("LLAMACPP_BASE_URL", "http://localhost:8080/v1"),
+    "vllm": ("VLLM_BASE_URL", "http://localhost:8000/v1"),
+    "ollama": ("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+}
+
+# 클라우드 OpenAI 호환 엔드포인트: (base_url, API 키 환경변수)
 OPENAI_COMPATIBLE = {
-    "ollama": (os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"), None),
     "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
     "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
     "xai": ("https://api.x.ai/v1", "XAI_API_KEY"),
 }
 
 KEY_ENV = {
+    "claudecode": None,
     "claude": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
     **{name: env for name, (_, env) in OPENAI_COMPATIBLE.items()},
+    **{name: None for name in (*LOCAL_SERVERS, "local")},
     "echo": None,
 }
 
@@ -73,15 +94,28 @@ class ModelSpec:
         return f"{self.provider}:{self.model}"
 
 
+def claude_cli() -> str | None:
+    return os.getenv("CLAUDE_CLI") or shutil.which("claude")
+
+
+def _auto_default() -> str:
+    """키/설치 상태를 보고 기본 제공자 고르기: Claude Code → Claude API → 로컬."""
+    if claude_cli():
+        return "claudecode"
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "claude"
+    return "local"
+
+
 def parse_model(spec: str | None) -> ModelSpec:
-    """'claude:claude-opus-5-5' → ModelSpec. 접두사 없으면 ollama."""
-    spec = (spec or os.getenv("DEFAULT_MODEL") or "ollama").strip()
+    """'claude:claude-opus-5-5' → ModelSpec. 접두사 없으면 로컬 자동 감지."""
+    spec = (spec or os.getenv("DEFAULT_MODEL") or _auto_default()).strip()
     prefix, _, rest = spec.partition(":")
     if prefix.lower() in DEFAULT_MODELS:
         provider = prefix.lower()
         model = rest or DEFAULT_MODELS[provider]()
     else:
-        provider, model = "ollama", spec
+        provider, model = "local", spec
     lowered = model.lower()
     for word in BLOCKED_MODEL_KEYWORDS:
         if word in lowered:
@@ -101,6 +135,8 @@ def provider_status() -> list[tuple[str, str, bool]]:
     for name, default in DEFAULT_MODELS.items():
         env = KEY_ENV.get(name)
         ready = True if env is None else _has_key(env)
+        if name == "claudecode":
+            ready = bool(claude_cli())
         if name == "gemini":
             ready = _has_key("GEMINI_API_KEY") or _has_key("GOOGLE_API_KEY")
         rows.append((name, default(), ready))
@@ -113,11 +149,19 @@ def chat(
     messages: list[Message],
     on_text: OnText | None = None,
     effort: str = "medium",
+    web: bool = False,
 ) -> str:
     """모델에 대화를 보내고 전체 답변 텍스트를 돌려줍니다.
 
     on_text 가 있으면 답변이 생성되는 대로 조각을 넘겨줍니다(스트리밍).
     """
+    if spec.provider == "claudecode":
+        try:
+            return _chat_claudecode(spec, system, messages, on_text, effort, web)
+        except ProviderError:
+            raise
+        except Exception as e:
+            raise ProviderError(f"[{spec}] 호출 실패: {type(e).__name__}: {e}") from e
     handler = {
         "claude": _chat_claude,
         "openai": _chat_openai,
@@ -142,6 +186,56 @@ def _emit(on_text: OnText | None, chunks: Iterable[str]) -> str:
             if on_text:
                 on_text(piece)
     return "".join(out)
+
+
+# ── Claude Code CLI (구독 로그인 그대로 사용) ──────────────────────────────
+CLAUDECODE_TIMEOUT = 900
+
+
+def _chat_claudecode(spec, system, messages, on_text, effort, web):
+    exe = claude_cli()
+    if not exe:
+        raise ProviderError("Claude Code(claude 명령)를 못 찾았어요. 설치 후 `claude` 로 한 번 로그인하세요.")
+    # Windows 의 claude.cmd 는 명령줄 길이 제한(8191자)이 있어서 긴 내용은 전부 stdin 으로 보냅니다.
+    history = messages[:-1]
+    parts = ["<instructions>", system, "</instructions>"]
+    if history:
+        parts.append("<conversation_so_far>")
+        for m in history:
+            who = "사용자" if m["role"] == "user" else "나(에이전트)"
+            parts.append(f"[{who}]\n{m['content']}")
+        parts.append("</conversation_so_far>")
+    parts += ["<user_message>", messages[-1]["content"] if messages else "", "</user_message>"]
+    prompt = "\n\n".join(parts)
+
+    cmd = [
+        exe, "-p",
+        "--system-prompt", "You are an AI agent inside the user's one-person company. Follow <instructions> exactly "
+                           "and reply only to <user_message>, in Korean unless asked otherwise.",
+        "--output-format", "text",
+        "--tools", "WebSearch,WebFetch" if web else "",
+        "--no-session-persistence",
+        "--strict-mcp-config",
+    ]
+    if web:
+        cmd += ["--allowedTools", "WebSearch,WebFetch"]
+    if spec.model and spec.model != "default":
+        cmd += ["--model", spec.model]
+
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", errors="replace", cwd=os.getcwd())
+    proc.stdin.write(prompt)
+    proc.stdin.close()
+    text = _emit(on_text, iter(proc.stdout.readline, ""))
+    try:
+        proc.wait(timeout=CLAUDECODE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        raise ProviderError("Claude Code 응답 시간 초과")
+    if proc.returncode != 0:
+        err = proc.stderr.read().strip()[-500:]
+        raise ProviderError(f"Claude Code 오류 (코드 {proc.returncode}): {err or text[-300:]}")
+    return text.strip()
 
 
 # ── Claude (Anthropic) ────────────────────────────────────────────────────
@@ -196,19 +290,75 @@ def _chat_openai(spec, system, messages, on_text, effort):
     return _emit(on_text, pieces())
 
 
-# ── OpenAI 호환 (Ollama, Mistral, Groq, xAI) ─────────────────────────────
+# ── 로컬 실행기 감지 ──────────────────────────────────────────────────────
+def local_url(name: str) -> str | None:
+    if name == "local":
+        return os.getenv("LOCAL_BASE_URL") or None
+    env, default = LOCAL_SERVERS[name]
+    return os.getenv(env) or default
+
+
+def probe_local(name: str, timeout: float = 1.5) -> list[str] | None:
+    """실행기가 켜져 있으면 로드된/설치된 모델 목록, 꺼져 있으면 None."""
+    url = local_url(name)
+    if not url:
+        return None
+    try:
+        import requests
+
+        r = requests.get(url.rstrip("/") + "/models", timeout=timeout)
+        r.raise_for_status()
+        return [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
+    except Exception:
+        return None
+
+
+def resolve_local(spec: ModelSpec) -> tuple[str, str]:
+    """(base_url, 모델 이름). 'local' 이면 켜져 있는 실행기를 찾습니다."""
+    names = [spec.provider] if spec.provider != "local" else (
+        ["local"] if os.getenv("LOCAL_BASE_URL") else list(LOCAL_SERVERS))
+    tried = []
+    for name in names:
+        models = probe_local(name)
+        tried.append(f"{name}({local_url(name)})")
+        if models is None:
+            continue
+        if spec.model in ("auto", ""):
+            if not models:
+                raise ProviderError(f"{name} 는 켜져 있지만 로드된 모델이 없어요. 모델을 먼저 로드하세요.")
+            return local_url(name), models[0]
+        if spec.provider != "local" or spec.model in models or not models:
+            return local_url(name), spec.model
+        # 이름이 정확히 안 맞으면 비슷한 것 찾기 (예: gemma3:12b ↔ gemma-3-12b-it)
+        key = "".join(ch for ch in spec.model.lower() if ch.isalnum())
+        close = [m for m in models if key[:6] and key[:6] in "".join(ch for ch in m.lower() if ch.isalnum())]
+        if close:
+            return local_url(name), close[0]
+        if spec.provider == "local" and len(names) > 1:
+            continue
+        raise ProviderError(f"{name} 에 '{spec.model}' 모델이 없어요. 있는 모델: {', '.join(models)}")
+    raise ProviderError("켜져 있는 로컬 AI 실행기를 못 찾았어요. LM Studio 서버를 켜거나 "
+                        f"(Developer 탭 → Start Server) 클라우드 모델을 쓰세요. 확인한 곳: {', '.join(tried)}")
+
+
+# ── OpenAI 호환 (로컬 실행기, Mistral, Groq, xAI) ─────────────────────────
 def _chat_openai_compatible(spec, system, messages, on_text, effort):
     from openai import OpenAI
 
-    if spec.provider not in OPENAI_COMPATIBLE:
+    model = spec.model
+    if spec.provider in LOCAL_SERVERS or spec.provider == "local":
+        base_url, model = resolve_local(spec)
+        api_key = "local"
+    elif spec.provider in OPENAI_COMPATIBLE:
+        base_url, key_env = OPENAI_COMPATIBLE[spec.provider]
+        api_key = os.getenv(key_env)
+        if not api_key:
+            raise ProviderError(f"{key_env} 가 .env 에 없어요.")
+    else:
         raise ProviderError(f"알 수 없는 제공자: {spec.provider}")
-    base_url, key_env = OPENAI_COMPATIBLE[spec.provider]
-    api_key = os.getenv(key_env) if key_env else "ollama"
-    if not api_key:
-        raise ProviderError(f"{key_env} 가 .env 에 없어요.")
     client = OpenAI(base_url=base_url, api_key=api_key)
     stream = client.chat.completions.create(
-        model=spec.model,
+        model=model,
         messages=[{"role": "system", "content": system}, *messages],
         stream=True,
     )

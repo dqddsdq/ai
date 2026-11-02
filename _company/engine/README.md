@@ -3,15 +3,24 @@
 `_agents/` 폴더의 에이전트들(CEO, 유튜브, 비서, 개발자 등)을 실제로 대화하고 일하게 만드는 엔진입니다.
 여러 AI 회사 모델을 자유롭게 바꿔 쓸 수 있습니다 (중국계 모델은 차단).
 
-## 🏠 내 컴퓨터에서 무료로 (로컬 AI, 기본값)
+## ⚡ 기본: Claude Code 로그인 그대로 사용 (API 키 불필요)
 
-API 키 없이 내 PC에서 돌아갑니다. 기본값이 로컬(Ollama)이에요.
+PC에 Claude Code가 설치돼 있고 로그인돼 있으면, 엔진이 자동으로 그걸 씁니다.
 
-1. https://ollama.com 에서 Ollama 설치
-2. 모델 받기: `ollama pull gemma4` (PC가 약하면 더 작은 모델, 예: `ollama pull gemma3:4b`)
-3. `cd _company && pip install -r requirements.txt && python -m engine chat`
+```bash
+cd _company
+pip install -r requirements.txt
+python -m engine chat
+```
 
-에이전트마다 다른 로컬 모델을 쓰려면: `python -m engine set-model youtube ollama:gemma3:4b`
+- `learn` 은 Claude가 **직접 웹 검색 + 페이지 읽기**를 해서 노트를 씁니다 (DuckDuckGo 불필요)
+- 모델 바꾸기: `--model claudecode:sonnet`, `claudecode:haiku`(빠름), `claudecode:opus`
+- 사용량은 Claude 구독 한도에서 차감됩니다
+
+## 🏠 무료 로컬 AI (선택)
+
+LM Studio, llama.cpp, vLLM, Ollama 중 아무거나 켜 두면 `local` 로 자동 감지합니다.
+`python -m engine models` 로 켜져 있는 실행기와 로드된 모델을 확인하고, `set-model ceo local` 로 지정하세요.
 
 ## 시작하기 (클라우드 AI도 쓸 때)
 

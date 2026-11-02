@@ -150,12 +150,16 @@ def cmd_chat(args) -> None:
 
 
 def cmd_models(_args) -> None:
-    print("제공자     기본 모델                    키")
+    print("💻 내 PC 로컬 실행기")
+    for name in pv.LOCAL_SERVERS:
+        models = pv.probe_local(name)
+        state = "꺼짐" if models is None else ("켜짐 · " + (", ".join(models[:4]) or "로드된 모델 없음"))
+        print(f"  {name:9} {pv.local_url(name):28} {state}")
+    print("\n☁️  클라우드")
     for name, model, ready in pv.provider_status():
-        mark = "✅" if ready else "—  (.env 에 키 필요)"
-        if name == "ollama":
-            mark = "✅ (로컬 Ollama 실행 필요)"
-        print(f"  {name:8} {model:28} {mark}")
+        if name in pv.LOCAL_SERVERS or name in ("local", "echo"):
+            continue
+        print(f"  {name:9} {model:28} {'✅' if ready else '—  (.env 에 키 필요)'}")
     print("\n에이전트별 모델 (_shared/agent_models.json):")
     models = ag.load_models()
     for a in ag.list_agents():

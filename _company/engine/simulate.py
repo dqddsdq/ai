@@ -293,6 +293,14 @@ def _fmt(x: float) -> str:
     return f"{x:,.2f}" if abs(x) < 100 else f"{x:,.0f}"
 
 
+def _pct(p: float) -> str:
+    if 0 < p < 0.01:
+        return f"{p:.2%}"
+    if 0.99 < p < 1:
+        return ">99%"
+    return f"{p:.0%}"
+
+
 def _bar(p: float, width: int = 30) -> str:
     n = int(round(p * width))
     return "█" * n + "░" * (width - n)
@@ -306,9 +314,9 @@ def print_model_result(model: dict, r: dict) -> None:
     t = r["target"]
     print(f"\n🎯 목표: {model.get('metric_name', 'metric')} {t['op']} {_fmt(t['value'])}")
     label = "마지막 기간" if r["periods"] > 1 else "달성"
-    print(f"   {label} 달성 확률  {_bar(r['p_hit_final'])} {r['p_hit_final']:.0%}")
+    print(f"   {label} 달성 확률  {_bar(r['p_hit_final'])} {_pct(r['p_hit_final'])}")
     if r["periods"] > 1:
-        print(f"   기간 중 한 번이라도  {_bar(r['p_ever_hit'])} {r['p_ever_hit']:.0%}"
+        print(f"   기간 중 한 번이라도  {_bar(r['p_ever_hit'])} {_pct(r['p_ever_hit'])}"
               + (f"  (보통 {r['median_first_hit_period']}개월째)" if r.get("median_first_hit_period") else ""))
     p = r["percentiles_final"]
     print(f"   결과 범위: 나쁜 경우 {_fmt(p['p5'])} · 보통 {_fmt(p['p50'])} · 좋은 경우 {_fmt(p['p95'])}")
@@ -320,8 +328,8 @@ def print_stock_result(ticker: str, r: dict) -> None:
     p = r["percentiles_return_pct"]
     print(f"\n📈 {ticker} — 과거 {r['history_years']}년 데이터 (연 {r['history_cagr_pct']:+.1f}%, 변동성 {r['history_vol_pct']:.0f}%)")
     print(f"🎯 {r['horizon_years']}년 후 +{r['target_pct']}% 이상")
-    print(f"   만기 달성 확률     {_bar(r['p_hit_final'])} {r['p_hit_final']:.0%}")
-    print(f"   중간에 한 번이라도 {_bar(r['p_ever_hit'])} {r['p_ever_hit']:.0%}")
-    print(f"   손실 확률          {_bar(r['p_loss'])} {r['p_loss']:.0%}")
+    print(f"   만기 달성 확률     {_bar(r['p_hit_final'])} {_pct(r['p_hit_final'])}")
+    print(f"   중간에 한 번이라도 {_bar(r['p_ever_hit'])} {_pct(r['p_ever_hit'])}")
+    print(f"   손실 확률          {_bar(r['p_loss'])} {_pct(r['p_loss'])}")
     print(f"   수익률 범위: 나쁜 경우 {p['p5']:+.1f}% · 보통 {p['p50']:+.1f}% · 좋은 경우 {p['p95']:+.1f}%")
     print(f"   최대 낙폭: 보통 {r['median_max_drawdown_pct']:.1f}% · 나쁜 경우 {r['p5_max_drawdown_pct']:.1f}%")
