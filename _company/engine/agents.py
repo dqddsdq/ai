@@ -33,12 +33,37 @@ def list_agents() -> list[str]:
     return sorted(p.name for p in AGENTS_DIR.iterdir() if p.is_dir() and not p.name.startswith("."))
 
 
+def team_of(agent_id: str) -> str:
+    """'business-3' → 'business'"""
+    return re.sub(r"-\d+$", "", agent_id)
+
+
+def list_teams() -> list[str]:
+    return sorted({team_of(a) for a in list_agents()})
+
+
+def team_members(team: str) -> list[str]:
+    """팀장(번호 없는 폴더)이 먼저, 그다음 -2, -3 ..."""
+    members = [a for a in list_agents() if team_of(a) == team]
+    return sorted(members, key=lambda a: (a != team, int(a.rsplit("-", 1)[1]) if a != team else 0))
+
+
+def member_view(agent_id: str) -> str:
+    """prompt.md 의 '팀 내 관점' 첫 줄 (예: '안정 수익 중심')."""
+    m = re.search(r"## 팀 내 관점.*?\n- ([^:：\n]+)", _read(AGENTS_DIR / agent_id / "prompt.md"), re.S)
+    return m.group(1).strip() if m else agent_id
+
+
 def agent_summary(agent_id: str) -> str:
     """라우터가 고를 수 있도록 에이전트 한 줄 설명을 만듭니다."""
     system_md = _read(SHARED_DIR / "_system.md")
-    for line in system_md.splitlines():
-        if line.startswith("- ") and f"**" in line and agent_id.lower() in line.lower():
-            return line[2:].strip()
+    lines = [l for l in system_md.splitlines() if l.startswith("- ") and "**" in l]
+    for line in lines:
+        if f"`{team_of(agent_id)}`" in line:
+            return line[2:].replace("**", "").strip()
+    for line in lines:
+        if agent_id.lower() in line.lower():
+            return line[2:].replace("**", "").strip()
     goal = _read(AGENTS_DIR / agent_id / "goal.md")
     bullets = [l[2:] for l in goal.splitlines() if l.startswith("- ")]
     return f"{agent_id}: " + (" / ".join(bullets[:2]) if bullets else "일반 업무")
@@ -108,11 +133,11 @@ ROUTER_PROMPT = """당신은 CEO 에이전트의 업무 분배기입니다.
 에이전트 목록:
 {agents}
 
-반드시 JSON 한 줄로만 답하세요. 예: {{"agent": "youtube", "reason": "영상 기획 요청"}}"""
+반드시 JSON 한 줄로만 답하세요. 예: {{"agent": "writer", "reason": "블로그 글 작성 요청"}}"""
 
 
 def route_prompt() -> str:
-    lines = "\n".join(f"- {a}: {agent_summary(a)}" for a in list_agents() if a != "ceo")
+    lines = "\n".join(f"- {t}: {agent_summary(t)}" for t in list_teams() if t != "ceo")
     return ROUTER_PROMPT.format(agents=lines)
 
 
@@ -122,8 +147,8 @@ def parse_route(reply: str) -> tuple[str, str]:
     if match:
         try:
             data = json.loads(match.group(0))
-            agent = str(data.get("agent", "")).strip()
-            if agent in list_agents():
+            agent = team_of(str(data.get("agent", "")).strip())
+            if agent in list_teams():
                 return agent, str(data.get("reason", ""))
         except json.JSONDecodeError:
             pass

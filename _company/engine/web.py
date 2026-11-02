@@ -23,6 +23,7 @@ from . import agents as ag
 from . import knowledge as kn
 from . import learn as ln
 from . import providers as pv
+from . import team as tm
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
 CONV_FILE = "conversation.json"
@@ -204,8 +205,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/meta":
             models = ag.load_models()
             return self._json({
-                "agents": [{"id": a, "summary": ag.agent_summary(a).replace("**", ""), "model": models.get(a)}
-                           for a in ag.list_agents()],
+                "agents": [{"id": t, "summary": ag.agent_summary(t), "model": models.get(t),
+                            "members": [{"id": m, "view": ag.member_view(m)} for m in ag.team_members(t)]}
+                           for t in ag.list_teams()],
                 "models": [{"label": l, "value": v} for l, v in MODEL_CHOICES],
                 "company": _company_name(),
             })
@@ -277,38 +279,57 @@ class Handler(BaseHTTPRequestHandler):
         requested = body.get("agent") or "auto"
         override = body.get("model") or None
 
-        agent_id = requested if requested != "auto" else conv.get("agent")
+        agent_id = ag.team_of(requested) if requested != "auto" else conv.get("agent")
+        if agent_id and agent_id not in ag.list_teams():
+            agent_id = ag.team_of(agent_id) if ag.team_of(agent_id) in ag.list_teams() else None
         reason = ""
         if not agent_id:
             spec = pv.parse_model(override or ag.Agent("ceo").model_spec())
             reply = pv.chat(spec, ag.route_prompt(), [{"role": "user", "content": text}], effort="low")
             agent_id, reason = ag.parse_route(reply)
-        if not ag.Agent(agent_id).exists():
-            return self._send("error", {"message": f"없는 에이전트: {agent_id}"})
+        if agent_id not in ag.list_teams():
+            return self._send("error", {"message": f"없는 팀: {agent_id}"})
         conv["agent"] = agent_id
 
-        spec = pv.parse_model(override or ag.Agent(agent_id).model_spec())
+        spec = pv.parse_model(override or ag.Agent(ag.team_members(agent_id)[0]).model_spec())
         history = chat_history(conv)
         if history and history[-1]["role"] == "user":
             history[-1]["content"] += "\n\n" + text
         else:
             history.append({"role": "user", "content": text})
-        system = ag.Agent(agent_id).system_prompt()
-        if body.get("actions", True):
-            system += "\n\n" + ACTION_GUIDE
+        extra = ACTION_GUIDE if body.get("actions", True) else ""
         refs = kn.context_for(text) if body.get("knowledge", True) else ""
         sources = sorted({h.source for _, h in kn.search(text)}) if refs else []
         if refs:
-            system += "\n\n" + refs
+            extra += "\n\n" + refs
+        members = ag.team_members(agent_id)
+        use_team = body.get("team", True) and len(members) > 1
 
         conv["messages"].append({"role": "user", "content": text})
         save_conv(conv)
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
-                            "model": str(spec), "reason": reason, "sources": sources})
-        reply = pv.chat(spec, system, history, on_text=lambda t: self._send("delta", {"text": t}),
-                        effort=body.get("effort") or "medium")
+                            "model": str(spec), "reason": reason, "sources": sources,
+                            "team": len(members) if use_team else 1})
+        delta = lambda t: self._send("delta", {"text": t})  # noqa: E731
+        effort = body.get("effort") or "medium"
+        drafts = []
+        if use_team:
+            reply, drafts, _ = tm.run_team(
+                agent_id, history, extra, override, effort,
+                on_draft_start=lambda i, d: self._send("draft_start", {"i": i, "member": d.member, "view": d.view}),
+                on_draft_done=lambda i, d: self._send("draft_done", {"i": i, "member": d.member, "view": d.view,
+                                                                      "text": d.text, "error": d.error}),
+                on_judge_start=lambda: self._send("judge_start", {}),
+                on_text=delta,
+            )
+        else:
+            lead = members[0]
+            system = ag.Agent(lead).system_prompt() + ("\n\n" + extra if extra else "")
+            reply = pv.chat(spec, system, history, on_text=delta, effort=effort)
         conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id,
-                                 "model": str(spec), "sources": sources})
+                                 "model": str(spec), "sources": sources,
+                                 "drafts": [{"member": d.member, "view": d.view, "text": d.text, "error": d.error}
+                                            for d in drafts]})
         save_conv(conv)
         action = find_action(reply) if body.get("actions", True) else None
         if action:

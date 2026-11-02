@@ -113,6 +113,17 @@ button { cursor: pointer; }
 .tool-foot { font-size: 12px; color: var(--faint); margin-top: 10px; }
 .spin { display: inline-block; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+.team { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); margin: 2px 0 10px; font-size: 13px; overflow: hidden; }
+.team-row { border-top: 1px solid var(--line); }
+.team-row:first-child { border-top: 0; }
+.team-row > summary { list-style: none; cursor: pointer; display: flex; gap: 8px; align-items: center; padding: 7px 12px; color: var(--muted); }
+.team-row > summary::-webkit-details-marker { display: none; }
+.team-row[open] > summary { color: var(--text); }
+.team-row .st { width: 16px; text-align: center; }
+.team-row .tview { font-weight: 600; color: var(--text); }
+.team-row .md { padding: 4px 14px 12px; font-size: 13.5px; border-top: 1px dashed var(--line); }
+.team-judge { padding: 7px 12px; border-top: 1px solid var(--line); color: var(--accent); }
+.winner { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 3px 10px; font-size: 13px; margin-bottom: 8px; }
 .err { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
 .msg-actions { margin-top: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
 .msg.ai:hover .msg-actions { opacity: 1; }
@@ -201,7 +212,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div class="composer-row">
           <select id="agent-select" title="담당 에이전트"></select>
           <select id="model-select" title="AI 모델"></select>
-          <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료 참고</label>
+          <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료</label>
+          <label class="toggle" title="같은 팀 팀원들이 각자 답하고, 비교해서 가장 좋은 답을 드려요 (시간·사용량 늘어남)"><input type="checkbox" id="team-toggle" checked>👥 팀 비교</label>
           <div class="spacer"></div>
           <button class="send" id="send-btn" disabled title="보내기 (Enter)">↑</button>
         </div>
@@ -354,11 +366,12 @@ async function init() {
   const hour = new Date().getHours();
   $("#greet").textContent = (hour < 12 ? "좋은 아침이에요" : hour < 18 ? "좋은 오후예요" : "좋은 저녁이에요") + ", 사장님";
   const as = $("#agent-select");
-  as.innerHTML = `<option value="auto">🧭 자동 배정</option>` + meta.agents.map(a => `<option value="${esc(a.id)}">${esc(a.id)}</option>`).join("");
+  as.innerHTML = `<option value="auto">🧭 자동 배정</option>` + meta.agents.map(a => `<option value="${esc(a.id)}">${esc(a.id)} 팀 (${a.members.length}명)</option>`).join("");
   $("#model-select").innerHTML = meta.models.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join("");
   as.value = store.get("agent", "auto"); if (!as.value) as.value = "auto";
   $("#model-select").value = store.get("model", "");
   as.onchange = () => store.set("agent", as.value); $("#model-select").onchange = () => store.set("model", $("#model-select").value);
+  $("#team-toggle").checked = store.get("team", "1") === "1"; $("#team-toggle").onchange = () => store.set("team", $("#team-toggle").checked ? "1" : "0");
   const ideas = ["블로그로 1년 안에 월 300만원 가능할까?", "이번 주 유튜브 쇼츠 아이디어 5개", "월 1000만원 가려면 지금 뭐부터 해야 해?", "홈페이지 제작 외주 가격 정하는 법"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
@@ -397,7 +410,10 @@ async function openConv(id) {
       else t.out.innerHTML = md(m.content);
       t.foot.textContent = m.footer ? "📝 " + m.footer : "";
     }
-    else addAI(m).body.innerHTML = md(m.content);
+    else {
+      const a = addAI(m); a.body.innerHTML = finalHTML(m.content); a.el.dataset.raw = m.content;
+      (m.drafts || []).forEach((d, i) => a.team.done({ ...d, i: i + 1 }));
+    }
   }
   $("#top-title").textContent = c.title; scrollDown(true); loadConvs();
 }
@@ -409,7 +425,7 @@ function addUser(text) {
 }
 function addAI(info = {}) {
   const el = document.createElement("div"); el.className = "msg ai";
-  el.innerHTML = `<div class="who"></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
+  el.innerHTML = `<div class="who"></div><div class="team" hidden></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
   $("#messages").appendChild(el);
   const who = el.querySelector(".who"), body = el.querySelector(".md");
   const setWho = (i) => {
@@ -420,8 +436,31 @@ function addAI(info = {}) {
     if (agent) who.title = agent.summary;
   };
   setWho(info);
-  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
-  return { el, body, setWho };
+  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").replace(/^\s*`?🏆[^\n]*\n+/, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
+  const teamBox = el.querySelector(".team");
+  const rows = {};
+  const team = {
+    start(d) {
+      teamBox.hidden = false;
+      const r = document.createElement("details"); r.className = "team-row";
+      r.innerHTML = `<summary><span class="st"><span class="spin">◌</span></span><span class="tview">팀원${d.i} · ${esc(d.view)}</span><span class="muted">작성 중...</span></summary><div class="md"></div>`;
+      teamBox.appendChild(r); rows[d.i] = r;
+    },
+    done(d) {
+      const r = rows[d.i] || (team.start(d), rows[d.i]);
+      r.querySelector(".st").textContent = d.error ? "⚠️" : "✓";
+      r.querySelector(".muted").textContent = d.error ? "실패" : `${d.text.length.toLocaleString()}자 · 눌러서 보기`;
+      r.querySelector(".md").innerHTML = d.error ? esc(d.error) : md(d.text);
+    },
+    judge() { teamBox.insertAdjacentHTML("beforeend", `<div class="team-judge"><span class="spin">◌</span> 🏆 답변 비교하고 최고 답 고르는 중...</div>`); },
+    judged() { teamBox.querySelector(".team-judge")?.remove(); },
+  };
+  return { el, body, setWho, team };
+}
+// 심사 결과 첫 줄(🏆 채택: ...)은 배지로 표시
+function finalHTML(raw) {
+  const m = raw.match(/^\s*`?(🏆[^\n]*?)`?\s*(\n|$)/);
+  return m ? `<div class="winner">${esc(m[1])}</div>` + md(raw.slice(m[0].length)) : md(raw);
 }
 // 시뮬 결과: 확률·범위를 먼저, 가정(변수 목록)은 접어두기
 function simHTML(text) {
@@ -463,12 +502,15 @@ async function send() {
   try {
     await stream("/api/chat", {
       conversation_id: state.conv?.id, message: text, agent: $("#agent-select").value,
-      model: $("#model-select").value, knowledge: $("#kn-toggle").checked,
+      model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-toggle").checked,
     }, {
       meta: (m) => { state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
-      delta: (d) => { raw += d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = md(raw); scrollDown(); },
+      draft_start: (d) => { ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
+      draft_done: (d) => { ai.team.done(d); },
+      judge_start: () => { ai.team.judge(); scrollDown(); },
+      delta: (d) => { if (!raw) { ai.team.judged(); ai.body.classList.add("cursor"); } raw += d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); scrollDown(); },
       error: (e) => { ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ ${esc(e.message)}</div>`); },
-      tool_start: (d) => { ai.body.classList.remove("cursor"); ai.body.innerHTML = md(raw); tool = addTool(d); tool.log.innerHTML = `<span class="spin">◌</span> 실행 준비 중...\n`; tool.raw = ""; scrollDown(true); },
+      tool_start: (d) => { ai.body.classList.remove("cursor"); ai.body.innerHTML = finalHTML(raw); tool = addTool(d); tool.log.innerHTML = `<span class="spin">◌</span> 실행 준비 중...\n`; tool.raw = ""; scrollDown(true); },
       tool_log: (d) => { tool.log.textContent = tool.log.textContent.replace("◌ 실행 준비 중...\n", "") + d.text + "\n"; scrollDown(); },
       tool_result: (d) => {
         tool.log.hidden = true;

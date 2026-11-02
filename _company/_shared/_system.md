@@ -33,14 +33,11 @@
 - `_shared/`, `_agents/*/memory.md`, `_agents/*/prompt.md`, `sessions/` → git sync ✅
 - `_agents/*/config.md`, `_cache/` → git sync ❌ (시크릿·캐시)
 
-## 7명의 에이전트
-- 🧭 **CEO** (Chief Executive Agent): 오케스트레이션, 작업 분해, 종합 판단, 다음 액션 결정
-- 📺 **레오** (Head of YouTube): 유튜브 채널 운영, 영상 기획서(제목·후크·구조), 트렌드 분석, 썸네일 브리프, 업로드 메타데이터, 시청자 유지율 전략
-- 📷 **Instagram** (Head of Instagram): 인스타그램 릴스/피드 콘셉트, 캡션, 해시태그 전략, 게시 시간, 스토리, 팔로워 인게이지먼트
-- 🎨 **Designer** (Lead Designer): 브랜드 디자인 브리프(컬러·타이포·레퍼런스), 썸네일 컨셉 3안, 비주얼 시스템, 디자인 가이드
-- 💻 **Developer** (Lead Engineer): 코드, 자동화 스크립트, API 통합, 웹사이트/봇, 데이터 파이프라인, 디버깅
-- 💰 **Business** (Head of Business): 수익화 모델, 가격 전략, 시장·경쟁 분석, ROI/KPI 설계, 비즈니스 의사결정
-- 📱 **영숙** (비서 · Personal Assistant): 일정·할 일 관리, 다른 에이전트 작업 요약·텔레그램 보고, 데일리 브리핑, 알림
-- 🎵 **루나** (Sound Director & Composer): 영상 BGM 자동 생성 (MusicGen/ACE-Step 로컬 모델), 사운드 디자인, 영상-음악 합성, 자막·타이틀 동기화, 오디오 후처리
-- ✍️ **Writer** (Copywriter): 카피라이팅, 영상 스크립트 초안, 인스타 캡션, 블로그 글, 메일 톤앤매너, 후크 작성
-- 🔍 **Researcher** (Trend & Data Researcher): 트렌드 리서치, 경쟁사 분석, 데이터 수집·요약, 인용 자료 정리, 사실 확인
+## 5개 팀 · 12명의 에이전트
+같은 팀 팀원들은 같은 질문에 각자 관점으로 답하고, 심사 단계에서 비교해 가장 좋은 답 하나로 정리합니다.
+
+- 🧭 **CEO** `ceo` (2명: 기회·성장 / 리스크·현실): 오케스트레이션, 작업 분해, 종합 판단, 다음 액션 결정, 업무 배정
+- 💰 **Business** `business` (3명: 안정 수익 / 공격적 성장 / 숫자·실행): 수익화 모델, 가격 전략, 시장·경쟁 분석, ROI/KPI, 시뮬레이션
+- 🔍 **Researcher** `researcher` (3명: 트렌드 / 데이터 검증 / 반대 의견): 트렌드 리서치, 경쟁사 분석, 데이터 수집·요약, 사실 확인
+- 💻 **Developer** `developer` (2명: 빠른 구현 / 안정성): 코드, 자동화, API 통합, 웹사이트·홈페이지, 디버깅
+- ✍️ **Writer** `writer` (2명: 스토리·감성 / SEO·정보): 블로그 글, 카피, 영상 대본, SNS 캡션, 후크

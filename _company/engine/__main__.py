@@ -2,10 +2,10 @@
 
   cd _company
   python -m engine chat                     # 대화 (CEO가 알아서 담당자 배정)
-  python -m engine chat --agent youtube     # 특정 에이전트와 대화
+  python -m engine chat --agent writer      # 특정 팀과 대화
   python -m engine ask "이번 주 영상 아이디어 3개"   # 한 번만 묻기
   python -m engine models                   # 사용 가능한 AI 확인
-  python -m engine set-model youtube gemini:gemini-2.5-pro
+  python -m engine set-model writer-2 gemini:gemini-2.5-pro
 """
 
 from __future__ import annotations

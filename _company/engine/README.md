@@ -3,6 +3,21 @@
 `_agents/` 폴더의 에이전트들(CEO, 유튜브, 비서, 개발자 등)을 실제로 대화하고 일하게 만드는 엔진입니다.
 여러 AI 회사 모델을 자유롭게 바꿔 쓸 수 있습니다 (중국계 모델은 차단).
 
+## 👥 팀 비교 (같은 팀이 각자 답 → 비교 → 최고 답)
+
+| 팀 | 인원 | 팀원 관점 |
+|---|---|---|
+| 🧭 ceo | 2 | 기회·성장 / 리스크·현실 |
+| 💰 business | 3 | 안정 수익 / 공격적 성장 / 숫자·실행 |
+| 🔍 researcher | 3 | 최신 트렌드 / 데이터 검증 / 반대 의견 |
+| 💻 developer | 2 | 빠른 구현 / 안정성 |
+| ✍️ writer | 2 | 스토리·감성 / SEO·정보 |
+
+질문이 팀에 배정되면 팀원들이 **동시에** 각자 관점으로 답하고, 심사 단계에서 비교해 가장 좋은 답을 뼈대로
+다른 답의 좋은 점을 합친 최종 답을 줍니다. 화면에서 각 팀원의 원래 답도 펼쳐볼 수 있어요.
+- 화면의 `👥 팀 비교` 를 끄면 팀장 1명만 답합니다 (빠르고 사용량 적음)
+- 팀원 관점은 `_agents/<팀>-N/prompt.md` 의 '팀 내 관점' 에서 바꿀 수 있어요. 팀원 추가 = 폴더 복사 후 번호만 바꾸기
+
 ## 🖥️ 화면으로 쓰기 (Claude 앱 스타일)
 
 `_company` 폴더의 **`AI 시작.bat`** 더블클릭 (맥: `./start.sh`) → 브라우저가 자동으로 열립니다.
@@ -47,9 +62,9 @@ python -m engine chat     # 대화 시작!
 | 명령 | 설명 |
 |---|---|
 | `python -m engine chat` | 대화. 첫 질문을 보고 CEO가 담당 에이전트를 자동 배정 |
-| `python -m engine chat --agent youtube` | 특정 에이전트와 대화 |
+| `python -m engine chat --agent writer` | 특정 에이전트와 대화 |
 | `python -m engine ask "질문"` | 한 번만 묻고 끝 |
-| `python -m engine set-model youtube gemini` | 에이전트별 기본 AI 지정 |
+| `python -m engine set-model writer-2 gemini` | 에이전트별 기본 AI 지정 |
 | `--model openai:gpt-5` | 이번 실행만 AI 바꾸기 |
 | `--effort high` | 더 깊게 생각 (Claude) |
 
