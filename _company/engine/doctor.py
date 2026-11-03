@@ -50,8 +50,9 @@ def run() -> int:
     exe = pv.claude_cli()
     if not exe:
         problems += 1
-        bad("claude 명령을 찾을 수 없어요",
-            "PowerShell 에서: irm https://claude.ai/install.ps1 | iex  → 설치 후 PowerShell 새로 열고 claude 입력해서 로그인")
+        bad("claude 명령을 찾을 수 없어요 (흔한 설치 위치도 모두 확인했어요)",
+            "Claude Code 가 아직 설치 안 된 것 같아요. PowerShell 에서: irm https://claude.ai/install.ps1 | iex\n"
+            "        설치 끝에 나오는 메시지를 캡처해 주세요. 위치를 알면 .env 에 CLAUDE_CLI=그위치 로 지정할 수 있어요.")
     else:
         ok(f"위치: {exe}")
         try:

@@ -95,7 +95,21 @@ class ModelSpec:
 
 
 def claude_cli() -> str | None:
-    return os.getenv("CLAUDE_CLI") or shutil.which("claude")
+    """claude 명령 위치. PATH 에 없어도 흔한 설치 위치를 직접 찾아봅니다 (윈도우 설치 직후 PATH 미등록 대비)."""
+    found = os.getenv("CLAUDE_CLI") or shutil.which("claude")
+    if found:
+        return found
+    home = os.path.expanduser("~")
+    candidates = [
+        os.path.join(home, ".local", "bin", "claude.exe"),           # 윈도우 공식 설치 (irm ... | iex)
+        os.path.join(home, ".local", "bin", "claude"),               # 맥/리눅스 공식 설치
+        os.path.join(home, ".claude", "local", "claude.exe"),
+        os.path.join(home, ".claude", "local", "claude"),
+        os.path.join(os.getenv("APPDATA", ""), "npm", "claude.cmd"),  # npm 으로 설치
+        os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "claude", "claude.exe"),
+        "/usr/local/bin/claude", "/opt/homebrew/bin/claude",
+    ]
+    return next((c for c in candidates if c and os.path.isfile(c)), None)
 
 
 def _auto_default() -> str:
