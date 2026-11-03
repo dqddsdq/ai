@@ -646,6 +646,8 @@ async function send() {
   }
   input.value = ""; attachments = []; renderAttachments(); autosize(); enterThread(); addUser(text || "첨부한 화면을 분석해 줘.", images);
   const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
+  const t0 = Date.now(); let gotAny = false;
+  const tick = setInterval(() => { if (!gotAny) ai.status(`${!state.conv && $("#agent-select").value === "auto" ? "CEO가 담당 팀 고르는 중" : "답변 준비 중"}... ${Math.round((Date.now() - t0) / 1000)}초`); }, 1000);
   ai.body.classList.add("cursor"); scrollDown(true);
   let raw = "", tool = null; setBusy(true); state.controller = new AbortController();
   try {
@@ -653,7 +655,7 @@ async function send() {
       conversation_id: state.conv?.id, message: text, images, agent: $("#agent-select").value,
       model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-toggle").checked,
     }, {
-      meta: (m) => { state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
+      meta: (m) => { gotAny = true; ai.status(""); state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
       status: (d) => ai.status(d.text),
       market: (d) => ai.market(d.items || []),
       draft_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
@@ -675,9 +677,10 @@ async function send() {
       done: () => {},
     }, state.controller.signal);
   } catch (e) {
-    if (e.name !== "AbortError") ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ 연결 오류: ${esc(e.message)}</div>`);
+    if (e.name !== "AbortError") ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ 연결 오류: ${esc(e.message)}<br>검은 창이 켜져 있는지 확인하세요. 꺼졌다면 'AI 시작.bat' 을 다시 실행하고, 계속되면 '진단.bat' 을 실행해 결과를 보여주세요.</div>`);
     else ai.body.insertAdjacentHTML("beforeend", `<div class="muted">(중지됨)</div>`);
   } finally {
+    clearInterval(tick); if (!gotAny) ai.status("");
     ai.body.classList.remove("cursor"); tool?.out.classList.remove("cursor"); setBusy(false); loadConvs(); input.focus();
   }
 }

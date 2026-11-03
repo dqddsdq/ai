@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import contextlib
+import traceback
 import io
 import json
 import os
@@ -45,6 +46,12 @@ MODEL_CHOICES = [
     ("OpenAI", "openai"),
     ("Gemini", "gemini"),
 ]
+
+
+def log(msg: str) -> None:
+    """검은 창(콘솔)에 진행 상황 표시 — 문제 생겼을 때 원인 찾기용."""
+    with contextlib.suppress(Exception):
+        print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
 
 
 # ── 채팅 중 자동 실행 (시뮬레이션 / 공부) ─────────────────────────────────
@@ -269,9 +276,11 @@ class Handler(BaseHTTPRequestHandler):
             self._sse_start()
             try:
                 routes[path](body)
-            except (BrokenPipeError, ConnectionResetError):
-                pass  # 사용자가 중지 버튼을 누름
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                log("  (사용자가 중지했거나 연결이 끊김)")
             except Exception as e:
+                log(f"  ⚠️ 오류: {e}")
+                traceback.print_exc()
                 with contextlib.suppress(Exception):
                     self._send("error", {"message": str(e)})
             return
@@ -368,10 +377,17 @@ class Handler(BaseHTTPRequestHandler):
         if agent_id and agent_id not in ag.list_teams():
             agent_id = ag.team_of(agent_id) if ag.team_of(agent_id) in ag.list_teams() else None
         reason = ""
+        log(f"💬 질문: {text[:40]}")
         if not agent_id:
             spec = pv.parse_model(override or ag.Agent("ceo").model_spec())
-            reply = pv.chat(spec, ag.route_prompt(), [{"role": "user", "content": text}], effort="low")
-            agent_id, reason = ag.parse_route(reply)
+            log(f"  🧭 담당 팀 고르는 중 ({spec})...")
+            try:
+                reply = pv.chat(spec, ag.route_prompt(), [{"role": "user", "content": text}], effort="low", timeout=120)
+                agent_id, reason = ag.parse_route(reply)
+            except pv.ProviderError as e:
+                log(f"  ⚠️ 배정 실패: {e}")
+                raise
+            log(f"  → {agent_id} 팀")
         if agent_id not in ag.list_teams():
             return self._send("error", {"message": f"없는 팀: {agent_id}"})
         conv["agent"] = agent_id
@@ -426,6 +442,7 @@ class Handler(BaseHTTPRequestHandler):
         action = find_action(reply) if body.get("actions", True) else None
         if action:
             self._run_action(conv, *action, override)
+        log("  ✅ 답변 완료")
         self._send("done", {"conversation_id": conv["id"]})
 
     def _run_action(self, conv: dict, kind: str, arg: str, override: str | None):

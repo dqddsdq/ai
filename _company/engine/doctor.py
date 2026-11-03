@@ -1,0 +1,98 @@
+"""문제 진단: python -m engine doctor  (또는 _company 의 '진단.bat' 더블클릭)
+
+파이썬, 패키지, Claude Code 설치·로그인, 실제 Claude 호출, 포트를 하나씩 검사합니다.
+"""
+
+from __future__ import annotations
+
+import importlib
+import platform
+import socket
+import subprocess
+import sys
+import time
+
+from . import providers as pv
+
+
+def ok(msg):
+    print(f"  ✅ {msg}", flush=True)
+
+
+def bad(msg, fix=""):
+    print(f"  ❌ {msg}", flush=True)
+    if fix:
+        print(f"     👉 {fix}", flush=True)
+
+
+def run() -> int:
+    problems = 0
+    print("\n🩺 1인 기업 AI 진단\n")
+
+    print("[1] 파이썬")
+    v = sys.version_info
+    if v >= (3, 10):
+        ok(f"Python {v.major}.{v.minor}.{v.micro} ({platform.system()} {platform.release()})")
+    else:
+        problems += 1
+        bad(f"Python {v.major}.{v.minor} — 너무 오래됐어요", "python.org 에서 최신 버전 설치")
+
+    print("[2] 패키지")
+    for mod in ("numpy", "requests", "dotenv", "anthropic", "openai", "yfinance", "PIL"):
+        try:
+            importlib.import_module(mod)
+            ok(mod)
+        except Exception as e:
+            problems += 1
+            bad(f"{mod} 없음 ({type(e).__name__})", "pip install -r requirements.txt")
+
+    print("[3] Claude Code")
+    exe = pv.claude_cli()
+    if not exe:
+        problems += 1
+        bad("claude 명령을 찾을 수 없어요",
+            "PowerShell 에서: irm https://claude.ai/install.ps1 | iex  → 설치 후 PowerShell 새로 열고 claude 입력해서 로그인")
+    else:
+        ok(f"위치: {exe}")
+        try:
+            out = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=60,
+                                 encoding="utf-8", errors="replace")
+            ok(f"버전: {(out.stdout or out.stderr).strip()[:80]}")
+        except Exception as e:
+            problems += 1
+            bad(f"claude --version 실패: {e}")
+
+        print("[4] Claude 실제 호출 (최대 2분)")
+        t = time.time()
+        try:
+            reply = pv.chat(pv.parse_model("claudecode:haiku"), "짧게 답하세요.",
+                            [{"role": "user", "content": "OK 라고만 답해"}], timeout=120)
+            ok(f"응답 '{reply.strip()[:30]}' ({time.time() - t:.0f}초)")
+        except pv.ProviderError as e:
+            problems += 1
+            msg = str(e)
+            fix = "PowerShell 에서 claude 를 한 번 실행해서 로그인했는지 확인하세요"
+            low = msg.lower()
+            if "git-bash" in low or "git bash" in low or "bash" in low:
+                fix = "윈도우용 Claude Code 는 Git 이 필요해요: https://git-scm.com/download/win 설치 후 다시 시도"
+            elif "login" in low or "auth" in low or "로그인" in msg:
+                fix = "PowerShell 에서 claude 를 실행해서 로그인하세요"
+            bad(msg[:500], fix)
+
+    print("[5] 포트 8765")
+    with socket.socket() as s:
+        if s.connect_ex(("127.0.0.1", 8765)) == 0:
+            ok("이미 AI 화면이 켜져 있어요 (정상 — 다른 창에서 실행 중)")
+        else:
+            ok("사용 가능")
+
+    print()
+    if problems:
+        print(f"⚠️  문제 {problems}개. 이 창을 캡처해서 보여주세요.")
+    else:
+        print("🎉 모두 정상이에요!")
+    return problems
+
+
+if __name__ == "__main__":
+    sys.exit(1 if run() else 0)

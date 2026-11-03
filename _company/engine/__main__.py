@@ -240,6 +240,12 @@ def cmd_simulate(args) -> None:
               f"python -m engine simulate --scenario {scen.relative_to(ag.COMPANY_DIR)}")
 
 
+def cmd_doctor(args) -> None:
+    from . import doctor
+
+    doctor.run()
+
+
 def cmd_web(args) -> None:
     from . import web
 
@@ -293,6 +299,8 @@ def main(argv=None) -> None:
     s.add_argument("--agent", default="startup", help="시나리오를 설계할 에이전트 (기본 startup)")
     s.add_argument("--model", help="제공자:모델")
     s.set_defaults(func=cmd_simulate)
+    s = sub.add_parser("doctor", help="문제 진단 (파이썬·패키지·Claude Code 연결 검사)")
+    s.set_defaults(func=cmd_doctor)
     s = sub.add_parser("web", help="브라우저 화면 열기 (Claude 앱 스타일)")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--no-browser", action="store_true")

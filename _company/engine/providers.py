@@ -151,6 +151,7 @@ def chat(
     effort: str = "medium",
     web: bool = False,
     images: list[str] | None = None,
+    timeout: float | None = None,
 ) -> str:
     """모델에 대화를 보내고 전체 답변 텍스트를 돌려줍니다.
 
@@ -164,7 +165,7 @@ def chat(
             messages = messages[:-1] + [{"role": "user", "content": messages[-1]["content"] + note}]
     if spec.provider == "claudecode":
         try:
-            return _chat_claudecode(spec, system, messages, on_text, effort, web, images or [])
+            return _chat_claudecode(spec, system, messages, on_text, effort, web, images or [], timeout)
         except ProviderError:
             raise
         except Exception as e:
@@ -213,7 +214,7 @@ def _with_images_claude(messages: list[Message], images: list[str]) -> list[Mess
     return messages[:-1] + [{"role": "user", "content": blocks}]
 
 
-def _chat_claudecode(spec, system, messages, on_text, effort, web, images=()):
+def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), timeout=None):
     exe = claude_cli()
     if not exe:
         raise ProviderError("Claude Code(claude 명령)를 못 찾았어요. 설치 후 `claude` 로 한 번 로그인하세요.")
@@ -249,21 +250,42 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web, images=()):
     if spec.model and spec.model != "default":
         cmd += ["--model", spec.model]
 
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", cwd=os.getcwd())
-    proc.stdin.write(prompt)
-    proc.stdin.close()
+    import tempfile
+    import threading
+
+    # stderr 는 파일로 받음: 파이프로 받으면 윈도우에서 버퍼가 차서 멈출 수 있음
+    err_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err_file,
+                            text=True, encoding="utf-8", errors="replace", cwd=os.getcwd(),
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    limit = timeout or CLAUDECODE_TIMEOUT
+    timed_out = threading.Event()
+
+    def _kill():
+        timed_out.set()
+        proc.kill()
+
+    watchdog = threading.Timer(limit, _kill)
+    watchdog.daemon = True
+    watchdog.start()
     try:
+        proc.stdin.write(prompt)
+        proc.stdin.close()
         text = _emit(on_text, iter(proc.stdout.readline, ""))
-        proc.wait(timeout=CLAUDECODE_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        raise ProviderError("Claude Code 응답 시간 초과")
+        proc.wait(timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
     finally:
+        watchdog.cancel()
         if proc.poll() is None:  # 중지 버튼 등으로 중간에 끊기면 claude 프로세스도 정리
             proc.kill()
+    err_file.seek(0)
+    err = err_file.read().strip()[-600:]
+    err_file.close()
+    if timed_out.is_set():
+        raise ProviderError(f"Claude Code 가 {int(limit)}초 안에 답하지 않았어요. {err}".strip())
     if proc.returncode != 0:
-        err = proc.stderr.read().strip()[-500:]
-        raise ProviderError(f"Claude Code 오류 (코드 {proc.returncode}): {err or text[-300:]}")
+        raise ProviderError(f"Claude Code 오류 (코드 {proc.returncode}): {err or locals().get('text', '')[-300:] or '메시지 없음'}")
     return text.strip()
 
 
