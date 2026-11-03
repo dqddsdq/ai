@@ -118,6 +118,7 @@ class Agent:
             "도구 매니페스트의 AUTONOMY_LEVEL 을 지키세요. 외부로 보내거나 삭제하는 행동은 "
             "직접 실행하지 말고 초안과 실행 방법만 제시하세요."
         )
+        parts.append(STYLE_RULES)
         return "\n\n".join(parts)
 
     def remember(self, note: str) -> None:
@@ -127,18 +128,42 @@ class Agent:
             f.write(f"\n- [{stamp}] {note.strip()}\n")
 
 
-ROUTER_PROMPT = """당신은 CEO 에이전트의 업무 분배기입니다.
-사용자 요청을 가장 잘 처리할 에이전트 한 명을 고르세요.
+# 위 회사 메모리(decisions.md 등)의 형식 규칙보다 우선하는 답변 스타일
+STYLE_RULES = """[답변 스타일 — 위의 어떤 형식 규칙보다 우선]
+- 질문 크기에 맞춰 답하세요. 인사·잡담은 1~2문장, 간단한 질문은 3~5줄, 분석·계획 요청일 때만 길게.
+- '다음 액션'이나 되묻기는 사용자가 계획·실행 방법을 물었을 때만 붙이세요. 인사에는 붙이지 마세요.
+- 묻지 않은 회사 사업(블로그 등) 얘기를 먼저 꺼내지 마세요.
+- 결론을 먼저, 군더더기 없이."""
 
-에이전트 목록:
+ROUTER_PROMPT = """당신은 CEO 에이전트의 업무 분배기입니다.
+사용자 요청을 가장 잘 처리할 팀 하나를 고르세요.
+
+팀 목록:
 {agents}
 
-반드시 JSON 한 줄로만 답하세요. 예: {{"agent": "writer", "reason": "블로그 글 작성 요청"}}"""
+예외: 인사·잡담·감사·짧은 확인("ㅎㅇ", "고마워", "ㅇㅋ", "뭐해?")처럼 가벼운 말이면 팀을 고르지 말고
+직접 짧게(1~2문장, 존댓말, 제안이나 질문 덧붙이지 않기) 답하세요: {{"agent": "none", "reply": "안녕하세요! 무엇을 도와드릴까요?"}}
+
+반드시 JSON 한 줄로만 답하세요. 예: {{"agent": "stock", "reason": "종목 분석 요청"}}"""
 
 
 def route_prompt() -> str:
     lines = "\n".join(f"- {t}: {agent_summary(t)}" for t in list_teams() if t != "ceo")
     return ROUTER_PROMPT.format(agents=lines)
+
+
+def parse_quick(reply: str) -> str | None:
+    """라우터가 가벼운 말에 바로 답했으면 그 답을 돌려줌."""
+    match = re.search(r"\{.*\}", reply, re.S)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if str(data.get("agent", "")).strip().lower() == "none" and str(data.get("reply", "")).strip():
+        return str(data["reply"]).strip()
+    return None
 
 
 def parse_route(reply: str) -> tuple[str, str]:

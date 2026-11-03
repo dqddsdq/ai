@@ -383,10 +383,20 @@ class Handler(BaseHTTPRequestHandler):
             log(f"  🧭 담당 팀 고르는 중 ({spec})...")
             try:
                 reply = pv.chat(spec, ag.route_prompt(), [{"role": "user", "content": text}], effort="low", timeout=120)
-                agent_id, reason = ag.parse_route(reply)
             except pv.ProviderError as e:
                 log(f"  ⚠️ 배정 실패: {e}")
                 raise
+            quick = ag.parse_quick(reply) if not image_ids else None
+            if quick:  # 인사·잡담: 팀 배정 없이 CEO 가 바로 짧게
+                log("  → 가벼운 말이라 CEO가 바로 답함")
+                conv["messages"] += [{"role": "user", "content": text},
+                                     {"role": "assistant", "content": quick, "agent": "ceo", "model": str(spec)}]
+                save_conv(conv)
+                self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": "ceo",
+                                    "model": str(spec), "reason": "", "sources": [], "team": 1})
+                self._send("delta", {"text": quick})
+                return self._send("done", {"conversation_id": conv["id"]})
+            agent_id, reason = ag.parse_route(reply)
             log(f"  → {agent_id} 팀")
         if agent_id not in ag.list_teams():
             return self._send("error", {"message": f"없는 팀: {agent_id}"})
@@ -404,7 +414,9 @@ class Handler(BaseHTTPRequestHandler):
         if refs:
             extra += "\n\n" + refs
         members = ag.team_members(agent_id)
-        use_team = body.get("team", True) and len(members) > 1
+        # 아주 짧은 말("ㅎㅇ", "ㅇㅋ")은 팀원 여러 명을 부르지 않음
+        short_talk = len(text) <= 8 and not images and "?" not in text
+        use_team = body.get("team", True) and len(members) > 1 and not short_talk
 
         if images:
             history[-1]["content"] += f"\n\n[화면 캡처 {len(images)}장 첨부]"
