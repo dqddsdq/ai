@@ -434,8 +434,16 @@ class Handler(BaseHTTPRequestHandler):
         market = self._market_context(agent_id, text, history, spec)
         if market:
             extra += "\n\n" + market
-        drafts = []
-        if use_team:
+        drafts, steps = [], []
+        style = tm.settings().get("team_style", "review")
+        if use_team and style == "review":
+            reply, steps, _ = tm.run_review(
+                agent_id, history, extra, override, effort,
+                on_step_start=lambda st: self._send("step_start", st.as_dict()),
+                on_step_done=lambda st: self._send("step_done", st.as_dict()),
+                on_text=delta, images=images,
+            )
+        elif use_team:
             reply, drafts, _ = tm.run_team(
                 agent_id, history, extra, override, effort,
                 on_draft_start=lambda i, d: self._send("draft_start", {"i": i, "member": d.member, "view": d.view}),
@@ -453,7 +461,8 @@ class Handler(BaseHTTPRequestHandler):
         conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id,
                                  "model": str(spec), "sources": sources,
                                  "drafts": [{"member": d.member, "view": d.view, "text": d.text, "error": d.error}
-                                            for d in drafts]})
+                                            for d in drafts],
+                                 "steps": [st.as_dict() for st in steps]})
         save_conv(conv)
         action = find_action(reply) if body.get("actions", True) else None
         if action:

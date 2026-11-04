@@ -120,6 +120,17 @@ button { cursor: pointer; }
 .mhead .mname { font-weight: 700; font-size: 15px; }
 .mhead .mview { color: var(--muted); font-size: 13px; }
 .member.pending .md { color: var(--faint); font-size: 13.5px; }
+.step { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.step > summary { list-style: none; cursor: pointer; display: flex; gap: 8px; align-items: center; padding: 7px 12px; font-size: 13px; }
+.step > summary::-webkit-details-marker { display: none; }
+.step .stitle { font-weight: 600; }
+.step .sview { color: var(--muted); }
+.step .sverdict { margin-left: auto; font-size: 12px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.sverdict.pass, .sverdict.approve { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.sverdict.fix, .sverdict.reject { background: var(--accent-soft); color: var(--accent); }
+.sverdict.wait { color: var(--faint); }
+.step .md { padding: 4px 14px 12px; font-size: 13.5px; border-top: 1px dashed var(--line); }
+.team.steps { gap: 6px; }
 .final-head { font-weight: 700; font-size: 15px; margin: 4px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
 .team-judge { padding: 4px 2px; color: var(--accent); font-size: 13.5px; }
 .winner { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 3px 10px; font-size: 13px; margin-bottom: 8px; }
@@ -251,7 +262,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <select id="model-select" title="AI 모델"></select>
           <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료</label>
           <select id="team-mode" title="팀 비교: 팀원들이 각자 답하고 비교해서 최고 답을 드려요 (시간·사용량 늘어남)">
-            <option value="auto">👥 팀 비교: 자동</option><option value="on">👥 팀 비교: 항상</option><option value="off">👥 팀 비교: 끄기</option>
+            <option value="auto">👥 팀 검토: 자동</option><option value="on">👥 팀 검토: 항상</option><option value="off">👥 팀 검토: 끄기</option>
           </select>
           <div class="spacer"></div>
           <button class="send" id="send-btn" disabled title="보내기 (Enter)">↑</button>
@@ -461,6 +472,8 @@ async function openConv(id) {
       const a = addAI(m); a.body.innerHTML = finalHTML(m.content); a.el.dataset.raw = m.content;
       (m.drafts || []).forEach((d, i) => a.team.done({ ...d, i: i + 1 }));
       if ((m.drafts || []).length > 1) a.team.judged();
+      (m.steps || []).forEach(st => a.team.stepDone(st));
+      if ((m.steps || []).length) a.team.judged();
     }
   }
   $("#top-title").textContent = c.title; scrollDown(true); loadConvs();
@@ -488,7 +501,7 @@ function addAI(info = {}) {
     const agent = state.meta?.agents.find(a => a.id === i.agent);
     const name = agent ? teamName(i.agent) : (i.agent || "…");
     who.innerHTML = (i.reason ? `<span>🧭 CEO →</span>` : "") + `<span class="agent">${esc(name)}</span>`
-      + (i.team > 1 ? `<span class="tag" title="팀원 초안 모델: ${esc(i.member_model || "기본")}">👥 ${i.team}명 비교</span>` : "")
+      + (i.team > 1 ? `<span class="tag" title="팀원 모델: ${esc(i.member_model || "기본")}">👥 팀 검토</span>` : "")
       + (i.model ? `<span class="tag">${esc(i.model)}</span>` : "")
       + (i.sources || []).map(s => `<span class="tag src" title="${esc(s)}">📚 ${esc(s.split("/").pop().replace(/\.md$/, ""))}</span>`).join("");
     if (agent) who.title = agent.summary;
@@ -496,7 +509,7 @@ function addAI(info = {}) {
   setWho(info);
   el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").replace(/^\s*`?🏆[^\n]*\n+/, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
   const teamBox = el.querySelector(".team");
-  const cards = {};
+  const cards = {}, steps = {};
   const team = {
     start(d) {
       teamBox.hidden = false;
@@ -515,6 +528,20 @@ function addAI(info = {}) {
       finalHead.innerHTML = `<span class="team-judge"><span class="spin">◌</span> 🏆 팀원 답변 비교 중...</span>`;
     },
     judged() { if (!teamBox.hidden) { finalHead.hidden = false; finalHead.textContent = "🏆 최종 답"; } },
+    // 검토 파이프라인 단계 (초안 → 검토 → 승인)
+    stepStart(st) {
+      teamBox.hidden = false; teamBox.classList.add("steps");
+      let r = steps[st.id];
+      if (!r) { r = document.createElement("details"); r.className = "step"; teamBox.appendChild(r); steps[st.id] = r; }
+      r.innerHTML = `<summary><span class="stitle">${esc(st.title)}</span><span class="sview">· ${esc(st.view || "")}</span><span class="sverdict wait"><span class="spin">◌</span> 진행 중</span></summary><div class="md"></div>`;
+    },
+    stepDone(st) {
+      if (!steps[st.id]) team.stepStart(st);
+      const r = steps[st.id], v = r.querySelector(".sverdict");
+      const label = { pass: "✅ 통과", fix: "✏️ 수정 필요", approve: "✅ 승인", reject: "↩️ 반려" }[st.verdict] || (st.error ? "⚠️ 오류" : "완료");
+      v.className = "sverdict " + (st.error ? "fix" : (st.verdict || "pass")); v.textContent = label;
+      r.querySelector(".md").innerHTML = st.error ? `<div class="err">⚠️ ${esc(st.error)}</div>` : md(st.text || "");
+    },
   };
   const statusLine = el.querySelector(".status-line"), marketBox = el.querySelector(".market");
   const status = (t) => { statusLine.hidden = !t; statusLine.innerHTML = t ? `<span class="spin">◌</span> ${esc(t)}` : ""; };
@@ -663,6 +690,8 @@ async function send() {
       market: (d) => ai.market(d.items || []),
       draft_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
       draft_done: (d) => { ai.team.done(d); },
+      step_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.stepStart(d); scrollDown(); },
+      step_done: (d) => { ai.team.stepDone(d); },
       judge_start: () => { ai.team.judge(); scrollDown(); },
       delta: (d) => { if (!raw) { ai.team.judged(); ai.body.classList.add("cursor"); } raw += d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); scrollDown(); },
       error: (e) => { ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ ${esc(e.message)}</div>`); },

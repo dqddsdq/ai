@@ -1,5 +1,6 @@
 {
-  "_설명": "max_parallel = 팀원 동시 실행 최대 인원 (사용량 아끼려면 1~2). team_mode = auto(분석 질문만 팀) / on / off",
+  "_설명": "max_parallel = 동시에 돌리는 최대 인원 (사용량 아끼려면 1~2). team_mode = auto(분석 질문만 팀) / on / off. team_style = review(초안1→검토2→승인3) / compare(팀원 각자 답→비교)",
   "max_parallel": 3,
-  "team_mode": "auto"
+  "team_mode": "auto",
+  "team_style": "review"
 }

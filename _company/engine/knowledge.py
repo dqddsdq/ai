@@ -75,7 +75,7 @@ def search(query: str, chunks: list[Chunk] | None = None, k: int = TOP_K) -> lis
             # 코사인 유사도: 긴 글이 무조건 이기지 않도록 길이로 나눔
             scored.append((overlap / math.sqrt(len(q) * len(c.grams)), c))
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [s for s in scored[:k] if s[0] >= 0.05]
+    return [s for s in scored[:k] if s[0] >= 0.09]  # 0.05 는 관계없는 자료가 붙었음
 
 
 def context_for(query: str) -> str:
