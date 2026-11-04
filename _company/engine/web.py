@@ -223,6 +223,7 @@ class Handler(BaseHTTPRequestHandler):
                            for t in ag.list_teams()],
                 "models": [{"label": l, "value": v} for l, v in MODEL_CHOICES],
                 "company": _company_name(),
+                "team_mode": tm.settings().get("team_mode", "auto"),
             })
         if path == "/api/conversations":
             return self._json(list_convs())
@@ -414,9 +415,11 @@ class Handler(BaseHTTPRequestHandler):
         if refs:
             extra += "\n\n" + refs
         members = ag.team_members(agent_id)
-        # 아주 짧은 말("ㅎㅇ", "ㅇㅋ")은 팀원 여러 명을 부르지 않음
+        # 팀 비교: auto(분석·판단 질문만) / on / off — 화면 선택값, 없으면 settings.json
+        mode = body.get("team")
+        mode = {True: "on", False: "off"}.get(mode, mode)
         short_talk = len(text) <= 8 and not images and "?" not in text
-        use_team = body.get("team", True) and len(members) > 1 and not short_talk
+        use_team = len(members) > 1 and not short_talk and tm.wants_team(text, bool(images), mode)
 
         if images:
             history[-1]["content"] += f"\n\n[화면 캡처 {len(images)}장 첨부]"
@@ -424,7 +427,8 @@ class Handler(BaseHTTPRequestHandler):
         save_conv(conv)
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
                             "model": str(spec), "reason": reason, "sources": sources,
-                            "team": len(members) if use_team else 1})
+                            "team": len(members) if use_team else 1,
+                            "member_model": (override or tm.team_config(agent_id).get("member_model") or "") if use_team else ""})
         delta = lambda t: self._send("delta", {"text": t})  # noqa: E731
         effort = body.get("effort") or "medium"
         market = self._market_context(agent_id, text, history, spec)
@@ -471,7 +475,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send("tool_result", {"markdown": note})
                 self._send("tool_done", {"footer": f"📝 노트 저장: {footer}"})
             else:
-                spec = pv.parse_model(override or ag.Agent("startup").model_spec())
+                spec = pv.parse_model(override or ag.Agent("startup-money").model_spec())
                 stock = parse_stock_arg(arg) if kind == "STOCK" else None
 
                 def on_text(result_text):
@@ -506,7 +510,7 @@ class Handler(BaseHTTPRequestHandler):
     # 시뮬레이션
     def _simulate(self, body: dict):
         goal = (body.get("goal") or "").strip()
-        spec = pv.parse_model(body.get("model") or ag.Agent("startup").model_spec())
+        spec = pv.parse_model(body.get("model") or ag.Agent("startup-money").model_spec())
         stock = None
         if body.get("stock"):
             stock = {"ticker": body["stock"].strip(), "years": body.get("years"), "target": body.get("target")}

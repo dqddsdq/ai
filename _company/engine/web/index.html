@@ -250,7 +250,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <select id="agent-select" title="담당 에이전트"></select>
           <select id="model-select" title="AI 모델"></select>
           <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료</label>
-          <label class="toggle" title="같은 팀 팀원들이 각자 답하고, 비교해서 가장 좋은 답을 드려요 (시간·사용량 늘어남)"><input type="checkbox" id="team-toggle" checked>👥 팀 비교</label>
+          <select id="team-mode" title="팀 비교: 팀원들이 각자 답하고 비교해서 최고 답을 드려요 (시간·사용량 늘어남)">
+            <option value="auto">👥 팀 비교: 자동</option><option value="on">👥 팀 비교: 항상</option><option value="off">👥 팀 비교: 끄기</option>
+          </select>
           <div class="spacer"></div>
           <button class="send" id="send-btn" disabled title="보내기 (Enter)">↑</button>
         </div>
@@ -410,13 +412,14 @@ async function init() {
   const hour = new Date().getHours();
   $("#greet").textContent = (hour < 12 ? "좋은 아침이에요" : hour < 18 ? "좋은 오후예요" : "좋은 저녁이에요") + ", 사장님";
   const as = $("#agent-select");
-  as.innerHTML = `<option value="auto">🧭 자동 배정</option>` + meta.agents.map(a => `<option value="${esc(a.id)}">${esc(a.id)} 팀 (${a.members.length}명)</option>`).join("");
+  as.innerHTML = `<option value="auto">🧭 자동 배정</option>` + meta.agents.map(a => `<option value="${esc(a.id)}">${esc((a.summary || "").split("`")[0].trim() || a.id)} (${a.members.length}명)</option>`).join("");
   $("#model-select").innerHTML = meta.models.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join("");
   as.value = store.get("agent", "auto"); if (!as.value) as.value = "auto";
   $("#model-select").value = store.get("model", "");
   as.onchange = () => store.set("agent", as.value); $("#model-select").onchange = () => store.set("model", $("#model-select").value);
-  $("#team-toggle").checked = store.get("team", "1") === "1"; $("#team-toggle").onchange = () => store.set("team", $("#team-toggle").checked ? "1" : "0");
-  const ideas = ["삼성전자 지금 들어가도 될까?", "엔비디아 차트 분석해줘", "전세 보증금 못 돌려받으면 어떻게 해?", "1인 창업 사업자등록 절차랑 세금", "온라인 쇼핑몰로 1년 안에 월 300만원 가능할까?"];
+  $("#team-mode").value = store.get("teamMode", meta.team_mode || "auto");
+  $("#team-mode").onchange = () => store.set("teamMode", $("#team-mode").value);
+  const ideas = ["삼성전자 지금 들어가도 될까?", "엔비디아 실적 발표 전에 사도 돼?", "100만원 어떻게 나눠서 투자할까?", "전세 보증금 못 돌려받으면 어떻게 해?", "프리랜서 계약서 볼 때 뭘 확인해?", "온라인 쇼핑몰로 1년 안에 월 300만원 가능할까?"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
   newChat(); loadConvs(); show("chat");
@@ -485,7 +488,7 @@ function addAI(info = {}) {
     const agent = state.meta?.agents.find(a => a.id === i.agent);
     const name = agent ? teamName(i.agent) : (i.agent || "…");
     who.innerHTML = (i.reason ? `<span>🧭 CEO →</span>` : "") + `<span class="agent">${esc(name)}</span>`
-      + (i.team > 1 ? `<span class="tag">👥 ${i.team}명 비교</span>` : "")
+      + (i.team > 1 ? `<span class="tag" title="팀원 초안 모델: ${esc(i.member_model || "기본")}">👥 ${i.team}명 비교</span>` : "")
       + (i.model ? `<span class="tag">${esc(i.model)}</span>` : "")
       + (i.sources || []).map(s => `<span class="tag src" title="${esc(s)}">📚 ${esc(s.split("/").pop().replace(/\.md$/, ""))}</span>`).join("");
     if (agent) who.title = agent.summary;
@@ -653,7 +656,7 @@ async function send() {
   try {
     await stream("/api/chat", {
       conversation_id: state.conv?.id, message: text, images, agent: $("#agent-select").value,
-      model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-toggle").checked,
+      model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-mode").value,
     }, {
       meta: (m) => { gotAny = true; ai.status(""); state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
       status: (d) => ai.status(d.text),

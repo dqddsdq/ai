@@ -34,6 +34,33 @@ def team_config(team: str) -> dict:
         return {}
 
 
+def settings() -> dict:
+    """_shared/settings.json — max_parallel, team_mode"""
+    try:
+        return json.loads((ag.SHARED_DIR / "settings.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+DEEP_WORDS = ("분석", "어때", "될까", "돼", "가능", "계획", "추천", "비교", "전략", "어떻게", "왜", "판단", "검토",
+              "리스크", "전망", "살까", "사도", "팔까", "팔아", "매수", "매도", "들어가", "손절", "익절", "비중",
+              "계약", "소송", "고소", "세금", "창업", "시뮬", "괜찮", "해야")
+
+
+def wants_team(text: str, has_images: bool = False, mode: str | None = None) -> bool:
+    """팀 비교를 돌릴지: on=항상, off=안 함, auto=분석·판단이 필요한 질문만."""
+    mode = (mode or settings().get("team_mode") or "auto").lower()
+    if mode in ("on", "always", "true"):
+        return True
+    if mode in ("off", "false"):
+        return False
+    if has_images:
+        return True
+    t = text.strip()
+    is_question = "?" in t or t.endswith(("까", "요", "냐", "니"))
+    return len(t) >= 30 or any(w in t for w in DEEP_WORDS) or (is_question and len(t) >= 12)
+
+
 @dataclass
 class Draft:
     member: str
@@ -62,8 +89,10 @@ def run_team(
     def system_for(member: str) -> str:
         return ag.Agent(member).system_prompt() + ("\n\n" + extra_system if extra_system else "")
 
-    lead_spec = pv.parse_model(override or ag.Agent(members[0]).model_spec())
-    web = bool(team_config(team).get("web"))
+    cfg = team_config(team)
+    lead_spec = pv.parse_model(override or ag.Agent(members[0]).model_spec())   # 심사·단독 답변: 큰 모델
+    member_spec_str = override or cfg.get("member_model")                       # 팀원 초안: 가벼운 모델
+    web = bool(cfg.get("web"))
     if len(members) == 1:
         text = pv.chat(lead_spec, system_for(members[0]), history, on_text=on_text, effort=effort,
                        web=web, images=images)
@@ -75,14 +104,15 @@ def run_team(
             on_draft_start(i, d)
 
     def work(d: Draft) -> Draft:
-        spec = pv.parse_model(override or ag.Agent(d.member).model_spec())
+        spec = pv.parse_model(member_spec_str or ag.Agent(d.member).model_spec())
         try:
             d.text = pv.chat(spec, system_for(d.member), history, effort=effort, web=web, images=images)
         except pv.ProviderError as e:
             d.error = str(e)
         return d
 
-    with ThreadPoolExecutor(max_workers=len(drafts)) as pool:
+    max_parallel = max(1, int(settings().get("max_parallel") or len(drafts)))
+    with ThreadPoolExecutor(max_workers=min(len(drafts), max_parallel)) as pool:
         futures = {pool.submit(work, d): i for i, d in enumerate(drafts, 1)}
         for f in as_completed(futures):  # 완료 알림은 호출한 스레드에서 보냄
             if on_draft_done:

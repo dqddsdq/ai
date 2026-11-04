@@ -1,0 +1,5 @@
+{
+  "_설명": "max_parallel = 팀원 동시 실행 최대 인원 (사용량 아끼려면 1~2). team_mode = auto(분석 질문만 팀) / on / off",
+  "max_parallel": 3,
+  "team_mode": "auto"
+}
