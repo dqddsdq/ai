@@ -15,29 +15,30 @@
 
 ### 팀 검토 과정 (분석·판단 질문일 때)
 ```
-① 초안 1명
-② 검토 3명: 🔍 근거·출처 대조 / 🧮 숫자·계산 재확인 / 😈 반대·리스크 → 지적 있으면 수정
-③ 최종 승인 5명: Claude 2 + 다른 회사 AI 3 (Gemini, Mistral, 로컬 AI)
-   → 2명 이상 반려하면: ✏️ 수정 → 검토 3명이 반려 사유 해결 확인 → 통과할 때까지 반복 (최대 3바퀴)
-   → 1명만 반려하면 참고로만 표시 (약한 AI 의 괜한 반려 방지)
+① 초안 1명 (Claude)
+② 중간 검토 최대 6명
+   - Claude 3명 (항상): 🔍 근거·출처 / 🧮 숫자·계산 / 😈 반대·리스크
+   - 다른 AI 3명 (무료 사용량이 있을 때만): 같은 3가지 역할 — FreeLLMAPI → 없으면 Gemini/GPT/Mistral 키
+   → 지적 있으면 수정 (근거 있는 지적만 반영)
+③ 최종 승인 3명 (Claude)
+   → 2명 이상 반려: ✏️ 수정 → ② 중간 검토가 반려 사유 해결 확인 → 통과할 때까지 반복 (최대 3바퀴)
 → 🏆 최종 답
 ```
-- 답 위 배지: `🏆 검토 완료 · 근거 ✅ · 숫자·논리 ✅ · 리스크 ✅ · 최종 승인 5/5` — 각 단계의 실제 판정을 코드가 모아서 만듦
+- 배지 예: `🏆 검토 완료 · 검토 6/6 통과 (다른 AI 3명 참여) · 최종 승인 3/3`
+- 무료 AI 가 사용량 제한(429)에 걸리면 그 질문에서 빠지고 **10분 쉬었다가** 다시 참여 → 그동안은 Claude 만
 - 3바퀴 후에도 지적이 남으면 `⚠️ 검토 미완료` + 남은 문제를 "확인 필요"로 표시
-- 질문 1개당 10~11번 호출(반려 시 +4/바퀴), 1~4분
 
-### 다른 회사 AI 를 최종 승인에 넣기 (무료)
-서로 다른 회사 AI 는 서로 다른 실수를 잡아요. 키를 `.env` 에 넣는 순간 해당 자리에 자동으로 들어갑니다.
-키가 없거나, 로컬 AI 가 꺼져 있거나, 사용량 제한에 걸리면 **자동으로 Claude 가 대신** 판정해요.
-
-| 자리 | 받는 곳 | `.env` |
-|---|---|---|
-| Gemini | aistudio.google.com/apikey (무료 요금제) | `GEMINI_API_KEY=...` |
-| Mistral | console.mistral.ai (무료 체험 요금제) | `MISTRAL_API_KEY=...` |
-| 로컬 AI | LM Studio 설치 → 모델 로드 → Developer 탭 Start Server | (키 없음) |
-
-> ⚠️ 무료 요금제는 보낸 내용이 서비스 개선(학습)에 쓰일 수 있어요. 주민번호·계좌·실명 같은 민감한 정보는 질문에 넣지 마세요.
-> 로컬 AI 는 PC 밖으로 아무것도 나가지 않아요.
+### FreeLLMAPI 연결 (무료 AI 검토자)
+FreeLLMAPI 가 PC 에서 실행 중이고 Provider 키 등록·테스트가 끝났다면, `_company\.env` 에 아래만 넣으세요.
+**Claude Code 설정은 바꾸지 않아요** — 31명 에이전트는 계속 Claude 를 쓰고, 무료 AI 는 검토자 자리에만 들어갑니다.
+```
+FREELLM_URL=http://localhost:포트      ← 루트 주소, 뒤에 /v1 붙이지 않기
+FREELLM_API_KEY=통합키
+FREELLM_MODELS=gemini-2.5-flash,llama-3.3-70b-versatile,auto   ← FreeLLMAPI 에 등록된 모델 이름
+```
+그다음 `진단.bat` → `[5] FreeLLMAPI` 가 ✅ 인지 확인. 안 되면 `FREELLM_API=openai` 로 바꿔 보세요.
+> ⚠️ 무료 요금제는 보낸 내용이 학습에 쓰일 수 있어요. 민감한 개인정보는 질문에 넣지 마세요.
+> ⚠️ 중국계 모델(Qwen·DeepSeek 등)은 우리 엔진이 이름으로 막지만, FreeLLMAPI 의 `auto` 가 고르는 모델까지는 못 막아요. FreeLLMAPI 쪽에서도 빼 두세요.
 
 ### 설정 (`_shared/settings.json`)
 - `max_parallel`: 동시에 돌리는 최대 인원 (사용량 아끼려면 1~2)
@@ -45,7 +46,7 @@
 - `team_style`: review (위 검토 과정) / compare (팀원이 각자 답 → 비교해서 최고 답)
 - `max_review_rounds`: 반려 시 '수정 → 재검토' 최대 반복 횟수 (기본 3)
 - `reject_threshold`: 이 인원 이상 반려해야 재수정 (기본 2)
-- `approvers`: 최종 승인 AI 목록. `model` 이 비면 팀 기본 Claude. 예: `{"model": "openai", "label": "GPT"}` 추가 가능
+- `reviewers` / `approvers`: 검토·승인 자리. `models` 는 앞에서부터 쓸 수 있는 첫 AI, `optional: true` 면 쓸 수 있을 때만 참여
 - 팀별 설정 `_agents/<팀>/team.json`: `web`(웹 검색), `market_data`(시세 자동), `member_model`
 
 ## 🖥️ 화면 공유 (디스코드 방송처럼)

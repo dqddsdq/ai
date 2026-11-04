@@ -80,7 +80,32 @@ def run() -> int:
                 fix = "PowerShell 에서 claude 를 실행해서 로그인하세요"
             bad(msg[:500], fix)
 
-    print("[5] 포트 8765")
+    print("[5] FreeLLMAPI (선택 — 무료 AI 검토자)")
+    import os
+    if not os.getenv("FREELLM_URL"):
+        ok("설정 안 함 — 검토는 Claude만으로 진행 (정상)")
+    else:
+        url = os.getenv("FREELLM_URL")
+        if url.rstrip("/").endswith("/v1"):
+            bad(f"FREELLM_URL 이 /v1 로 끝나요: {url}", "루트 주소만 쓰세요 (예: http://localhost:3000) — 자동으로 빼고 쓰긴 해요")
+        if not pv._freellm_alive():
+            problems += 1
+            bad(f"{url} 에 연결 안 됨", "FreeLLMAPI 가 켜져 있는지, 주소·포트가 맞는지 확인하세요")
+        else:
+            ok(f"{url} 켜져 있음")
+            names = [x.strip() for x in os.getenv("FREELLM_MODELS", "").split(",") if x.strip()] or [os.getenv("FREELLM_MODEL", "auto")]
+            for name in names[:3]:
+                t = time.time()
+                try:
+                    reply = pv.chat(pv.ModelSpec("freellm", name), "짧게 답하세요.",
+                                    [{"role": "user", "content": "OK 라고만 답해"}], timeout=60)
+                    ok(f"모델 {name}: '{reply.strip()[:20]}' ({time.time() - t:.0f}초)")
+                except pv.ProviderError as e:
+                    problems += 1
+                    bad(f"모델 {name}: {str(e)[:200]}",
+                        "FREELLM_API_KEY(통합 키)와 모델 이름을 확인하세요. 계속 안 되면 .env 에 FREELLM_API=openai 로 바꿔 보세요")
+
+    print("[6] 포트 8765")
     with socket.socket() as s:
         if s.connect_ex(("127.0.0.1", 8765)) == 0:
             ok("이미 AI 화면이 켜져 있어요 (정상 — 다른 창에서 실행 중)")

@@ -160,18 +160,47 @@ VERIFY_RISK = """[검토 단계 — 반대·리스크 확인 담당]
 - 근거 없는 트집은 잡지 마세요. 실제로 결론을 바꿀 수 있는 것만. 각 항목: ✅ / ❌(보완안) / ⚠️ 로 짧게.
 - 마지막 줄은 반드시 둘 중 하나: `판정: 통과` 또는 `판정: 수정 필요`"""
 
-# 최종 승인 기본 구성: Claude 2 + 다른 회사 AI 3 (키·실행 안 되면 자동으로 Claude 가 대신)
-DEFAULT_APPROVERS = [
-    {"model": "", "label": "Claude A"},
-    {"model": "", "label": "Claude B"},
-    {"model": "gemini", "label": "Gemini"},
-    {"model": "mistral", "label": "Mistral"},
-    {"model": "local", "label": "로컬 AI"},
+# 중간 검토 기본 구성: Claude 3 (항상) + 다른 AI 3 (무료 사용량이 있을 때만 참여, 안 되면 빠짐)
+# models: 앞에서부터 쓸 수 있는 첫 번째 AI 를 씀. "freellm:#1" = .env FREELLM_MODELS 의 1번째 모델
+ROLE_PROMPTS = {"evidence": None, "logic": None, "risk": None}   # 아래에서 채움
+ROLE_NAMES = {"evidence": ("🔍", "근거·출처"), "logic": ("🧮", "숫자·논리"), "risk": ("😈", "반대·리스크")}
+DEFAULT_REVIEWERS = [
+    {"role": "evidence", "models": [""], "label": "Claude"},
+    {"role": "logic", "models": [""], "label": "Claude"},
+    {"role": "risk", "models": [""], "label": "Claude"},
+    {"role": "evidence", "models": ["freellm:#1", "gemini"], "label": "무료 AI 1", "optional": True},
+    {"role": "logic", "models": ["freellm:#2", "openai"], "label": "무료 AI 2", "optional": True},
+    {"role": "risk", "models": ["freellm:#3", "mistral"], "label": "무료 AI 3", "optional": True},
 ]
+# 최종 승인 기본 구성: Claude 3
+DEFAULT_APPROVERS = [{"models": [""], "label": "Claude"} for _ in range(3)]
+
+
+def resolve_seat(seat: dict, default_spec) -> tuple | None:
+    """자리 → (모델, 이름). 쓸 수 있는 AI 가 없으면: 선택 자리는 None(빠짐), 필수 자리는 Claude."""
+    import os
+
+    candidates = seat.get("models") or [seat.get("model", "")]
+    for m in candidates:
+        if not m:
+            return default_spec, seat.get("label") or "Claude"
+        spec = pv.parse_model(m)
+        if spec.provider == "freellm" and spec.model.startswith("#"):
+            names = [x.strip() for x in os.getenv("FREELLM_MODELS", "").split(",") if x.strip()]
+            idx = int(spec.model[1:] or 1) - 1
+            spec = pv.ModelSpec("freellm", names[idx] if idx < len(names) else os.getenv("FREELLM_MODEL", "auto"))
+        if pv.is_ready(spec):
+            name = "FreeLLMAPI" if spec.provider == "freellm" else spec.provider.capitalize()
+            return spec, f"{name} · {spec.model}"
+    if seat.get("optional"):
+        return None
+    return default_spec, (seat.get("label") or "Claude") + " (대체)"
+
 
 REVISE_PROMPT = """[수정 단계]
 아래 <draft>(초안)를 <review>(검토 의견)에 따라 고쳐서 사장님께 드릴 답을 다시 쓰세요.
-- ❌ 지적은 반드시 반영하고, ⚠️ 확인 못 한 주장은 빼거나 "확인 필요"라고 표시하세요.
+- 검토자는 여러 회사 AI 라서 의견이 엇갈리거나 틀릴 수 있어요. 근거 있는 ❌ 지적만 반영하고, 근거 없거나 틀린 지적은 무시하세요.
+- ⚠️ 확인 못 한 주장은 빼거나 "확인 필요"라고 표시하세요.
 - 맞는 부분은 그대로 두세요. 검토 과정·'초안'·'검토자' 같은 말은 쓰지 말고 완성된 답만 쓰세요.
 - 길이는 질문 크기에 맞게. 초안의 [[...]] 실행 태그가 여전히 필요하면 마지막 줄에 남기세요."""
 
@@ -271,47 +300,65 @@ def run_review(
     if not draft.text.strip():
         raise pv.ProviderError(f"초안 작성 실패: {draft.error}")
 
-    # ② 검토 2명 (근거·출처 / 숫자·논리)
+    # ② 중간 검토: Claude 3 + 다른 AI 최대 3 (쓸 수 있을 때만)
     base = history[:-1]
-    review_msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<draft>\n{draft.text}\n</draft>"}]
-    v1 = Step("verify1", "🔍 검토 · 근거·출처", pick(1), "자료·출처 대조")
-    v2 = Step("verify2", "🧮 검토 · 숫자·논리", pick(2), "계산·논리 재확인")
-    v3 = Step("verify3", "😈 검토 · 반대·리스크", pick(0), "틀렸다면 왜일까")
-    run_parallel([(v1, system_for(pick(1), VERIFY_EVIDENCE), base + review_msg, member_spec, web, "verify"),
-                  (v2, system_for(pick(2), VERIFY_LOGIC), base + review_msg, member_spec, False, "verify"),
-                  (v3, system_for(pick(0), VERIFY_RISK), base + review_msg, member_spec, False, "verify")])
-    steps += [v1, v2, v3]
+    prompts = {"evidence": VERIFY_EVIDENCE, "logic": VERIFY_LOGIC, "risk": VERIFY_RISK}
+    reviewer_seats = cfg.get("reviewers") or settings().get("reviewers") or DEFAULT_REVIEWERS
 
+    def review_round(text: str, tag: str, must_fix: str = "") -> list[Step]:
+        content = f"<question>\n{question}\n</question>\n\n<draft>\n{text}\n</draft>"
+        if must_fix:
+            content += ("\n\n<must_fix>\n최종 승인에서 반려된 사유입니다. 이 지적이 위 draft 에서 "
+                        f"실제로 고쳐졌는지 반드시 확인하세요.\n{must_fix}\n</must_fix>")
+        jobs = []
+        for i, seat in enumerate(reviewer_seats):
+            got = resolve_seat(seat, member_spec)
+            if got is None:
+                continue                                  # 무료 AI 사용 불가 → 이번엔 빠짐
+            spec, label = got
+            role = seat.get("role", "logic")
+            icon, rname = ROLE_NAMES.get(role, ("🔍", role))
+            member = pick(i)
+            st = Step(f"{tag}_r{i + 1}", f"{icon} {'재검토 ' + tag + ' · ' if must_fix else '검토 · '}{rname}", member, label)
+            use_web = web and role == "evidence" and spec.provider == "claudecode"
+            jobs.append((st, system_for(member, prompts.get(role, VERIFY_LOGIC)), base + [{"role": "user", "content": content}],
+                         spec, use_web, "verify"))
+        run_parallel(jobs)
+        done = [j[0] for j in jobs]
+        for st in done:                                   # 다른 AI 오류(사용량 제한 등)는 판정에서 제외
+            if st.error and st.view and "Claude" not in st.view:
+                st.verdict, st.title = "", st.title + " (오류로 제외)"
+        return done
+
+    first = review_round(draft.text, "1")
+    steps += first
     answer = draft.text
-    fixes = [v for v in (v1, v2, v3) if v.verdict == "fix" and v.text]
+    fixes = [v for v in first if v.verdict == "fix" and v.text]
     if fixes:
-        rev = Step("revise1", "✏️ 검토 의견 반영", members[0], f"{len(fixes)}명 지적 반영")
-        notes = "\n\n".join(f"<review by=\"{v.title}\">\n{v.text}\n</review>" for v in fixes)
+        rev = Step("revise1", "✏️ 검토 의견 반영", members[0], f"{len(fixes)}명 지적 검토 후 반영")
+        notes = "\n\n".join(f"<review by=\"{v.title} ({v.view})\">\n{v.text}\n</review>" for v in fixes)
         msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<draft>\n{draft.text}\n</draft>\n\n{notes}"}]
         run_parallel([(rev, system_for(members[0], REVISE_PROMPT), base + msg, lead_spec, False)])
         steps.append(rev)
         if rev.text.strip():
             answer = rev.text
 
-    # ③ 최종 승인 (기본 5명: Claude 2 + 다른 회사 AI 3 — 서로 다른 AI 가 서로 다른 실수를 잡도록)
+    # ③ 최종 승인 (기본 Claude 3)
     approve_msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<answer>\n{answer}\n</answer>"}]
     seats = cfg.get("approvers") or settings().get("approvers") or DEFAULT_APPROVERS
-    n = len(seats)
+    resolved = [(seat, resolve_seat(seat, member_spec)) for seat in seats]
+    resolved = [(seat, got) for seat, got in resolved if got is not None]
+    n = len(resolved)
     approvers, jobs = [], []
-    for i, seat in enumerate(seats, 1):
-        label = seat.get("label") or seat.get("model") or "Claude"
-        spec = pv.parse_model(seat["model"]) if seat.get("model") else member_spec
-        if not pv.is_ready(spec):                       # 키 없음·로컬 AI 꺼짐 → Claude 가 대신
-            label, spec = f"{label} → Claude 대신", member_spec
-        a = Step(f"approve{i}", f"✅ 최종 승인 {i}/{n} · {label}", pick(i - 1), str(spec))
+    for i, (seat, (spec, label)) in enumerate(resolved, 1):
+        a = Step(f"approve{i}", f"✅ 최종 승인 {i}/{n}", pick(i - 1), label)
         approvers.append(a)
         jobs.append((a, system_for(a.member, APPROVE_PROMPT.format(i=i, n=n)), base + approve_msg, spec, False, "approve"))
     run_parallel(jobs)
-    # 다른 AI 가 오류(사용량 제한 등)면 Claude 로 다시
     retry = [(a, *job[1:3], member_spec, False, "approve") for a, job in zip(approvers, jobs)
              if a.error and job[3] is not member_spec]
     for a, *_ in retry:
-        a.title += " → 오류로 Claude 대신"
+        a.view += " → 오류로 Claude 대신"
         a.error = ""
     if retry:
         run_parallel(retry)
@@ -320,15 +367,15 @@ def run_review(
     ok = sum(a.verdict == "approve" for a in approvers)
     threshold = min(n, max(1, int(settings().get("reject_threshold") or 2)))
     minor_rejects = rejects if 0 < len(rejects) < threshold else []
-    if minor_rejects:          # 1명만 반려 = 약한 AI 의 괜한 반려일 수 있어 참고로만
+    if minor_rejects:          # 기준 미만 반려는 참고로만
         rejects = []
 
-    # ④ 반려가 있으면: 1번으로 돌아가지 않고 "수정 → 검토 2명 재확인" 루프 (둘 다 통과할 때까지, 최대 N바퀴)
+    # ④ 반려가 기준 이상이면: 1번으로 돌아가지 않고 "수정 → 중간 검토 재확인" 루프 (모두 통과할 때까지, 최대 N바퀴)
     rounds_done, unresolved = 0, []
     if rejects:
         max_rounds = max(1, int(settings().get("max_review_rounds") or 3))
         notes = [f"<review by=\"{a.title}\">\n{a.text}\n</review>" for a in rejects]
-        must_fix = "\n\n".join(notes)   # 최종 승인 반려 사유 — 재검토 때 고쳐졌는지 꼭 확인
+        must_fix = "\n\n".join(notes)
         for r in range(1, max_rounds + 1):
             rounds_done = r
             rev = Step(f"loop{r}_revise", f"✏️ 재수정 {r}회차", members[0], "반려·검토 지적 반영")
@@ -337,25 +384,20 @@ def run_review(
             steps.append(rev)
             if rev.text.strip():
                 answer = rev.text
-            recheck = [{"role": "user", "content": (
-                f"<question>\n{question}\n</question>\n\n<draft>\n{answer}\n</draft>\n\n"
-                f"<must_fix>\n최종 승인에서 반려된 사유입니다. 이 지적이 위 draft 에서 실제로 고쳐졌는지 반드시 확인하세요.\n{must_fix}\n</must_fix>")}]
-            c1 = Step(f"loop{r}_v1", f"🔍 재검토 {r}회차 · 근거·출처", pick(1), "반려 사유 해결 확인")
-            c2 = Step(f"loop{r}_v2", f"🧮 재검토 {r}회차 · 숫자·논리", pick(2), "반려 사유 해결 확인")
-            c3 = Step(f"loop{r}_v3", f"😈 재검토 {r}회차 · 반대·리스크", pick(0), "반려 사유 해결 확인")
-            run_parallel([(c1, system_for(pick(1), VERIFY_EVIDENCE), base + recheck, member_spec, web, "verify"),
-                          (c2, system_for(pick(2), VERIFY_LOGIC), base + recheck, member_spec, False, "verify"),
-                          (c3, system_for(pick(0), VERIFY_RISK), base + recheck, member_spec, False, "verify")])
-            steps += [c1, c2, c3]
-            unresolved = [c for c in (c1, c2, c3) if c.verdict == "fix" and c.text]
+            checks = review_round(answer, f"{r}회차", must_fix)
+            steps += checks
+            unresolved = [c for c in checks if c.verdict == "fix" and c.text]
             if not unresolved:
                 break
-            notes = [f"<review by=\"{c.title}\">\n{c.text}\n</review>" for c in unresolved]
+            notes = [f"<review by=\"{c.title} ({c.view})\">\n{c.text}\n</review>" for c in unresolved]
 
     # 요약 배지 (코드가 각 단계의 실제 판정을 모아서 만듦 — 모델이 지어낼 수 없게)
-    def mark(v: Step) -> str:
-        return "⚠️ 오류" if v.error else ("✅" if v.verdict == "pass" else "✏️ 수정")
-    header = f"🏆 검토 완료 · 근거 {mark(v1)} · 숫자·논리 {mark(v2)} · 리스크 {mark(v3)} · 최종 승인 {ok}/{n}"
+    counted = [v for v in first if v.verdict]
+    others = sum(1 for v in counted if "Claude" not in v.view)
+    header = (f"🏆 검토 완료 · 검토 {sum(v.verdict == 'pass' for v in counted)}/{len(counted)} 통과"
+              + (f" (다른 AI {others}명 참여)" if others else " (Claude만)")
+              + (f" · 지적 {len(fixes)}건 반영" if fixes else "")
+              + f" · 최종 승인 {ok}/{n}")
     if minor_rejects:
         header += f" (반려 {len(minor_rejects)}건은 기준 {threshold}명 미만이라 참고만)"
     if rejects and not unresolved:

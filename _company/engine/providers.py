@@ -48,6 +48,7 @@ DEFAULT_MODELS = {
     "mistral": lambda: os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
     "groq": lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
     "xai": lambda: os.getenv("XAI_MODEL", "grok-4"),
+    "freellm": lambda: os.getenv("FREELLM_MODEL", "auto"),   # FreeLLMAPI: 무료 AI 여러 개를 하나로 묶은 중계기
     "echo": lambda: "test",
 }
 
@@ -73,8 +74,22 @@ KEY_ENV = {
     "gemini": "GEMINI_API_KEY",
     **{name: env for name, (_, env) in OPENAI_COMPATIBLE.items()},
     **{name: None for name in (*LOCAL_SERVERS, "local")},
+    "freellm": "FREELLM_API_KEY",
     "echo": None,
 }
+
+# 무료 사용량 바닥(429 등)난 제공자는 잠시 쉬게 함: {제공자: 다시 써도 되는 시각}
+COOLDOWN: dict[str, float] = {}
+COOLDOWN_SECONDS = 600
+QUOTA_WORDS = ("429", "quota", "rate limit", "rate_limit", "resource_exhausted", "too many requests", "limit exceeded")
+
+
+def _maybe_cooldown(provider: str, err: str) -> None:
+    if provider != "claudecode" and any(w in err.lower() for w in QUOTA_WORDS):
+        import time
+
+        COOLDOWN[provider] = time.time() + COOLDOWN_SECONDS
+
 
 # 메시지 형식: [{"role": "user"|"assistant", "content": "..."}]
 Message = dict
@@ -145,9 +160,15 @@ def _has_key(env: str) -> bool:
 
 def is_ready(spec: ModelSpec) -> bool:
     """지금 바로 쓸 수 있는지 (키·설치·실행 여부). 안 되면 다른 AI 로 대체할 때 씀."""
+    import time
+
     p = spec.provider
+    if COOLDOWN.get(p, 0) > time.time():
+        return False
     if p == "claudecode":
         return bool(claude_cli())
+    if p == "freellm":
+        return bool(os.getenv("FREELLM_URL") and _has_key("FREELLM_API_KEY") and _freellm_alive())
     if p == "gemini":
         return _has_key("GEMINI_API_KEY") or _has_key("GOOGLE_API_KEY")
     if p == "local" or p in LOCAL_SERVERS:
@@ -201,6 +222,7 @@ def chat(
         "openai": _chat_openai,
         "gemini": _chat_gemini,
         "echo": _chat_echo,
+        "freellm": _chat_freellm,
     }.get(spec.provider, _chat_openai_compatible)
     try:
         if handler is _chat_claude:
@@ -211,7 +233,65 @@ def chat(
     except ImportError as e:
         raise ProviderError(f"패키지가 없어요: {e}. `pip install -r requirements.txt` 실행하세요.") from e
     except Exception as e:  # SDK마다 예외 타입이 달라서 한 곳에서 정리
+        _maybe_cooldown(spec.provider, f"{type(e).__name__} {e}")
         raise ProviderError(f"[{spec}] 호출 실패: {type(e).__name__}: {e}") from e
+
+
+_ALIVE_CACHE: dict[str, tuple[float, bool]] = {}
+
+
+def _freellm_alive() -> bool:
+    """FreeLLMAPI 가 켜져 있는지 (30초 캐시). 아무 HTTP 응답이라도 오면 켜진 것."""
+    import time
+
+    url = os.getenv("FREELLM_URL", "").rstrip("/")
+    hit = _ALIVE_CACHE.get(url)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    try:
+        import requests
+
+        requests.get(url, timeout=1.5)
+        alive = True
+    except Exception:
+        alive = False
+    _ALIVE_CACHE[url] = (time.time() + 30, alive)
+    return alive
+
+
+# ── FreeLLMAPI (내 PC의 무료 AI 중계기) ───────────────────────────────────
+def _chat_freellm(spec, system, messages, on_text, effort, images=()):
+    """FREELLM_URL = FreeLLMAPI 루트 주소 (뒤에 /v1 붙이지 않음), FREELLM_API_KEY = 통합 키.
+    FREELLM_API = anthropic(기본, Claude Code 와 같은 방식) / openai"""
+    url = os.getenv("FREELLM_URL", "").rstrip("/")
+    key = os.getenv("FREELLM_API_KEY", "")
+    if not url or not key:
+        raise ProviderError("FREELLM_URL / FREELLM_API_KEY 가 .env 에 없어요.")
+    if url.endswith("/v1"):
+        url = url[:-3]  # 루트 주소를 써야 함 (SDK 가 /v1 을 붙임)
+    if os.getenv("FREELLM_API", "anthropic").lower() == "openai":
+        from openai import OpenAI
+
+        client = OpenAI(base_url=url + "/v1", api_key=key, max_retries=0)
+        msgs = [{"role": "system", "content": system}, *messages]
+        if images:
+            parts = [{"type": "text", "text": messages[-1]["content"]}] + [
+                {"type": "image_url", "image_url": {"url": u}} for u, _, _ in _data_urls(images)]
+            msgs = msgs[:-1] + [{"role": "user", "content": parts}]
+        r = client.chat.completions.create(model=spec.model, messages=msgs)
+        text = r.choices[0].message.content or ""
+    else:
+        import anthropic
+
+        # 통합 키를 두 방식(x-api-key, Bearer)으로 모두 보냄 — 중계기마다 받는 방식이 달라서
+        client = anthropic.Anthropic(base_url=url, api_key=key, max_retries=0,   # 사용량 바닥이면 재시도 없이 바로 빠짐
+                                     default_headers={"x-api-key": key, "Authorization": f"Bearer {key}"})
+        msgs = _with_images_claude(messages, images) if images else messages
+        r = client.messages.create(model=spec.model, max_tokens=8000, system=system, messages=msgs)
+        text = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+    if not text.strip():
+        raise ProviderError("FreeLLMAPI 가 빈 답을 돌려줬어요.")
+    return _emit(on_text, [text])
 
 
 def _emit(on_text: OnText | None, chunks: Iterable[str]) -> str:
