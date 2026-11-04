@@ -112,8 +112,8 @@ def run_team(
         spec = pv.parse_model(member_spec_str or ag.Agent(d.member).model_spec())
         try:
             d.text = pv.chat(spec, system_for(d.member), history, effort=effort, web=web, images=images)
-        except pv.ProviderError as e:
-            d.error = str(e)
+        except Exception as e:  # ProviderError 외의 오류도 기록
+            d.error = str(e) if isinstance(e, pv.ProviderError) else f"{type(e).__name__}: {e}"
         return d
 
     max_parallel = max(1, int(settings().get("max_parallel") or len(drafts)))
@@ -226,10 +226,13 @@ class Step:
     verdict: str = ""     # pass / fix / approve / reject / ""
     error: str = ""
     model: str = ""       # 이 단계를 맡은 AI (화면의 '담당 AI' 표시용)
+    reads: list = None    # 이 단계가 읽은 다른 단계 id (AI 끼리 주고받는 것 표시용)
+    kind: str = ""        # write / review / approve (화면의 작업 화면 모양)
 
     def as_dict(self) -> dict:
         return {"id": self.id, "title": self.title, "member": self.member, "view": self.view,
-                "text": self.text, "verdict": self.verdict, "error": self.error, "model": self.model}
+                "text": self.text, "verdict": self.verdict, "error": self.error, "model": self.model,
+                "reads": self.reads or [], "kind": self.kind}
 
 
 def _verdict(text: str, kind: str) -> str:
@@ -261,8 +264,10 @@ def run_review(
     on_step_done: Callable[[Step], None] | None = None,
     on_text: Callable[[str], None] | None = None,
     images: list[str] | None = None,
+    on_step_text: Callable[[Step, str], None] | None = None,
+    on_step_activity: Callable[[Step, dict], None] | None = None,
 ) -> tuple[str, list[Step], str]:
-    """(최종 답, 단계 기록, 수정 모델)"""
+    """(최종 답, 단계 기록, 수정 모델). on_step_text/on_step_activity: 각 AI 가 쓰는 글·검색을 실시간으로."""
     members = ag.team_members(team)
     if not members:
         raise pv.ProviderError(f"없는 팀: {team}")
@@ -280,10 +285,14 @@ def run_review(
 
     def call(step: Step, system: str, msgs: list[dict], spec, use_web: bool, kind: str = "") -> Step:
         try:
-            step.text = pv.chat(spec, system, msgs, effort=effort, web=use_web, images=images)
+            step.text = pv.chat(spec, system, msgs, effort=effort, web=use_web, images=images,
+                                on_text=(lambda t: on_step_text(step, t)) if on_step_text else None,
+                                on_activity=(lambda a: on_step_activity(step, a)) if on_step_activity else None)
             step.verdict = _verdict(step.text, kind) if kind else ""
         except pv.ProviderError as e:
             step.error = str(e)
+        except Exception as e:  # 예상 못 한 오류도 조용히 사라지지 않게 단계에 기록
+            step.error = f"{type(e).__name__}: {e}"
         return step
 
     def run_parallel(steps_and_args):
@@ -302,7 +311,7 @@ def run_review(
     steps: list[Step] = []
 
     # ① 초안
-    draft = Step("draft", "✍️ 초안", pick(0), ag.member_view(pick(0)))
+    draft = Step("draft", "✍️ 초안", pick(0), ag.member_view(pick(0)), reads=["question"], kind="write")
     run_parallel([(draft, system_for(pick(0)), history, member_spec, web)])
     steps.append(draft)
     if not draft.text.strip():
@@ -313,7 +322,7 @@ def run_review(
     prompts = {"evidence": VERIFY_EVIDENCE, "logic": VERIFY_LOGIC, "risk": VERIFY_RISK}
     reviewer_seats = cfg.get("reviewers") or settings().get("reviewers") or DEFAULT_REVIEWERS
 
-    def review_round(text: str, tag: str, must_fix: str = "") -> list[Step]:
+    def review_round(text: str, tag: str, must_fix: str = "", source: str = "draft", extra_reads=()) -> list[Step]:
         content = f"<question>\n{question}\n</question>\n\n<draft>\n{text}\n</draft>"
         if must_fix:
             content += ("\n\n<must_fix>\n최종 승인에서 반려된 사유입니다. 이 지적이 위 draft 에서 "
@@ -327,7 +336,8 @@ def run_review(
             role = seat.get("role", "logic")
             icon, rname = ROLE_NAMES.get(role, ("🔍", role))
             member = pick(i)
-            st = Step(f"{tag}_r{i + 1}", f"{icon} {'재검토 ' + tag + ' · ' if must_fix else '검토 · '}{rname}", member, label)
+            st = Step(f"{tag}_r{i + 1}", f"{icon} {'재검토 ' + tag + ' · ' if must_fix else '검토 · '}{rname}", member, label,
+                      reads=[source, *extra_reads], kind="review")
             use_web = web and role == "evidence" and spec.provider == "claudecode"
             jobs.append((st, system_for(member, prompts.get(role, VERIFY_LOGIC)), base + [{"role": "user", "content": content}],
                          spec, use_web, "verify"))
@@ -343,13 +353,15 @@ def run_review(
     answer = draft.text
     fixes = [v for v in first if v.verdict == "fix" and v.text]
     if fixes:
-        rev = Step("revise1", "✏️ 검토 의견 반영", members[0], f"{len(fixes)}명 지적 검토 후 반영")
+        rev = Step("revise1", "✏️ 검토 의견 반영", members[0], f"{len(fixes)}명 지적 검토 후 반영",
+                   reads=["draft", *[v.id for v in fixes]], kind="write")
         notes = "\n\n".join(f"<review by=\"{v.title} ({v.view})\">\n{v.text}\n</review>" for v in fixes)
         msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<draft>\n{draft.text}\n</draft>\n\n{notes}"}]
         run_parallel([(rev, system_for(members[0], REVISE_PROMPT), base + msg, lead_spec, False)])
         steps.append(rev)
         if rev.text.strip():
             answer = rev.text
+    answer_id = "revise1" if fixes else "draft"
 
     # ③ 최종 승인 (기본 Claude 3)
     approve_msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<answer>\n{answer}\n</answer>"}]
@@ -359,7 +371,7 @@ def run_review(
     n = len(resolved)
     approvers, jobs = [], []
     for i, (_seat, (spec, label)) in enumerate(resolved, 1):
-        a = Step(f"approve{i}", f"✅ 최종 승인 {i}/{n}", pick(i - 1), label)
+        a = Step(f"approve{i}", f"✅ 최종 승인 {i}/{n}", pick(i - 1), label, reads=[answer_id], kind="approve")
         approvers.append(a)
         jobs.append((a, system_for(a.member, APPROVE_PROMPT.format(i=i, n=n)), base + approve_msg, spec, False, "approve"))
     run_parallel(jobs)
@@ -386,13 +398,16 @@ def run_review(
         must_fix = "\n\n".join(notes)
         for r in range(1, max_rounds + 1):
             rounds_done = r
-            rev = Step(f"loop{r}_revise", f"✏️ 재수정 {r}회차", members[0], "반려·검토 지적 반영")
+            prev = [a.id for a in rejects] if r == 1 else [c.id for c in unresolved]
+            rev = Step(f"loop{r}_revise", f"✏️ 재수정 {r}회차", members[0], "반려·검토 지적 반영",
+                       reads=[answer_id, *prev], kind="write")
             msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<draft>\n{answer}\n</draft>\n\n" + "\n\n".join(notes)}]
             run_parallel([(rev, system_for(members[0], REVISE_PROMPT), base + msg, lead_spec, False)])
             steps.append(rev)
             if rev.text.strip():
                 answer = rev.text
-            checks = review_round(answer, f"{r}회차", must_fix)
+            answer_id = rev.id
+            checks = review_round(answer, f"{r}회차", must_fix, source=rev.id, extra_reads=[a.id for a in rejects])
             steps += checks
             unresolved = [c for c in checks if c.verdict == "fix" and c.text]
             if not unresolved:

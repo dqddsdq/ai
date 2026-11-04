@@ -201,6 +201,7 @@ def chat(
     web: bool = False,
     images: list[str] | None = None,
     timeout: float | None = None,
+    on_activity: Callable[[dict], None] | None = None,
 ) -> str:
     """모델에 대화를 보내고 전체 답변 텍스트를 돌려줍니다.
 
@@ -212,7 +213,7 @@ def chat(
         # openai / gemini / 호환(Mistral·로컬)은 각 함수에서 이미지를 붙입니다
     if spec.provider == "claudecode":
         try:
-            return _chat_claudecode(spec, system, messages, on_text, effort, web, images or [], timeout)
+            return _chat_claudecode(spec, system, messages, on_text, effort, web, images or [], timeout, on_activity)
         except ProviderError:
             raise
         except Exception as e:
@@ -322,7 +323,7 @@ def _with_images_claude(messages: list[Message], images: list[str]) -> list[Mess
     return messages[:-1] + [{"role": "user", "content": blocks}]
 
 
-def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), timeout=None):
+def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), timeout=None, on_activity=None):
     exe = claude_cli()
     if not exe:
         raise ProviderError("Claude Code(claude 명령)를 못 찾았어요. 설치 후 `claude` 로 한 번 로그인하세요.")
@@ -345,7 +346,8 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), ti
         exe, "-p",
         "--system-prompt", "You are an AI agent inside the user's one-person company. Follow <instructions> exactly "
                            "and reply only to <user_message>, in Korean unless asked otherwise.",
-        "--output-format", "text",
+        # stream-json: 글이 써지는 대로 + 검색어·읽는 사이트까지 실시간으로 받음
+        "--output-format", "stream-json", "--verbose", "--include-partial-messages",
         "--tools", ",".join((["WebSearch", "WebFetch"] if web else []) + (["Read"] if images else [])),
         "--no-session-persistence",
         "--strict-mcp-config",
@@ -379,7 +381,7 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), ti
     try:
         proc.stdin.write(prompt)
         proc.stdin.close()
-        text = _emit(on_text, iter(proc.stdout.readline, ""))
+        text, final, is_error = _read_stream_json(proc.stdout, on_text, on_activity)
         proc.wait(timeout=30)
     except (subprocess.TimeoutExpired, OSError):
         pass
@@ -392,9 +394,72 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), ti
     err_file.close()
     if timed_out.is_set():
         raise ProviderError(f"Claude Code 가 {int(limit)}초 안에 답하지 않았어요. {err}".strip())
-    if proc.returncode != 0:
-        raise ProviderError(f"Claude Code 오류 (코드 {proc.returncode}): {err or locals().get('text', '')[-300:] or '메시지 없음'}")
-    return text.strip()
+    if proc.returncode != 0 or is_error:
+        detail = err or (final if is_error else "") or locals().get("text", "")[-300:] or "메시지 없음"
+        raise ProviderError(f"Claude Code 오류 (코드 {proc.returncode}): {detail}")
+    return (final or text).strip()
+
+
+def _read_stream_json(stdout, on_text, on_activity):
+    """Claude Code stream-json 한 줄씩 읽기 → (스트리밍된 글, 최종 답, 오류 여부).
+    on_activity 로 '검색어', '검색 결과 사이트', '읽는 페이지', '읽는 이미지' 를 실시간으로 알려줌."""
+    import json as _json
+    import re as _re
+
+    streamed, final, is_error = [], "", False
+    in_text_block = False
+    for line in iter(stdout.readline, ""):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            e = _json.loads(line)
+        except ValueError:
+            continue
+        t = e.get("type")
+        if t == "stream_event":
+            ev = e.get("event") or {}
+            if ev.get("type") == "content_block_start":
+                in_text_block = (ev.get("content_block") or {}).get("type") == "text"
+            elif ev.get("type") == "content_block_delta" and in_text_block:
+                piece = (ev.get("delta") or {}).get("text", "")
+                if piece:
+                    streamed.append(piece)
+                    if on_text:
+                        on_text(piece)
+        elif t == "assistant" and on_activity:
+            for b in (e.get("message") or {}).get("content", []):
+                if b.get("type") != "tool_use":
+                    continue
+                inp, name = b.get("input") or {}, b.get("name", "")
+                if name == "WebSearch":
+                    on_activity({"kind": "search", "query": inp.get("query", "")})
+                elif name == "WebFetch":
+                    on_activity({"kind": "fetch", "url": inp.get("url", "")})
+                elif name == "Read":
+                    on_activity({"kind": "read", "path": os.path.basename(str(inp.get("file_path", "")))})
+                else:
+                    on_activity({"kind": "tool", "name": name})
+        elif t == "user" and on_activity:
+            for b in (e.get("message") or {}).get("content", []):
+                if b.get("type") != "tool_result":
+                    continue
+                content = b.get("content")
+                body = content if isinstance(content, str) else " ".join(
+                    c.get("text", "") for c in (content or []) if isinstance(c, dict))
+                m = _re.search(r"Links:\s*(\[.*?\])\s*(\n|$)", body, _re.S)
+                if m:
+                    try:
+                        links = [{"title": x.get("title", ""), "url": x.get("url", "")} for x in _json.loads(m.group(1))][:6]
+                        on_activity({"kind": "results", "links": links})
+                    except ValueError:
+                        pass
+                elif b.get("is_error"):
+                    on_activity({"kind": "tool_error", "text": body[:160]})
+        elif t == "result":
+            final = e.get("result") or ""
+            is_error = bool(e.get("is_error")) or e.get("subtype") not in (None, "success")
+    return "".join(streamed), final, is_error
 
 
 # ── Claude (Anthropic) ────────────────────────────────────────────────────

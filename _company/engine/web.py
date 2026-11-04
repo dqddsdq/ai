@@ -195,10 +195,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.close_connection = True
 
+    _send_lock = threading.Lock()   # 여러 AI 가 동시에 실시간 글을 보내도 섞이지 않게
+
     def _send(self, event: str, data):
         payload = json.dumps(data, ensure_ascii=False)
-        self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode())
-        self.wfile.flush()
+        with self._send_lock:
+            self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode())
+            self.wfile.flush()
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
@@ -450,6 +453,8 @@ class Handler(BaseHTTPRequestHandler):
                 on_step_start=lambda st: self._send("step_start", st.as_dict()),
                 on_step_done=lambda st: self._send("step_done", st.as_dict()),
                 on_text=delta, images=images,
+                on_step_text=lambda st, t: self._send("step_text", {"id": st.id, "text": t}),
+                on_step_activity=lambda st, a: self._send("step_activity", {"id": st.id, **a}),
             )
         elif use_team:
             reply, drafts, _ = tm.run_team(
@@ -464,8 +469,12 @@ class Handler(BaseHTTPRequestHandler):
         else:
             lead = members[0]
             system = ag.Agent(lead).system_prompt() + ("\n\n" + extra if extra else "")
-            reply = pv.chat(spec, system, history, on_text=delta, effort=effort,
-                            web=bool(tm.team_config(agent_id).get("web")), images=images)
+            streamed = []
+            reply = pv.chat(spec, system, history, on_text=lambda t: (streamed.append(t), delta(t)), effort=effort,
+                            web=bool(tm.team_config(agent_id).get("web")), images=images,
+                            on_activity=lambda a: self._send("activity", a))
+            if reply.strip() != "".join(streamed).strip():   # 검색 전 "찾아볼게요" 같은 말이 섞였으면 최종 답으로 교체
+                self._send("replace", {"text": reply})
         conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id,
                                  "model": str(spec), "sources": sources,
                                  "drafts": [{"member": d.member, "view": d.view, "text": d.text, "error": d.error}
