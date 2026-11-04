@@ -13,6 +13,7 @@
   --accent: #c96442; --accent-hover: #b4573a; --accent-soft: #f5e6de;
   --user-bubble: #eeece2; --code-bg: #f3f1ea; --ok: #4f7a4a; --warn: #b07a20;
   --shadow: 0 1px 2px rgba(41,38,27,.06), 0 4px 16px rgba(41,38,27,.06);
+  --live: #16a34a; --live-soft: #dcfce7; --live-glow: rgba(22,163,74,.28);
   --serif: "Noto Serif KR", Georgia, serif;
   --sans: Pretendard, "Pretendard Variable", -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
 }
@@ -23,6 +24,7 @@
     --accent: #d97757; --accent-hover: #e08a6d; --accent-soft: #4a3329;
     --user-bubble: #141413; --code-bg: #1d1d1b; --ok: #8bb784; --warn: #d9a54a;
     --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    --live: #4ade80; --live-soft: rgba(74,222,128,.14); --live-glow: rgba(74,222,128,.35);
   }
 }
 :root[data-theme="dark"] {
@@ -31,6 +33,7 @@
   --accent: #d97757; --accent-hover: #e08a6d; --accent-soft: #4a3329;
   --user-bubble: #141413; --code-bg: #1d1d1b; --ok: #8bb784; --warn: #d9a54a;
   --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  --live: #4ade80; --live-soft: rgba(74,222,128,.14); --live-glow: rgba(74,222,128,.35);
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -179,7 +182,7 @@ button { cursor: pointer; }
 #work-big .wb-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
 #work-big .wb-head b { font-family: var(--serif); font-size: 15px; }
 #work-big .wb-head .wp-time { color: var(--faint); margin-left: auto; font-variant-numeric: tabular-nums; }
-#work-big .wb-body { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: 210px minmax(240px, 1fr) minmax(280px, 1.25fr); gap: 0 56px; padding: 18px 20px; }
+#work-big .wb-body { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: 240px minmax(240px, 1fr) minmax(280px, 1.25fr); gap: 0 56px; padding: 18px 20px; }
 #work-big .wb-col { min-height: 0; overflow-y: auto; position: relative; z-index: 1; }
 #work-big .wb-label { font-size: 11.5px; color: var(--faint); margin-bottom: 8px; letter-spacing: .02em; }
 #work-big svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
@@ -204,6 +207,21 @@ button { cursor: pointer; }
 .wb-screen .sh { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
 .wb-screen .sh b { font-size: 14.5px; } .wb-screen .sh .tag { margin-left: auto; }
 .wb-screen .md { font-size: 13.5px; }
+/* 활동 중·상호작용 중인 AI = 초록 */
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live-glow); animation: pulse 1.4s infinite; flex-shrink: 0; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--live-glow); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.ai-chip.on { border-color: var(--live) !important; background: var(--live-soft) !important; box-shadow: 0 0 0 3px var(--live-glow) !important; }
+.ai-chip.on .ct { color: var(--live) !important; font-weight: 600; }
+.ai-chip.talk:not(.on) { border: 1.5px dashed var(--live); }
+.ai-chip.talk:not(.on) .ct { color: var(--live); }
+.task-row.on { background: var(--live-soft) !important; border-color: color-mix(in srgb, var(--live) 45%, var(--line)) !important; box-shadow: inset 3px 0 0 var(--live); }
+.task-row.on .spin, .wp-item:not(.done) .spin, #wb-screen .wb-mode:not(.done) .spin { color: var(--live); }
+#work-big svg path.on { stroke: var(--live) !important; }
+#work-big svg path.link.on { stroke: var(--live) !important; opacity: .75; }
+.wb-mode:not(.done) { background: var(--live-soft) !important; color: var(--live) !important; }
+.wp-item:not(.done) .who b { color: var(--live); }
+#work-panel .wp-title .live-dot { margin-right: 6px; vertical-align: 1px; }
+.typing::after { color: var(--live) !important; }
 /* 작업 화면 모양: 자료 조사 / 작성 / 검사 / 코딩 */
 .wb-reads { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; font-size: 12px; }
 .wb-reads .rd { border: 1px dashed var(--line-strong); border-radius: 8px; padding: 2px 8px; color: var(--muted); background: var(--panel); }
@@ -841,14 +859,16 @@ const work = {
   render() {
     const now = Date.now(), secs = (a, b) => Math.round(((b || now) - a) / 1000);
     const active = this.order.filter(id => !this.items[id].end).length;
-    const title = this.running ? (active ? `🔄 AI ${active}명 작업 중` : "🔄 마무리 중") : "✅ 작업 완료";
+    const title = this.running ? (active ? `AI ${active}명 작업 중` : "🔄 마무리 중") : "✅ 작업 완료";
     const time = secs(this.t0, 0) + "초";
-    $("#wp-time").textContent = time; $("#wp-title").textContent = title; $("#wb-time").textContent = time; $("#wb-title").textContent = title;
+    $("#wp-time").textContent = time; $("#wb-time").textContent = time;
+    const dot = this.running && active ? '<span class="live-dot"></span>' : "";
+    $("#wp-title").innerHTML = dot + esc(title); $("#wb-title").innerHTML = dot + esc(title);
     const v = this.view;
     if (v === "small") {
       const list = $("#wp-list");
       list.innerHTML = this.order.map(id => { const it = this.items[id];
-        return `<div class="wp-item${it.end ? " done" : ""}"><span class="st">${it.end ? it.mark : '<span class="spin">◌</span>'}</span>
+        return `<div class="wp-item${it.end ? " done" : ""}"><span class="st">${it.end ? it.mark : '<span class="live-dot"></span>'}</span>
           <span class="who"><b>${esc(it.label)}</b><span class="sub">${esc(it.model === "data" ? it.sub : aiName(it.model).nm + " · " + (this.liveSub(it) || (it.sub && it.sub !== "Claude" ? it.sub : "")))}</span></span><span class="sec">${secs(it.t, it.end)}초</span></div>`; }).join("");
       if (this.running) list.scrollTop = list.scrollHeight;
     } else if (v === "big") this.renderBig(secs);
@@ -926,8 +946,12 @@ const work = {
     this.order.forEach(id => { const it = this.items[id]; const key = it.model === "data" ? "📊 시세 데이터" : aiName(it.model).nm;
       let a = ais.find(x => x.key === key); if (!a) ais.push(a = { key, ic: it.model === "data" ? "📊" : aiName(it.model).ic, total: 0, on: 0 });
       a.total++; if (!it.end) a.on++; it._ai = key; });
+    // 상호작용: 진행 중인 작업이 읽고 있는 작업의 AI 는 '대화 중'(연한 초록 점선)
+    const talking = new Set();
+    this.order.forEach(id => { const it = this.items[id]; if (it.end) return;
+      (it.reads || []).forEach(src => { const s2 = this.items[src]; if (s2 && s2._ai) talking.add(s2._ai); }); });
     $("#wb-ais").innerHTML = `<div class="wb-label">담당 AI</div>` + ais.map(a =>
-      `<div class="ai-chip${a.on ? " on" : ""}" data-ai="${esc(a.key)}"><span class="ic">${a.ic}</span><span class="nm">${esc(a.key.replace(/^📊 /, ""))}</span><span class="ct">${a.on ? `작업 ${a.on}` : `완료 ${a.total}`}</span></div>`).join("");
+      `<div class="ai-chip${a.on ? " on" : ""}${talking.has(a.key) ? " talk" : ""}" data-ai="${esc(a.key)}">${a.on ? '<span class="live-dot"></span>' : ""}<span class="ic">${a.ic}</span><span class="nm">${esc(a.key.replace(/^📊 /, ""))}</span><span class="ct">${a.on ? `작업 중 ${a.on}` : talking.has(a.key) ? "읽히는 중" : `완료 ${a.total}`}</span></div>`).join("");
     // 가운데: 작업
     if (!this.manualSel || !this.items[this.sel]) {   // 직접 누르기 전까지는 지금 진행 중인 작업을 따라감
       const running = this.order.filter(id => !this.items[id].end);
@@ -935,7 +959,7 @@ const work = {
       this.sel = writing[writing.length - 1] || running[running.length - 1] || this.order[this.order.length - 1];
     }
     $("#wb-tasks").innerHTML = `<div class="wb-label">작업</div>` + this.order.map(id => { const it = this.items[id];
-      return `<div class="task-row${it.end ? "" : " on"}${id === this.sel ? " sel" : ""}" data-id="${esc(id)}"><span class="st">${it.end ? it.mark : '<span class="spin">◌</span>'}</span>
+      return `<div class="task-row${it.end ? "" : " on"}${id === this.sel ? " sel" : ""}" data-id="${esc(id)}"><span class="st">${it.end ? it.mark : '<span class="live-dot"></span>'}</span>
         <span class="tx"><b>${esc(it.label)}</b>${(this.liveSub(it) || this.cleanSub(it)) ? `<span>${esc(this.liveSub(it) || this.cleanSub(it))}</span>` : ""}</span><span class="sec">${secs(it.t, it.end)}초</span></div>`; }).join("");
     $("#wb-tasks").querySelectorAll(".task-row").forEach(r => r.onclick = () => { this.sel = r.dataset.id; this.manualSel = true; this.render(); });
     // 오른쪽: 작업 화면
