@@ -207,6 +207,19 @@ button { cursor: pointer; }
 .wb-screen .sh { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
 .wb-screen .sh b { font-size: 14.5px; } .wb-screen .sh .tag { margin-left: auto; }
 .wb-screen .md { font-size: 13.5px; }
+/* 도구 요청 카드 / 도구 화면 */
+.treq { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); padding: 12px 14px; margin-top: 10px; box-shadow: var(--shadow); font-size: 13.5px; }
+.treq .th { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.treq .th b { font-size: 14px; }
+.treq .why { color: var(--muted); margin: 6px 0 8px; }
+.treq .acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.treq .res { margin-top: 8px; font-size: 13px; }
+.treq ol { margin: 6px 0 0; padding-left: 1.3em; }
+.tb { font-size: 11.5px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); color: var(--muted); }
+.tb.ok { color: var(--live); border-color: var(--live); } .tb.wait { color: var(--warn); border-color: var(--warn); }
+.tool-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; margin: 8px 0; }
+.tool-card .row { margin-top: 8px; }
+.tool-card input[type=password] { flex: 1; min-width: 180px; }
 /* 활동 중·상호작용 중인 AI = 초록 */
 .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live-glow); animation: pulse 1.4s infinite; flex-shrink: 0; }
 @keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--live-glow); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
@@ -335,6 +348,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
   <button class="side-btn nav" data-view="chat"><span class="ico">💬</span>채팅</button>
   <button class="side-btn nav" data-view="learn"><span class="ico">📚</span>공부 노트</button>
   <button class="side-btn nav" data-view="sim"><span class="ico">🎲</span>시뮬레이션</button>
+  <button class="side-btn nav" data-view="tools"><span class="ico">🧰</span>도구 <span class="tb wait" id="tools-badge" hidden></span></button>
   <div class="side-label">최근 대화</div>
   <div id="conv-list"></div>
   <div class="side-foot"><span>내 PC에서만 실행 중</span><button class="icon-btn" id="theme-btn" title="화면 테마">◐</button></div>
@@ -390,6 +404,17 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <span class="muted" id="note-path"></span><button class="icon-btn" id="note-close">닫기 ✕</button></div>
         <div class="md" id="note-body"></div></div>
       <div class="note-list" id="note-list"></div>
+    </div></div>
+  </section>
+
+  <!-- 도구 -->
+  <section class="view" id="view-tools">
+    <div class="scroll"><div class="column">
+      <div class="page-head">도구</div>
+      <p class="page-sub">AI 팀이 쓸 수 있는 도구예요. 허용 목록에 있는 것만 설치·연결돼요. 키는 이 PC의 <code>.env</code> 에만 저장돼요.</p>
+      <div id="tools-list"></div>
+      <div class="page-head" style="font-size:19px;margin-top:22px">요청 기록</div>
+      <div id="tools-reqs"></div>
     </div></div>
   </section>
 
@@ -454,7 +479,7 @@ function inline(t) {
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
-const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN):[^\]]*\]\]/g;
+const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN|TOOL_REQUEST):[^\]]*\]\]/g;
 function md(text) {
   const lines = esc((text || "").replace(ACTION_TAG, "").trimEnd()).split("\n"); const out = []; let i = 0;
   const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
@@ -526,6 +551,7 @@ function show(view) {
   document.querySelectorAll(".side-btn.nav").forEach(b => b.classList.toggle("active", b.dataset.view === view));
   $("#sidebar").classList.remove("open");
   if (view === "learn") loadNotes();
+  if (view === "tools") renderToolsPage();
   $("#top-title").textContent = view === "chat" ? (state.conv?.title || "") : "";
 }
 document.querySelectorAll(".side-btn.nav").forEach(b => b.onclick = () => show(b.dataset.view));
@@ -548,7 +574,7 @@ async function init() {
   const ideas = ["삼성전자 지금 들어가도 될까?", "엔비디아 실적 발표 전에 사도 돼?", "100만원 어떻게 나눠서 투자할까?", "전세 보증금 못 돌려받으면 어떻게 해?", "프리랜서 계약서 볼 때 뭘 확인해?", "온라인 쇼핑몰로 1년 안에 월 300만원 가능할까?"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
-  newChat(); loadConvs(); show("chat");
+  newChat(); loadConvs(); show("chat"); loadTools();
 }
 
 // ── 대화 목록 ──
@@ -573,6 +599,7 @@ function enterThread() {
 }
 async function openConv(id) {
   const c = await api("/api/conversations/" + id); if (c.error) return;
+  if (c.messages.some(m => (m.tool_requests || []).length)) await loadTools();
   state.conv = c; show("chat"); enterThread(); $("#messages").innerHTML = "";
   for (const m of c.messages) {
     if (m.role === "user") addUser(m.content, m.images || []);
@@ -588,6 +615,7 @@ async function openConv(id) {
       (m.drafts || []).forEach((d, i) => a.team.done({ ...d, i: i + 1 }));
       if ((m.drafts || []).length > 1) a.team.judged();
       (m.steps || []).forEach(st => a.team.stepDone(st));
+      (m.tool_requests || []).forEach(id => { const r = (toolsCache?.requests || []).find(x => x.id === id); if (r) toolRequestCard(r, a.el); });
       if ((m.steps || []).length) a.team.judged();
     }
   }
@@ -1034,6 +1062,7 @@ async function send() {
       meta: (m) => { gotAny = true; ai.status(""); state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
       status: (d) => ai.status(d.text),
       replace: (d) => { raw = d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); },
+      tool_request: (d) => { toolRequestCard(d, ai.el); loadTools(); scrollDown(); },
       market: (d) => ai.market(d.items || []),
       draft_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
       draft_done: (d) => { ai.team.done(d); },
@@ -1062,6 +1091,64 @@ async function send() {
     clearInterval(tick); if (!gotAny) ai.status(""); work.finish(gotAny);
     ai.body.classList.remove("cursor"); tool?.out.classList.remove("cursor"); setBusy(false); loadConvs(); input.focus();
   }
+}
+
+// ── 도구 요청 카드 / 도구 화면 ──
+let toolsCache = null;
+async function loadTools() { toolsCache = await api("/api/tools"); renderToolsBadge(); return toolsCache; }
+function renderToolsBadge() {
+  const n = (toolsCache?.requests || []).filter(r => r.status === "pending" || r.status === "approved").length;
+  $("#tools-badge").hidden = !n; $("#tools-badge").textContent = n;
+}
+function reqStatusLabel(st) {
+  return { pending: "승인 대기", approved: "승인됨 · 키 입력 대기", done: "완료", rejected: "거절함", noted: "기록만 (목록에 없음)", failed: "실패" }[st] || st;
+}
+function toolRequestCard(req, container) {
+  const el = document.createElement("div"); el.className = "treq";
+  const kind = !req.in_catalog ? "목록에 없음" : req.type === "pip" ? "무료 · 설치형" : "무료 · 가입 필요";
+  const draw = (r, result) => {
+    const pending = r.status === "pending";
+    el.innerHTML = `<div class="th">🧰 <b>${esc(teamName(r.team))}이 도구를 요청해요: ${esc(r.name)}</b><span class="tb">${esc(kind)}</span><span class="tb ${r.status === "done" ? "ok" : pending || r.status === "approved" ? "wait" : ""}">${esc(reqStatusLabel(r.status))}</span></div>
+      ${r.why ? `<div class="why">이유: ${esc(r.why)}</div>` : ""}${req.desc ? `<div class="why">${esc(req.desc)}</div>` : ""}
+      ${!r.in_catalog ? `<div class="why">⚠️ 허용 목록에 없는 도구라 자동으로 설치하지 않아요. 기록만 남겼어요.</div>` : ""}
+      ${pending ? `<div class="acts"><button class="btn primary" data-a="approve">허용</button><button class="btn" data-a="reject">거절</button></div>` : ""}
+      ${result ? `<div class="res">${result}</div>` : ""}`;
+    el.querySelector('[data-a="approve"]')?.addEventListener("click", async (e) => {
+      e.target.disabled = true; e.target.textContent = req.type === "pip" ? "설치 중…" : "처리 중…";
+      const res = await api("/api/tools/approve", { id: r.id });
+      const steps = (res.steps || []).map(x => `<li>${esc(x)}</li>`).join("");
+      draw({ ...r, status: res.ok ? (req.type === "pip" ? "done" : "approved") : "failed" },
+        (res.ok ? "✅ " : "⚠️ ") + esc(res.message) + (res.signup ? `<br>가입: <a href="${esc(res.signup)}" target="_blank" rel="noopener">${esc(res.signup)}</a>` : "")
+        + (steps ? `<ol>${steps}</ol>` : "") + (req.type === "api_key" && res.ok ? `<div style="margin-top:6px"><button class="btn" data-a="open">🧰 도구 화면에서 키 입력</button></div>` : ""));
+      el.querySelector('[data-a="open"]')?.addEventListener("click", () => show("tools"));
+      loadTools();
+    });
+    el.querySelector('[data-a="reject"]')?.addEventListener("click", async () => {
+      await api("/api/tools/reject", { id: r.id }); draw({ ...r, status: "rejected" }); loadTools();
+    });
+  };
+  draw(req); container.appendChild(el); return el;
+}
+async function renderToolsPage() {
+  const data = await loadTools();
+  const label = { installed: ["설치됨", "ok"], missing: ["설치 안 됨", ""], key_set: ["연결됨 (키 있음)", "ok"], key_needed: ["키 필요", "wait"] };
+  $("#tools-list").innerHTML = data.tools.map(t => { const [txt, cls] = label[t.status] || [t.status, ""];
+    return `<div class="tool-card"><div class="row" style="margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(t.name)}</b><span class="tb ${cls}">${txt}</span><span class="tb">${t.type === "pip" ? "무료 설치형" : "무료 · 가입 필요"}</span></div>
+      <div class="muted" style="margin-top:4px">${esc(t.desc)} · ${esc((t.teams || []).map(teamName).join(", "))}</div>
+      ${t.type === "api_key" ? `<div class="row" style="display:flex;gap:6px;flex-wrap:wrap"><input class="field" type="password" placeholder="${t.status === "key_set" ? "새 키로 바꾸려면 입력" : "발급받은 키 붙여넣기"}" data-key="${esc(t.id)}" autocomplete="off"><button class="btn primary" data-save="${esc(t.id)}">저장</button>
+        <a class="btn" href="${esc(t.signup)}" target="_blank" rel="noopener">가입하러 가기</a></div>
+        ${(t.steps || []).length ? `<ol class="muted" style="margin:8px 0 0;padding-left:1.3em">${t.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}` : ""}
+      <div class="muted" data-msg="${esc(t.id)}" style="margin-top:6px"></div></div>`; }).join("");
+  document.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.save, inp = document.querySelector(`[data-key="${CSS.escape(id)}"]`);
+    if (!inp.value.trim()) return inp.focus();
+    const res = await api("/api/tools/key", { tool_id: id, value: inp.value }); inp.value = "";
+    document.querySelector(`[data-msg="${CSS.escape(id)}"]`).textContent = (res.ok ? "✅ " : "⚠️ ") + res.message;
+    if (res.ok) setTimeout(renderToolsPage, 900);
+  });
+  $("#tools-reqs").innerHTML = data.requests.length ? "" : `<p class="muted">아직 요청이 없어요. AI 가 필요하다고 판단하면 채팅에 요청 카드가 떠요.</p>`;
+  data.requests.forEach(r => { const t = data.tools.find(x => x.id === r.tool_id) || {};
+    toolRequestCard({ ...r, desc: t.desc || "" }, $("#tools-reqs")); });
 }
 
 // ── 공부 노트 ──

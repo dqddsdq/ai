@@ -27,6 +27,7 @@ from . import knowledge as kn
 from . import learn as ln
 from . import providers as pv
 from . import team as tm
+from . import tools as tl
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
 UPLOAD_DIR = ag.COMPANY_DIR / "_cache" / "uploads"   # git 에 안 올라감
@@ -255,6 +256,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.wfile.write(body)
         if path == "/api/wiki":
             return self._json(_wiki_list())
+        if path == "/api/tools":
+            return self._json(tl.overview())
         m = re.match(r"^/api/wiki/(.+)$", path)
         if m:
             return self._wiki_file(unquote(m.group(1)))
@@ -296,6 +299,12 @@ class Handler(BaseHTTPRequestHandler):
                 with contextlib.suppress(Exception):
                     self._send("error", {"message": str(e)})
             return
+        if path == "/api/tools/approve":
+            return self._json(tl.approve(str(body.get("id", ""))))
+        if path == "/api/tools/reject":
+            return self._json({"ok": bool(tl.set_status(str(body.get("id", "")), "rejected", "사장님이 거절"))})
+        if path == "/api/tools/key":
+            return self._json(tl.save_key(str(body.get("tool_id", "")), str(body.get("value", ""))))
         if path == "/api/upload":
             return self._upload(body)
         if path == "/api/capture":
@@ -422,6 +431,9 @@ class Handler(BaseHTTPRequestHandler):
         else:
             history.append({"role": "user", "content": text})
         extra = ACTION_GUIDE if body.get("actions", True) else ""
+        tool_guide = tl.guide_for_agents(agent_id)
+        if tool_guide:
+            extra += "\n\n" + tool_guide
         refs, sources = kn.context_and_sources(text) if body.get("knowledge", True) else ("", [])
         if refs:
             extra += "\n\n" + refs
@@ -480,6 +492,14 @@ class Handler(BaseHTTPRequestHandler):
                                  "drafts": [{"member": d.member, "view": d.view, "text": d.text, "error": d.error}
                                             for d in drafts],
                                  "steps": [st.as_dict() for st in steps]})
+        reqs = [tl.add_request(tool, why, agent_id) for tool, why in tl.find_requests(reply)]
+        if reqs:
+            conv["messages"][-1]["tool_requests"] = [r["id"] for r in reqs]
+            for r in reqs:
+                t = tl.find(r["tool_id"]) or {}
+                log(f"  🧰 도구 요청: {r['name']} ({r['status']})")
+                self._send("tool_request", {**r, "desc": t.get("desc", ""), "signup": t.get("signup", ""),
+                                            "steps": t.get("steps", []), "tool_status": tl.status(t) if t else ""})
         save_conv(conv)
         action = find_action(reply) if body.get("actions", True) else None
         if action:
