@@ -154,6 +154,21 @@ VERIFY_LOGIC = """[검토 단계 — 숫자·계산·논리 확인 담당]
 - 각 항목: ✅ / ❌(수정안) / ⚠️ 로 짧게. 문제 없으면 "문제 없음".
 - 마지막 줄은 반드시 둘 중 하나: `판정: 통과` 또는 `판정: 수정 필요`"""
 
+VERIFY_RISK = """[검토 단계 — 반대·리스크 확인 담당]
+아래 <draft> 는 같은 팀 동료가 사장님 질문(<question>)에 쓴 초안입니다. 당신은 '이 답이 틀렸다면 왜일까'를 찾습니다.
+- 빠진 위험, 반대 시나리오, 사장님에게 불리한 조건·예외, 지나친 낙관, 놓친 비용·세금·기한을 찾으세요.
+- 근거 없는 트집은 잡지 마세요. 실제로 결론을 바꿀 수 있는 것만. 각 항목: ✅ / ❌(보완안) / ⚠️ 로 짧게.
+- 마지막 줄은 반드시 둘 중 하나: `판정: 통과` 또는 `판정: 수정 필요`"""
+
+# 최종 승인 기본 구성: Claude 2 + 다른 회사 AI 3 (키·실행 안 되면 자동으로 Claude 가 대신)
+DEFAULT_APPROVERS = [
+    {"model": "", "label": "Claude A"},
+    {"model": "", "label": "Claude B"},
+    {"model": "gemini", "label": "Gemini"},
+    {"model": "mistral", "label": "Mistral"},
+    {"model": "local", "label": "로컬 AI"},
+]
+
 REVISE_PROMPT = """[수정 단계]
 아래 <draft>(초안)를 <review>(검토 의견)에 따라 고쳐서 사장님께 드릴 답을 다시 쓰세요.
 - ❌ 지적은 반드시 반영하고, ⚠️ 확인 못 한 주장은 빼거나 "확인 필요"라고 표시하세요.
@@ -183,11 +198,22 @@ class Step:
 
 
 def _verdict(text: str, kind: str) -> str:
-    tail = text.strip().splitlines()[-3:] if text.strip() else []
-    tail = " ".join(tail)
-    if kind == "verify":
-        return "fix" if "수정 필요" in tail else "pass" if "통과" in tail else "fix"
-    return "reject" if "반려" in tail else "approve" if "승인" in tail else "reject"
+    """마지막 '판정 줄'만 읽습니다. (본문의 "반려 사유 아님" 같은 말에 속지 않도록)"""
+    import re
+
+    good, bad = ("통과", "수정필요") if kind == "verify" else ("승인", "반려")
+    lines = [l for l in text.strip().splitlines() if l.strip()]
+    # 판정 줄 후보: 아래에서부터, 마크다운 기호를 빼고 짧은 줄 (예: "승인", "**판정: 통과**", "`반려`")
+    for line in reversed(lines[-4:]):
+        clean = re.sub(r"[\s*`_#>|]", "", line)
+        head = re.sub(r"\(.*$", "", clean)              # "판정:통과(보완하면 더 좋음)" → "판정:통과"
+        head = head.replace("판정:", "").replace("판정", "").strip(":.,!·-")
+        head = re.sub(r"(합니다|입니다|함|해요|합니다요)$", "", head)  # "승인합니다" → "승인"
+        if head == good or head.endswith(good) and bad not in head:
+            return "pass" if kind == "verify" else "approve"
+        if head == bad or head.endswith(bad) and good not in head:
+            return "fix" if kind == "verify" else "reject"
+    return "fix" if kind == "verify" else "reject"       # 판정 줄을 못 찾으면 안전하게 '다시 보기' 쪽
 
 
 def run_review(
@@ -250,12 +276,14 @@ def run_review(
     review_msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<draft>\n{draft.text}\n</draft>"}]
     v1 = Step("verify1", "🔍 검토 · 근거·출처", pick(1), "자료·출처 대조")
     v2 = Step("verify2", "🧮 검토 · 숫자·논리", pick(2), "계산·논리 재확인")
+    v3 = Step("verify3", "😈 검토 · 반대·리스크", pick(0), "틀렸다면 왜일까")
     run_parallel([(v1, system_for(pick(1), VERIFY_EVIDENCE), base + review_msg, member_spec, web, "verify"),
-                  (v2, system_for(pick(2), VERIFY_LOGIC), base + review_msg, member_spec, False, "verify")])
-    steps += [v1, v2]
+                  (v2, system_for(pick(2), VERIFY_LOGIC), base + review_msg, member_spec, False, "verify"),
+                  (v3, system_for(pick(0), VERIFY_RISK), base + review_msg, member_spec, False, "verify")])
+    steps += [v1, v2, v3]
 
     answer = draft.text
-    fixes = [v for v in (v1, v2) if v.verdict == "fix" and v.text]
+    fixes = [v for v in (v1, v2, v3) if v.verdict == "fix" and v.text]
     if fixes:
         rev = Step("revise1", "✏️ 검토 의견 반영", members[0], f"{len(fixes)}명 지적 반영")
         notes = "\n\n".join(f"<review by=\"{v.title}\">\n{v.text}\n</review>" for v in fixes)
@@ -265,14 +293,35 @@ def run_review(
         if rev.text.strip():
             answer = rev.text
 
-    # ③ 최종 승인 3명
+    # ③ 최종 승인 (기본 5명: Claude 2 + 다른 회사 AI 3 — 서로 다른 AI 가 서로 다른 실수를 잡도록)
     approve_msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<answer>\n{answer}\n</answer>"}]
-    approvers = [Step(f"approve{i}", f"✅ 최종 승인 {i}/3", pick(i - 1), ag.member_view(pick(i - 1))) for i in (1, 2, 3)]
-    run_parallel([(a, system_for(a.member, APPROVE_PROMPT.format(i=i, n=3)), base + approve_msg, member_spec, False, "approve")
-                  for i, a in enumerate(approvers, 1)])
+    seats = cfg.get("approvers") or settings().get("approvers") or DEFAULT_APPROVERS
+    n = len(seats)
+    approvers, jobs = [], []
+    for i, seat in enumerate(seats, 1):
+        label = seat.get("label") or seat.get("model") or "Claude"
+        spec = pv.parse_model(seat["model"]) if seat.get("model") else member_spec
+        if not pv.is_ready(spec):                       # 키 없음·로컬 AI 꺼짐 → Claude 가 대신
+            label, spec = f"{label} → Claude 대신", member_spec
+        a = Step(f"approve{i}", f"✅ 최종 승인 {i}/{n} · {label}", pick(i - 1), str(spec))
+        approvers.append(a)
+        jobs.append((a, system_for(a.member, APPROVE_PROMPT.format(i=i, n=n)), base + approve_msg, spec, False, "approve"))
+    run_parallel(jobs)
+    # 다른 AI 가 오류(사용량 제한 등)면 Claude 로 다시
+    retry = [(a, *job[1:3], member_spec, False, "approve") for a, job in zip(approvers, jobs)
+             if a.error and job[3] is not member_spec]
+    for a, *_ in retry:
+        a.title += " → 오류로 Claude 대신"
+        a.error = ""
+    if retry:
+        run_parallel(retry)
     steps += approvers
     rejects = [a for a in approvers if a.verdict == "reject" and a.text]
     ok = sum(a.verdict == "approve" for a in approvers)
+    threshold = min(n, max(1, int(settings().get("reject_threshold") or 2)))
+    minor_rejects = rejects if 0 < len(rejects) < threshold else []
+    if minor_rejects:          # 1명만 반려 = 약한 AI 의 괜한 반려일 수 있어 참고로만
+        rejects = []
 
     # ④ 반려가 있으면: 1번으로 돌아가지 않고 "수정 → 검토 2명 재확인" 루프 (둘 다 통과할 때까지, 최대 N바퀴)
     rounds_done, unresolved = 0, []
@@ -293,10 +342,12 @@ def run_review(
                 f"<must_fix>\n최종 승인에서 반려된 사유입니다. 이 지적이 위 draft 에서 실제로 고쳐졌는지 반드시 확인하세요.\n{must_fix}\n</must_fix>")}]
             c1 = Step(f"loop{r}_v1", f"🔍 재검토 {r}회차 · 근거·출처", pick(1), "반려 사유 해결 확인")
             c2 = Step(f"loop{r}_v2", f"🧮 재검토 {r}회차 · 숫자·논리", pick(2), "반려 사유 해결 확인")
+            c3 = Step(f"loop{r}_v3", f"😈 재검토 {r}회차 · 반대·리스크", pick(0), "반려 사유 해결 확인")
             run_parallel([(c1, system_for(pick(1), VERIFY_EVIDENCE), base + recheck, member_spec, web, "verify"),
-                          (c2, system_for(pick(2), VERIFY_LOGIC), base + recheck, member_spec, False, "verify")])
-            steps += [c1, c2]
-            unresolved = [c for c in (c1, c2) if c.verdict == "fix" and c.text]
+                          (c2, system_for(pick(2), VERIFY_LOGIC), base + recheck, member_spec, False, "verify"),
+                          (c3, system_for(pick(0), VERIFY_RISK), base + recheck, member_spec, False, "verify")])
+            steps += [c1, c2, c3]
+            unresolved = [c for c in (c1, c2, c3) if c.verdict == "fix" and c.text]
             if not unresolved:
                 break
             notes = [f"<review by=\"{c.title}\">\n{c.text}\n</review>" for c in unresolved]
@@ -304,7 +355,9 @@ def run_review(
     # 요약 배지 (코드가 각 단계의 실제 판정을 모아서 만듦 — 모델이 지어낼 수 없게)
     def mark(v: Step) -> str:
         return "⚠️ 오류" if v.error else ("✅" if v.verdict == "pass" else "✏️ 수정")
-    header = f"🏆 검토 완료 · 근거 {mark(v1)} · 숫자·논리 {mark(v2)} · 최종 승인 {ok}/3"
+    header = f"🏆 검토 완료 · 근거 {mark(v1)} · 숫자·논리 {mark(v2)} · 리스크 {mark(v3)} · 최종 승인 {ok}/{n}"
+    if minor_rejects:
+        header += f" (반려 {len(minor_rejects)}건은 기준 {threshold}명 미만이라 참고만)"
     if rejects and not unresolved:
         header += f" → 반려 {len(rejects)}건 수정, 재검토 {rounds_done}회차에 통과"
     elif rejects:

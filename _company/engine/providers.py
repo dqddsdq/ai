@@ -39,13 +39,13 @@ DEFAULT_MODELS = {
     "claudecode": lambda: os.getenv("CLAUDECODE_MODEL", "default"),
     "claude": lambda: os.getenv("CLAUDE_MODEL", "claude-opus-5-5"),
     "openai": lambda: os.getenv("OPENAI_MODEL", "gpt-5"),
-    "gemini": lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
+    "gemini": lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),     # flash = 무료 요금제로 사용 가능
     "local": lambda: os.getenv("LOCAL_MODEL", "auto"),
     "lmstudio": lambda: os.getenv("LMSTUDIO_MODEL", "auto"),
     "llamacpp": lambda: os.getenv("LLAMACPP_MODEL", "auto"),
     "vllm": lambda: os.getenv("VLLM_MODEL", "auto"),
     "ollama": lambda: os.getenv("OLLAMA_MODEL", "auto"),
-    "mistral": lambda: os.getenv("MISTRAL_MODEL", "mistral-large-latest"),
+    "mistral": lambda: os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
     "groq": lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
     "xai": lambda: os.getenv("XAI_MODEL", "grok-4"),
     "echo": lambda: "test",
@@ -143,6 +143,20 @@ def _has_key(env: str) -> bool:
     return bool(value) and not any(w in value.lower() for w in ("your", "xxx", "here", "<", "example"))
 
 
+def is_ready(spec: ModelSpec) -> bool:
+    """지금 바로 쓸 수 있는지 (키·설치·실행 여부). 안 되면 다른 AI 로 대체할 때 씀."""
+    p = spec.provider
+    if p == "claudecode":
+        return bool(claude_cli())
+    if p == "gemini":
+        return _has_key("GEMINI_API_KEY") or _has_key("GOOGLE_API_KEY")
+    if p == "local" or p in LOCAL_SERVERS:
+        names = [p] if p != "local" else (["local"] if os.getenv("LOCAL_BASE_URL") else list(LOCAL_SERVERS))
+        return any(probe_local(n, timeout=0.8) is not None for n in names)
+    env = KEY_ENV.get(p)
+    return True if env is None else _has_key(env)
+
+
 def provider_status() -> list[tuple[str, str, bool]]:
     """(제공자, 기본 모델, 키 설정 여부) 목록."""
     rows = []
@@ -174,9 +188,7 @@ def chat(
     if images:
         if spec.provider == "claude":
             messages = _with_images_claude(messages, images)
-        elif spec.provider != "claudecode":
-            note = f"\n\n[사용자가 이미지 {len(images)}장을 첨부했지만 이 모델({spec})로는 볼 수 없어요. 이미지가 필요하면 Claude 모델로 바꾸라고 안내하세요.]"
-            messages = messages[:-1] + [{"role": "user", "content": messages[-1]["content"] + note}]
+        # openai / gemini / 호환(Mistral·로컬)은 각 함수에서 이미지를 붙입니다
     if spec.provider == "claudecode":
         try:
             return _chat_claudecode(spec, system, messages, on_text, effort, web, images or [], timeout)
@@ -191,7 +203,9 @@ def chat(
         "echo": _chat_echo,
     }.get(spec.provider, _chat_openai_compatible)
     try:
-        return handler(spec, system, messages, on_text, effort)
+        if handler is _chat_claude:
+            return handler(spec, system, messages, on_text, effort)
+        return handler(spec, system, messages, on_text, effort, images=images or [])
     except ProviderError:
         raise
     except ImportError as e:
@@ -334,10 +348,29 @@ def _chat_claude(spec, system, messages, on_text, effort):
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────
-def _chat_openai(spec, system, messages, on_text, effort):
+def _data_urls(images) -> list[tuple[str, bytes, str]]:
+    """[(data URL, 원본 바이트, MIME)]"""
+    import base64
+    import mimetypes
+
+    out = []
+    for path in images or []:
+        mt = mimetypes.guess_type(path)[0] or "image/png"
+        with open(path, "rb") as f:
+            raw = f.read()
+        out.append((f"data:{mt};base64,{base64.standard_b64encode(raw).decode()}", raw, mt))
+    return out
+
+
+def _chat_openai(spec, system, messages, on_text, effort, images=()):
     from openai import OpenAI
 
     client = OpenAI()
+    if images:
+        last = messages[-1]
+        parts = [{"type": "input_text", "text": last["content"]}] + [
+            {"type": "input_image", "image_url": url} for url, _, _ in _data_urls(images)]
+        messages = messages[:-1] + [{"role": "user", "content": parts}]
     stream = client.responses.create(
         model=spec.model,
         instructions=system,
@@ -407,7 +440,7 @@ def resolve_local(spec: ModelSpec) -> tuple[str, str]:
 
 
 # ── OpenAI 호환 (로컬 실행기, Mistral, Groq, xAI) ─────────────────────────
-def _chat_openai_compatible(spec, system, messages, on_text, effort):
+def _chat_openai_compatible(spec, system, messages, on_text, effort, images=()):
     from openai import OpenAI
 
     model = spec.model
@@ -422,11 +455,20 @@ def _chat_openai_compatible(spec, system, messages, on_text, effort):
     else:
         raise ProviderError(f"알 수 없는 제공자: {spec.provider}")
     client = OpenAI(base_url=base_url, api_key=api_key)
-    stream = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "system", "content": system}, *messages],
-        stream=True,
-    )
+    msgs = [{"role": "system", "content": system}, *messages]
+    if images:
+        parts = [{"type": "text", "text": messages[-1]["content"]}] + [
+            {"type": "image_url", "image_url": {"url": url}} for url, _, _ in _data_urls(images)]
+        msgs = msgs[:-1] + [{"role": "user", "content": parts}]
+    try:
+        stream = client.chat.completions.create(model=model, messages=msgs, stream=True)
+    except Exception:
+        if not images:
+            raise
+        # 이미지 못 보는 모델이면 글만 보내고, 이미지를 못 봤다고 알려줌
+        note = f"\n\n[첨부 이미지 {len(images)}장은 이 모델이 볼 수 없어요. 이미지 내용은 판단하지 마세요.]"
+        msgs = msgs[:-1] + [{"role": "user", "content": messages[-1]["content"] + note}]
+        stream = client.chat.completions.create(model=model, messages=msgs, stream=True)
 
     def pieces():
         for chunk in stream:
@@ -437,7 +479,7 @@ def _chat_openai_compatible(spec, system, messages, on_text, effort):
 
 
 # ── Google Gemini ─────────────────────────────────────────────────────────
-def _chat_gemini(spec, system, messages, on_text, effort):
+def _chat_gemini(spec, system, messages, on_text, effort, images=()):
     from google import genai
     from google.genai import types
 
@@ -452,6 +494,8 @@ def _chat_gemini(spec, system, messages, on_text, effort):
         )
         for m in messages
     ]
+    if images:
+        contents[-1].parts.extend(types.Part.from_bytes(data=raw, mime_type=mt) for _, raw, mt in _data_urls(images))
     stream = client.models.generate_content_stream(
         model=spec.model,
         contents=contents,
@@ -461,7 +505,7 @@ def _chat_gemini(spec, system, messages, on_text, effort):
 
 
 # ── 테스트용 (API 키 없이 동작 확인) ──────────────────────────────────────
-def _chat_echo(spec, system, messages, on_text, effort):
+def _chat_echo(spec, system, messages, on_text, effort, images=()):
     last = messages[-1]["content"] if messages else ""
     if "JSON" in system and "agent" in system:
         reply = '{"agent": "developer", "reason": "테스트 라우팅"}'

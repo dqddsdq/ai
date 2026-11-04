@@ -1,7 +1,30 @@
 {
-  "_설명": "max_parallel = 동시에 돌리는 최대 인원 (사용량 아끼려면 1~2). team_mode = auto(분석 질문만 팀) / on / off. team_style = review(초안1→검토2→승인3) / compare(팀원 각자 답→비교) max_review_rounds = 최종 승인에서 반려 시 '수정→재검토' 최대 반복 횟수.",
+  "_설명": "max_parallel = 동시에 돌리는 최대 인원. team_mode = auto / on / off. team_style = review(초안1→검토3→승인5) / compare. max_review_rounds = 반려 시 재검토 최대 횟수. reject_threshold = 이 인원 이상 반려해야 재수정 (1명 반려는 참고만). approvers = 최종 승인 AI 목록 (model 이 비어 있으면 팀 기본 Claude, 키가 없거나 꺼져 있으면 Claude 가 대신).",
   "max_parallel": 3,
   "team_mode": "auto",
   "team_style": "review",
-  "max_review_rounds": 3
+  "max_review_rounds": 3,
+  "reject_threshold": 2,
+  "approvers": [
+    {
+      "model": "",
+      "label": "Claude A"
+    },
+    {
+      "model": "",
+      "label": "Claude B"
+    },
+    {
+      "model": "gemini",
+      "label": "Gemini"
+    },
+    {
+      "model": "mistral",
+      "label": "Mistral"
+    },
+    {
+      "model": "local",
+      "label": "로컬 AI"
+    }
+  ]
 }
