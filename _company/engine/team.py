@@ -274,20 +274,43 @@ def run_review(
     rejects = [a for a in approvers if a.verdict == "reject" and a.text]
     ok = sum(a.verdict == "approve" for a in approvers)
 
-    # 요약 배지 (코드가 만듦 — 모델이 지어낼 수 없게)
+    # ④ 반려가 있으면: 1번으로 돌아가지 않고 "수정 → 검토 2명 재확인" 루프 (둘 다 통과할 때까지, 최대 N바퀴)
+    rounds_done, unresolved = 0, []
+    if rejects:
+        max_rounds = max(1, int(settings().get("max_review_rounds") or 3))
+        notes = [f"<review by=\"{a.title}\">\n{a.text}\n</review>" for a in rejects]
+        must_fix = "\n\n".join(notes)   # 최종 승인 반려 사유 — 재검토 때 고쳐졌는지 꼭 확인
+        for r in range(1, max_rounds + 1):
+            rounds_done = r
+            rev = Step(f"loop{r}_revise", f"✏️ 재수정 {r}회차", members[0], "반려·검토 지적 반영")
+            msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<draft>\n{answer}\n</draft>\n\n" + "\n\n".join(notes)}]
+            run_parallel([(rev, system_for(members[0], REVISE_PROMPT), base + msg, lead_spec, False)])
+            steps.append(rev)
+            if rev.text.strip():
+                answer = rev.text
+            recheck = [{"role": "user", "content": (
+                f"<question>\n{question}\n</question>\n\n<draft>\n{answer}\n</draft>\n\n"
+                f"<must_fix>\n최종 승인에서 반려된 사유입니다. 이 지적이 위 draft 에서 실제로 고쳐졌는지 반드시 확인하세요.\n{must_fix}\n</must_fix>")}]
+            c1 = Step(f"loop{r}_v1", f"🔍 재검토 {r}회차 · 근거·출처", pick(1), "반려 사유 해결 확인")
+            c2 = Step(f"loop{r}_v2", f"🧮 재검토 {r}회차 · 숫자·논리", pick(2), "반려 사유 해결 확인")
+            run_parallel([(c1, system_for(pick(1), VERIFY_EVIDENCE), base + recheck, member_spec, web, "verify"),
+                          (c2, system_for(pick(2), VERIFY_LOGIC), base + recheck, member_spec, False, "verify")])
+            steps += [c1, c2]
+            unresolved = [c for c in (c1, c2) if c.verdict == "fix" and c.text]
+            if not unresolved:
+                break
+            notes = [f"<review by=\"{c.title}\">\n{c.text}\n</review>" for c in unresolved]
+
+    # 요약 배지 (코드가 각 단계의 실제 판정을 모아서 만듦 — 모델이 지어낼 수 없게)
     def mark(v: Step) -> str:
         return "⚠️ 오류" if v.error else ("✅" if v.verdict == "pass" else "✏️ 수정")
-    header = (f"🏆 검토 완료 · 근거 {mark(v1)} · 숫자·논리 {mark(v2)} · 최종 승인 {ok}/3"
-              + (f" (반려 {len(rejects)}건 반영)" if rejects else ""))
-
-    if rejects:  # 마지막 수정 — 스트리밍으로 바로 보여줌
-        if on_text:
-            on_text(header + "\n\n")
-        notes = "\n\n".join(f"<review by=\"{a.title}\">\n{a.text}\n</review>" for a in rejects)
-        msg = [{"role": "user", "content": f"<question>\n{question}\n</question>\n\n<draft>\n{answer}\n</draft>\n\n{notes}"}]
-        final = pv.chat(lead_spec, system_for(members[0], REVISE_PROMPT), base + msg, on_text=on_text, effort=effort)
-        steps.append(Step("revise2", "✏️ 최종 수정", members[0], f"반려 {len(rejects)}건 반영", text=final))
-        return header + "\n\n" + final, steps, str(lead_spec)
+    header = f"🏆 검토 완료 · 근거 {mark(v1)} · 숫자·논리 {mark(v2)} · 최종 승인 {ok}/3"
+    if rejects and not unresolved:
+        header += f" → 반려 {len(rejects)}건 수정, 재검토 {rounds_done}회차에 통과"
+    elif rejects:
+        header = header.replace("🏆 검토 완료", "⚠️ 검토 미완료") + f" → 재검토 {rounds_done}회 후에도 지적 남음"
+        answer += "\n\n---\n**⚠️ 확인 필요 (검토에서 해결되지 않은 지적)**\n" + "\n".join(
+            "- " + (c.text.strip().splitlines()[0][:200] if c.text.strip() else c.title) for c in unresolved)
 
     if on_text:
         on_text(header + "\n\n" + answer)

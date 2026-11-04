@@ -1,6 +1,7 @@
 {
-  "_설명": "max_parallel = 동시에 돌리는 최대 인원 (사용량 아끼려면 1~2). team_mode = auto(분석 질문만 팀) / on / off. team_style = review(초안1→검토2→승인3) / compare(팀원 각자 답→비교)",
+  "_설명": "max_parallel = 동시에 돌리는 최대 인원 (사용량 아끼려면 1~2). team_mode = auto(분석 질문만 팀) / on / off. team_style = review(초안1→검토2→승인3) / compare(팀원 각자 답→비교) max_review_rounds = 최종 승인에서 반려 시 '수정→재검토' 최대 반복 횟수.",
   "max_parallel": 3,
   "team_mode": "auto",
-  "team_style": "review"
+  "team_style": "review",
+  "max_review_rounds": 3
 }

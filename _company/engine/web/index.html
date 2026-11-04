@@ -507,7 +507,7 @@ function addAI(info = {}) {
     if (agent) who.title = agent.summary;
   };
   setWho(info);
-  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").replace(/^\s*`?🏆[^\n]*\n+/, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
+  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").replace(/^\s*`?(?:🏆|⚠️ 검토)[^\n]*\n+/, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
   const teamBox = el.querySelector(".team");
   const cards = {}, steps = {};
   const team = {
@@ -557,7 +557,7 @@ function addAI(info = {}) {
 }
 // 심사 결과 첫 줄(🏆 채택: ...)은 배지로 표시
 function finalHTML(raw) {
-  const m = raw.match(/^\s*`?(🏆[^\n]*?)`?\s*(\n|$)/);
+  const m = raw.match(/^\s*`?((?:🏆|⚠️ 검토)[^\n]*?)`?\s*(\n|$)/);
   return m ? `<div class="winner">${esc(m[1])}</div>` + md(raw.slice(m[0].length)) : md(raw);
 }
 // 시뮬 결과: 확률·범위를 먼저, 가정(변수 목록)은 접어두기
