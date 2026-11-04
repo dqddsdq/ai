@@ -156,6 +156,23 @@ button { cursor: pointer; }
 #lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: grid; place-items: center; z-index: 70; cursor: zoom-out; }
 #lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 8px; }
 .share-btn.on { color: #d1453b; background: color-mix(in srgb, #d1453b 12%, transparent); }
+#work-panel { position: fixed; right: 18px; top: 60px; width: 300px; max-height: 46vh; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow); z-index: 25; overflow: hidden; }
+#work-panel .wp-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 12.5px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
+#work-panel .wp-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#work-panel .wp-time { color: var(--faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+#work-panel .wp-list { overflow-y: auto; padding: 4px 0; }
+#work-panel .wp-item { display: flex; gap: 8px; align-items: baseline; padding: 4px 12px; font-size: 12.5px; }
+#work-panel .wp-item .st { width: 16px; text-align: center; flex-shrink: 0; }
+#work-panel .wp-item .who { flex: 1; min-width: 0; }
+#work-panel .wp-item .who b { font-weight: 600; }
+#work-panel .wp-item .sub { display: block; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#work-panel .wp-item .sec { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+#work-panel .wp-item.done { opacity: .55; }
+#work-panel.min { width: auto; border-radius: 999px; }
+#work-panel.min .wp-list { display: none; }
+#work-panel.min .wp-head { border-bottom: 0; padding: 6px 14px; }
+@media (max-width: 800px) { #work-panel { width: 230px; right: 10px; top: 56px; } }
 #share-panel { position: fixed; right: 18px; bottom: 150px; width: 300px; background: var(--panel); border: 1px solid var(--line-strong);
   border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; z-index: 20; }
 #share-panel video { width: 100%; display: block; background: #000; aspect-ratio: 16/10; object-fit: contain; }
@@ -317,6 +334,10 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       </div>
     </div></div>
   </section>
+  <div id="work-panel" hidden>
+    <div class="wp-head" id="wp-head" title="눌러서 접기/펼치기"><span class="wp-title" id="wp-title">🔄 AI 작업 중</span><span class="wp-time" id="wp-time"></span><button class="icon-btn" id="wp-min" title="최소화">－</button></div>
+    <div class="wp-list" id="wp-list"></div>
+  </div>
   <div id="share-panel" hidden>
     <div class="share-head"><span class="live">● 공유 중</span><span class="muted">질문하면 이 화면이 같이 가요</span><div class="spacer"></div>
       <button class="icon-btn" id="share-min" title="미리보기 접기">－</button><button class="icon-btn" id="share-stop" title="공유 중지">중지</button></div>
@@ -391,7 +412,7 @@ async function stream(path, body, handlers, signal) {
     let i; while ((i = buf.indexOf("\n\n")) >= 0) {
       const block = buf.slice(0, i); buf = buf.slice(i + 2);
       const ev = (block.match(/^event: (.*)$/m) || [])[1]; const data = (block.match(/^data: (.*)$/m) || [])[1];
-      if (ev && data && handlers[ev]) handlers[ev](JSON.parse(data));
+      if (ev && data) { const d = JSON.parse(data); handlers["*"]?.(ev, d); handlers[ev]?.(d); }
     }
   }
 }
@@ -666,6 +687,68 @@ input.addEventListener("keydown", (e) => {
 sendBtn.onclick = () => state.busy ? state.controller?.abort() : send();
 function setBusy(b) { state.busy = b; sendBtn.classList.toggle("stop", b); sendBtn.textContent = b ? "■" : "↑"; sendBtn.title = b ? "중지" : "보내기 (Enter)"; autosize(); }
 
+// ── AI 작업 현황 (작업 중일 때만 뜨는 작은 창, 최소화 가능) ──
+const work = {
+  items: {}, order: [], t0: 0, timer: null, hideTimer: null, running: false,
+  get min() { return store.get("workMin", "0") === "1"; },
+  setMin(v) { store.set("workMin", v ? "1" : "0"); $("#work-panel").classList.toggle("min", v); $("#wp-min").textContent = v ? "＋" : "－"; this.render(); },
+  start(firstLabel, firstSub) {
+    clearTimeout(this.hideTimer); this.items = {}; this.order = []; this.t0 = Date.now(); this.running = true;
+    $("#work-panel").hidden = false; $("#work-panel").classList.toggle("min", this.min); $("#wp-min").textContent = this.min ? "＋" : "－";
+    if (firstLabel) this.add("route", firstLabel, firstSub);
+    clearInterval(this.timer); this.timer = setInterval(() => this.render(), 1000); this.render();
+  },
+  add(id, label, sub = "") {
+    if (!this.items[id]) this.order.push(id);
+    this.items[id] = { label, sub, t: Date.now(), end: 0, mark: "" }; this.render();
+  },
+  sub(id, text) { if (this.items[id]) { this.items[id].sub = text; this.render(); } },
+  done(id, mark = "✅", sub) {
+    const it = this.items[id]; if (!it || it.end) return;
+    it.end = Date.now(); it.mark = mark; if (sub != null) it.sub = sub; this.render();
+  },
+  finish(ok = true) {
+    if (!this.running) return;
+    this.running = false; this.order.forEach(id => this.done(id, ok ? "✅" : "⏹️"));
+    clearInterval(this.timer); this.render(true);
+    this.hideTimer = setTimeout(() => { $("#work-panel").hidden = true; }, 4000);
+  },
+  event(ev, d) {
+    const V = { pass: "✅", approve: "✅", fix: "✏️", reject: "↩️" };
+    switch (ev) {
+      case "meta": this.done("route", "✅", `→ ${teamName(d.agent)}`); if ((d.team || 1) <= 1) this.add("answer", `💬 ${teamName(d.agent)}`, "답변 작성 중"); break;
+      case "status": if (d.text) this.add("status", d.text.replace(/\.{3}$/, ""), ""); else this.done("status"); break;
+      case "market": this.done("status"); (d.items || []).forEach((m, i) => { this.add("mk" + i, `📈 ${m.name || m.ticker}`, m.error && m.price == null ? "데이터 못 가져옴" : `${m.price != null ? Number(m.price).toLocaleString() : "-"} · ${(m.source || "").replace(/\s*\(.*\)/, "")}`); this.done("mk" + i, m.error && m.price == null ? "⚠️" : "✅"); }); break;
+      case "draft_start": this.add("d" + d.i, `✍️ 팀원${d.i}`, d.view); break;
+      case "draft_done": this.done("d" + d.i, d.error ? "⚠️" : "✅"); break;
+      case "judge_start": this.add("judge", "🏆 답변 비교·심사", ""); break;
+      case "step_start": this.add(d.id, d.title, d.view); break;
+      case "step_done": this.done(d.id, d.error ? "⚠️" : (V[d.verdict] || "✅")); break;
+      case "delta": this.done("judge"); this.done("answer"); break;
+      case "tool_start": this.add("tool", d.label, d.arg); break;
+      case "tool_log": this.sub("tool", d.text); break;
+      case "tool_done": this.done("tool"); break;
+      case "tool_error": this.done("tool", "⚠️", d.message); break;
+      case "done": this.finish(true); break;
+      case "error": this.finish(false); break;
+    }
+  },
+  render(final = false) {
+    const now = Date.now(), secs = (a, b) => Math.round(((b || now) - a) / 1000);
+    const active = this.order.filter(id => !this.items[id].end).length;
+    $("#wp-time").textContent = secs(this.t0, this.running ? 0 : now) + "초";
+    $("#wp-title").textContent = this.running ? (active ? `🔄 AI ${active}명 작업 중` : "🔄 마무리 중") : (final ? "✅ 작업 완료" : "✅ 완료");
+    if (this.min) return;
+    const list = $("#wp-list");
+    list.innerHTML = this.order.map(id => { const it = this.items[id];
+      return `<div class="wp-item${it.end ? " done" : ""}"><span class="st">${it.end ? it.mark : '<span class="spin">◌</span>'}</span>
+        <span class="who"><b>${esc(it.label)}</b>${it.sub ? `<span class="sub">${esc(it.sub)}</span>` : ""}</span><span class="sec">${secs(it.t, it.end)}초</span></div>`; }).join("");
+    if (this.running) list.scrollTop = list.scrollHeight;
+  },
+};
+$("#wp-min").onclick = (e) => { e.stopPropagation(); work.setMin(!work.min); };
+$("#wp-head").onclick = () => work.setMin(!work.min);
+
 async function send() {
   const text = input.value.trim();
   if ((!text && !attachments.length) || state.busy) return;
@@ -677,6 +760,7 @@ async function send() {
   input.value = ""; attachments = []; renderAttachments(); autosize(); enterThread(); addUser(text || "첨부한 화면을 분석해 줘.", images);
   const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
   const t0 = Date.now(); let gotAny = false;
+  work.start(!state.conv && $("#agent-select").value === "auto" ? "🧭 CEO · 담당 팀 고르는 중" : "💬 답변 준비 중", "");
   const tick = setInterval(() => { if (!gotAny) ai.status(`${!state.conv && $("#agent-select").value === "auto" ? "CEO가 담당 팀 고르는 중" : "답변 준비 중"}... ${Math.round((Date.now() - t0) / 1000)}초`); }, 1000);
   ai.body.classList.add("cursor"); scrollDown(true);
   let raw = "", tool = null; setBusy(true); state.controller = new AbortController();
@@ -685,6 +769,7 @@ async function send() {
       conversation_id: state.conv?.id, message: text, images, agent: $("#agent-select").value,
       model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-mode").value,
     }, {
+      "*": (ev, d) => work.event(ev, d),
       meta: (m) => { gotAny = true; ai.status(""); state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
       status: (d) => ai.status(d.text),
       market: (d) => ai.market(d.items || []),
@@ -712,7 +797,7 @@ async function send() {
     if (e.name !== "AbortError") ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ 연결 오류: ${esc(e.message)}<br>검은 창이 켜져 있는지 확인하세요. 꺼졌다면 'AI 시작.bat' 을 다시 실행하고, 계속되면 '진단.bat' 을 실행해 결과를 보여주세요.</div>`);
     else ai.body.insertAdjacentHTML("beforeend", `<div class="muted">(중지됨)</div>`);
   } finally {
-    clearInterval(tick); if (!gotAny) ai.status("");
+    clearInterval(tick); if (!gotAny) ai.status(""); work.finish(gotAny);
     ai.body.classList.remove("cursor"); tool?.out.classList.remove("cursor"); setBusy(false); loadConvs(); input.focus();
   }
 }
