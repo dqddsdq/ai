@@ -73,11 +73,19 @@ def find_action(reply: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2).strip()) if m else None
 
 
+BADGE_RE = re.compile(r"^\s*`?(?:🏆|⚠️ 검토)[^\n]*\n+")
+
+
+def strip_badge(text: str) -> str:
+    """'🏆 검토 완료 · …' 배지 줄 제거 — 화면 표시용이라 AI 대화 기록·학습 데이터에는 안 넣음."""
+    return BADGE_RE.sub("", text, count=1)
+
+
 def chat_history(conv: dict) -> list[dict]:
     """저장된 메시지 → 모델용 history. 연속된 assistant 메시지는 하나로 합칩니다."""
     out: list[dict] = []
     for m in conv["messages"]:
-        content = m["content"]
+        content = strip_badge(m["content"]) if m["role"] == "assistant" else m["content"]
         if m.get("kind") == "tool":
             content = f"[자동 실행 결과: {m.get('tool', '')}]\n{content}"
         if out and out[-1]["role"] == m["role"]:
@@ -142,7 +150,7 @@ def save_conv(conv: dict) -> None:
     for m in conv["messages"]:
         who = "user" if m["role"] == "user" else m.get("agent", "assistant")
         if m.get("kind") in (None, "chat"):
-            lines.append(f"\n### {who}\n\n{m['content'].strip()}\n")
+            lines.append(f"\n### {who}\n\n{strip_badge(m['content']).strip()}\n")
     (d / "chat.md").write_text("".join(lines), encoding="utf-8")
 
 
@@ -344,7 +352,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send("status", {"text": "📈 종목 찾는 중..."})
         recent = "\n".join(re.sub(r"\[화면 캡처 \d+장 첨부\]", "", m["content"])[:500] for m in history[-3:])
         try:
-            reply = pv.chat(spec, mk.TICKER_PROMPT, [{"role": "user", "content": recent}], effort="low")
+            reply = pv.chat(tm.fast_spec(), mk.TICKER_PROMPT, [{"role": "user", "content": recent}], effort="low", timeout=90)
             # 티커 모양만 통과 (6자리.KS/.KQ 또는 영문 티커) — 엉뚱한 글자는 버림
             tickers = [t.strip().upper() for t in ln._json_list(reply)
                        if re.fullmatch(r"\d{6}(\.(KS|KQ))?|[A-Za-z][A-Za-z.\-]{0,9}", t.strip())][:5]
@@ -380,7 +388,7 @@ class Handler(BaseHTTPRequestHandler):
         reason = ""
         log(f"💬 질문: {text[:40]}")
         if not agent_id:
-            spec = pv.parse_model(override or ag.Agent("ceo").model_spec())
+            spec = tm.fast_spec(override)   # 팀 고르기는 빠른 모델로 충분
             log(f"  🧭 담당 팀 고르는 중 ({spec})...")
             try:
                 reply = pv.chat(spec, ag.route_prompt(), [{"role": "user", "content": text}], effort="low", timeout=120)
@@ -410,8 +418,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             history.append({"role": "user", "content": text})
         extra = ACTION_GUIDE if body.get("actions", True) else ""
-        refs = kn.context_for(text) if body.get("knowledge", True) else ""
-        sources = sorted({h.source for _, h in kn.search(text)}) if refs else []
+        refs, sources = kn.context_and_sources(text) if body.get("knowledge", True) else ("", [])
         if refs:
             extra += "\n\n" + refs
         members = ag.team_members(agent_id)
@@ -553,9 +560,15 @@ def _wiki_list() -> list[dict]:
 
 
 def serve(port: int = 8765, open_browser: bool = True) -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.daemon_threads = True
     url = f"http://127.0.0.1:{port}"
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError:  # 이미 켜져 있음 (AI 시작.bat 두 번 실행 등)
+        print(f"이미 다른 창에서 켜져 있어요. 브라우저로 {url} 을 엽니다.")
+        if open_browser:
+            webbrowser.open(url)
+        return
+    server.daemon_threads = True
     print(f"🌐 {url} 에서 열렸어요. 끄려면 이 창에서 Ctrl+C")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()

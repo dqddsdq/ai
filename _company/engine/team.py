@@ -61,6 +61,11 @@ def wants_team(text: str, has_images: bool = False, mode: str | None = None) -> 
     return len(t) >= 30 or any(w in t for w in DEEP_WORDS) or (is_question and len(t) >= 12)
 
 
+def fast_spec(override: str | None = None):
+    """팀 배정·종목 찾기처럼 짧은 판단용 빠른 모델 (CEO 팀 member_model, 기본 Haiku). 사용자가 모델을 고르면 그걸 씀."""
+    return pv.parse_model(override or team_config("ceo").get("member_model") or "claudecode:haiku")
+
+
 @dataclass
 class Draft:
     member: str
@@ -311,7 +316,7 @@ def run_review(
             content += ("\n\n<must_fix>\n최종 승인에서 반려된 사유입니다. 이 지적이 위 draft 에서 "
                         f"실제로 고쳐졌는지 반드시 확인하세요.\n{must_fix}\n</must_fix>")
         jobs = []
-        for i, seat in enumerate(reviewer_seats):
+        for i, seat in enumerate(reviewer_seats):  # noqa: B007
             got = resolve_seat(seat, member_spec)
             if got is None:
                 continue                                  # 무료 AI 사용 불가 → 이번엔 빠짐
@@ -350,7 +355,7 @@ def run_review(
     resolved = [(seat, got) for seat, got in resolved if got is not None]
     n = len(resolved)
     approvers, jobs = [], []
-    for i, (seat, (spec, label)) in enumerate(resolved, 1):
+    for i, (_seat, (spec, label)) in enumerate(resolved, 1):
         a = Step(f"approve{i}", f"✅ 최종 승인 {i}/{n}", pick(i - 1), label)
         approvers.append(a)
         jobs.append((a, system_for(a.member, APPROVE_PROMPT.format(i=i, n=n)), base + approve_msg, spec, False, "approve"))

@@ -9,7 +9,6 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 from .agents import COMPANY_DIR
 
@@ -36,7 +35,8 @@ def _grams(text: str) -> frozenset:
 def _split(text: str) -> list[str]:
     sections = re.split(r"\n(?=#{1,3} )", text)
     out = []
-    for sec in sections:
+    for section in sections:
+        sec = section
         while len(sec) > CHUNK_CHARS:
             cut = sec.rfind("\n", 0, CHUNK_CHARS)
             cut = cut if cut > CHUNK_CHARS // 2 else CHUNK_CHARS
@@ -47,19 +47,31 @@ def _split(text: str) -> list[str]:
     return out
 
 
+_CACHE: dict[str, tuple[float, list[Chunk]]] = {}   # 파일 경로 → (수정 시각, 조각들)
+
+
 def load_chunks() -> list[Chunk]:
-    chunks = []
+    """자료 폴더의 .md 를 조각으로 나눔. 바뀐 파일만 다시 읽어요 (노트가 많아져도 빠르게)."""
+    chunks, seen = [], set()
     for base in KNOWLEDGE_DIRS:
         if not base.is_dir():
             continue
         for path in sorted(base.rglob("*.md")):
+            key = str(path)
+            seen.add(key)
             try:
-                text = path.read_text(encoding="utf-8")
+                mtime = path.stat().st_mtime
+                cached = _CACHE.get(key)
+                if not cached or cached[0] != mtime:
+                    text = path.read_text(encoding="utf-8")
+                    rel = str(path.relative_to(REPO_DIR))
+                    cached = (mtime, [Chunk(rel, part.strip(), _grams(part)) for part in _split(text)])
+                    _CACHE[key] = cached
             except (OSError, UnicodeDecodeError):
                 continue
-            rel = str(path.relative_to(REPO_DIR))
-            for part in _split(text):
-                chunks.append(Chunk(rel, part.strip(), _grams(part)))
+            chunks.extend(cached[1])
+    for gone in set(_CACHE) - seen:                  # 지운 파일은 캐시에서도 제거
+        _CACHE.pop(gone, None)
     return chunks
 
 
@@ -80,16 +92,20 @@ def search(query: str, chunks: list[Chunk] | None = None, k: int = TOP_K) -> lis
 
 def context_for(query: str) -> str:
     """시스템 프롬프트에 붙일 참고자료 블록 (없으면 빈 문자열)."""
+    return context_and_sources(query)[0]
+
+
+def context_and_sources(query: str) -> tuple[str, list[str]]:
+    """(참고자료 블록, 출처 파일 목록) — 검색은 한 번만."""
     hits = search(query)
     if not hits:
-        return ""
+        return "", []
     parts, used = [], 0
     for _, c in hits:
         if used + len(c.text) > MAX_CONTEXT_CHARS:
             break
         parts.append(f"<reference source=\"{c.source}\">\n{c.text}\n</reference>")
         used += len(c.text)
-    return (
-        "아래는 사용자 자료에서 찾은 참고자료입니다. 관련 있으면 활용하고, "
-        "근거로 쓸 때는 출처 파일명을 밝히세요.\n\n" + "\n\n".join(parts)
-    )
+    block = ("아래는 사용자 자료에서 찾은 참고자료입니다. 관련 있으면 활용하고, "
+             "근거로 쓸 때는 출처 파일명을 밝히세요.\n\n" + "\n\n".join(parts))
+    return block, sorted({c.source for _, c in hits})

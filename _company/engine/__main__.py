@@ -39,8 +39,13 @@ def resolve_model(agent_id: str, override: str | None) -> pv.ModelSpec:
 def pick_agent(text: str, requested: str, override: str | None) -> tuple[str, str]:
     if requested != "auto":
         return requested, ""
-    spec = resolve_model("ceo", override)
-    reply = pv.chat(spec, ag.route_prompt(), [{"role": "user", "content": text}], effort="low")
+    from . import team as tm
+
+    reply = pv.chat(tm.fast_spec(override), ag.route_prompt(), [{"role": "user", "content": text}], effort="low")
+    quick = ag.parse_quick(reply)
+    if quick:  # 인사·잡담: 팀 없이 바로
+        print(f"\n🧭 {quick}\n")
+        return "", ""
     return ag.parse_route(reply)
 
 
@@ -67,6 +72,8 @@ def cmd_ask(args) -> None:
     check_agent(args.agent)
     question = " ".join(args.question)
     agent_id, reason = pick_agent(question, args.agent, args.model)
+    if not agent_id:  # 인사·잡담이라 이미 답함
+        return
     if reason:
         print(f"🧭 CEO → {agent_id} ({reason})")
     log = ag.SessionLog()
@@ -137,7 +144,10 @@ def cmd_chat(args) -> None:
 
         try:
             if mode == "auto" and not history:
-                current, reason = pick_agent(text, "auto", override)
+                picked, reason = pick_agent(text, "auto", override)
+                if not picked:  # 인사·잡담이라 이미 답함 → 다음 질문 때 다시 배정
+                    continue
+                current = picked
                 print(f"🧭 CEO → {current} ({reason})")
             history.append({"role": "user", "content": text})
             log.write("user", text)
