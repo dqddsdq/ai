@@ -441,7 +441,8 @@ class Handler(BaseHTTPRequestHandler):
         # 팀 비교: auto(분석·판단 질문만) / on / off — 화면 선택값, 없으면 settings.json
         mode = body.get("team")
         mode = {True: "on", False: "off"}.get(mode, mode)
-        short_talk = len(text) <= 8 and not images and "?" not in text
+        # 아주 짧고 질문 단어도 없는 말("ㅎㅇ", "ㅇㅋ", "고마워")만 1명이 답함 — "급등주 추천해줘" 는 팀 검토
+        short_talk = len(text) <= 8 and not images and "?" not in text and not any(w in text for w in tm.DEEP_WORDS)
         use_team = len(members) > 1 and not short_talk and tm.wants_team(text, bool(images), mode)
 
         if images:
