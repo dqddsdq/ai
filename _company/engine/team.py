@@ -225,10 +225,11 @@ class Step:
     text: str = ""
     verdict: str = ""     # pass / fix / approve / reject / ""
     error: str = ""
+    model: str = ""       # 이 단계를 맡은 AI (화면의 '담당 AI' 표시용)
 
     def as_dict(self) -> dict:
         return {"id": self.id, "title": self.title, "member": self.member, "view": self.view,
-                "text": self.text, "verdict": self.verdict, "error": self.error}
+                "text": self.text, "verdict": self.verdict, "error": self.error, "model": self.model}
 
 
 def _verdict(text: str, kind: str) -> str:
@@ -286,6 +287,8 @@ def run_review(
         return step
 
     def run_parallel(steps_and_args):
+        for st, _sys, _msgs, spec, *_ in steps_and_args:
+            st.model = str(spec)
         for st, *_ in steps_and_args:
             if on_step_start:
                 on_step_start(st)

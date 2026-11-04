@@ -385,10 +385,11 @@ class Handler(BaseHTTPRequestHandler):
         agent_id = ag.team_of(requested) if requested != "auto" else conv.get("agent")
         if agent_id and agent_id not in ag.list_teams():
             agent_id = ag.team_of(agent_id) if ag.team_of(agent_id) in ag.list_teams() else None
-        reason = ""
+        reason, router_model = "", ""
         log(f"💬 질문: {text[:40]}")
         if not agent_id:
             spec = tm.fast_spec(override)   # 팀 고르기는 빠른 모델로 충분
+            router_model = str(spec)
             log(f"  🧭 담당 팀 고르는 중 ({spec})...")
             try:
                 reply = pv.chat(spec, ag.route_prompt(), [{"role": "user", "content": text}], effort="low", timeout=120)
@@ -402,7 +403,7 @@ class Handler(BaseHTTPRequestHandler):
                                      {"role": "assistant", "content": quick, "agent": "ceo", "model": str(spec)}]
                 save_conv(conv)
                 self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": "ceo",
-                                    "model": str(spec), "reason": "", "sources": [], "team": 1})
+                                    "model": str(spec), "reason": "", "sources": [], "team": 1, "router_model": str(spec)})
                 self._send("delta", {"text": quick})
                 return self._send("done", {"conversation_id": conv["id"]})
             agent_id, reason = ag.parse_route(reply)
@@ -434,7 +435,7 @@ class Handler(BaseHTTPRequestHandler):
         save_conv(conv)
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
                             "model": str(spec), "reason": reason, "sources": sources,
-                            "team": len(members) if use_team else 1,
+                            "team": len(members) if use_team else 1, "router_model": router_model,
                             "member_model": (override or tm.team_config(agent_id).get("member_model") or "") if use_team else ""})
         delta = lambda t: self._send("delta", {"text": t})  # noqa: E731
         effort = body.get("effort") or "medium"
