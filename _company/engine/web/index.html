@@ -207,6 +207,14 @@ button { cursor: pointer; }
 .wb-screen .sh { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
 .wb-screen .sh b { font-size: 14.5px; } .wb-screen .sh .tag { margin-left: auto; }
 .wb-screen .md { font-size: 13.5px; }
+/* 자기 개선 */
+.diff { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.55 ui-monospace, Consolas, monospace; overflow-x: auto; margin: 4px 0 8px; }
+.diff div { white-space: pre; padding: 0 10px; }
+.diff .add { background: color-mix(in srgb, var(--live) 16%, transparent); }
+.diff .del { background: var(--accent-soft); }
+.diff .hunk { color: var(--faint); }
+.imp-file > summary { cursor: pointer; font-size: 13px; padding: 3px 0; }
+.chk { font-size: 12.5px; margin: 2px 0; }
 /* 도구 요청 카드 / 도구 화면 */
 .treq { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); padding: 12px 14px; margin-top: 10px; box-shadow: var(--shadow); font-size: 13.5px; }
 .treq .th { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -349,6 +357,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
   <button class="side-btn nav" data-view="learn"><span class="ico">📚</span>공부 노트</button>
   <button class="side-btn nav" data-view="sim"><span class="ico">🎲</span>시뮬레이션</button>
   <button class="side-btn nav" data-view="tools"><span class="ico">🧰</span>도구 <span class="tb wait" id="tools-badge" hidden></span></button>
+  <button class="side-btn nav" data-view="improve"><span class="ico">🛠️</span>개선 <span class="tb wait" id="imp-badge" hidden></span></button>
   <div class="side-label">최근 대화</div>
   <div id="conv-list"></div>
   <div class="side-foot"><span>내 PC에서만 실행 중</span><button class="icon-btn" id="theme-btn" title="화면 테마">◐</button></div>
@@ -418,6 +427,19 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
     </div></div>
   </section>
 
+  <!-- 자기 개선 -->
+  <section class="view" id="view-improve">
+    <div class="scroll"><div class="column">
+      <div class="page-head">자기 개선</div>
+      <p class="page-sub">AI 팀의 지시문·설정·코드를 고쳐요. 개발 AI 가 <b>복사본</b>에서 고치고 자동 검사까지 한 뒤, 바뀐 내용을 보여 드려요. [적용]을 눌러야 실제로 바뀌고, 언제든 [되돌리기]로 원상복구돼요. 키·도구 허용 목록·도구 설치 코드는 고칠 수 없어요.</p>
+      <div class="card">
+        <textarea class="field" id="imp-input" rows="3" placeholder="예: 주식 팀 답 끝에 '이번 주 체크할 날짜'를 항상 넣게 해줘 / 작업 현황 창 글씨를 조금 키워줘"></textarea>
+        <div class="row" style="margin-top:8px"><div class="spacer"></div><button class="btn primary" id="imp-new">변경안 만들기</button></div>
+      </div>
+      <div id="imp-list"></div>
+    </div></div>
+  </section>
+
   <!-- 시뮬레이션 -->
   <section class="view" id="view-sim">
     <div class="scroll"><div class="column">
@@ -479,7 +501,7 @@ function inline(t) {
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
-const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN|TOOL_REQUEST):[^\]]*\]\]/g;
+const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN|TOOL_REQUEST|IMPROVE):[^\]]*\]\]/g;
 function md(text) {
   const lines = esc((text || "").replace(ACTION_TAG, "").trimEnd()).split("\n"); const out = []; let i = 0;
   const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
@@ -552,6 +574,7 @@ function show(view) {
   $("#sidebar").classList.remove("open");
   if (view === "learn") loadNotes();
   if (view === "tools") renderToolsPage();
+  if (view === "improve") renderImprovePage();
   $("#top-title").textContent = view === "chat" ? (state.conv?.title || "") : "";
 }
 document.querySelectorAll(".side-btn.nav").forEach(b => b.onclick = () => show(b.dataset.view));
@@ -574,7 +597,7 @@ async function init() {
   const ideas = ["삼성전자 지금 들어가도 될까?", "엔비디아 실적 발표 전에 사도 돼?", "100만원 어떻게 나눠서 투자할까?", "전세 보증금 못 돌려받으면 어떻게 해?", "프리랜서 계약서 볼 때 뭘 확인해?", "온라인 쇼핑몰로 1년 안에 월 300만원 가능할까?"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
-  newChat(); loadConvs(); show("chat"); loadTools();
+  newChat(); loadConvs(); show("chat"); loadTools(); refreshImpBadge();
 }
 
 // ── 대화 목록 ──
@@ -615,6 +638,7 @@ async function openConv(id) {
       (m.drafts || []).forEach((d, i) => a.team.done({ ...d, i: i + 1 }));
       if ((m.drafts || []).length > 1) a.team.judged();
       (m.steps || []).forEach(st => a.team.stepDone(st));
+      (m.improvements || []).forEach(async id => { const j = await api("/api/improve/" + id); if (!j.error) improveCard(j, a.el); });
       (m.tool_requests || []).forEach(id => { const r = (toolsCache?.requests || []).find(x => x.id === id); if (r) toolRequestCard(r, a.el); });
       if ((m.steps || []).length) a.team.judged();
     }
@@ -846,11 +870,11 @@ const work = {
     const it = this.items[id]; if (!it || it.end) return;
     it.end = Date.now(); it.mark = mark; if (patch) Object.assign(it, patch); this.render();
   },
-  finish(ok = true) {
+  finish(ok = true, autoHide = false) {
     if (!this.running) return;
     this.running = false; this.order.forEach(id => this.done(id, ok ? "✅" : "⏹️"));
     clearInterval(this.timer); this.render();
-    if (this.view !== "big") this.hideTimer = setTimeout(() => { this.order = []; this.show(); }, 4000);  // 크게 보기는 직접 닫을 때까지 유지
+    if (this.view !== "big" || autoHide) this.hideTimer = setTimeout(() => { this.order = []; this.show(); }, 4000);  // 크게 보기는 직접 닫을 때까지 유지
   },
   event(ev, d) {
     const V = { pass: "✅", approve: "✅", fix: "✏️", reject: "↩️" };
@@ -922,13 +946,14 @@ const work = {
       if (a.kind === "search") return "🔎 " + a.query;
       if (a.kind === "results") return "🌐 " + a.links.map(l => host(l.url)).slice(0, 3).join(", ");
       if (a.kind === "fetch") return "📄 " + host(a.url) + " 읽는 중";
-      if (a.kind === "read") return "🖼️ 화면 읽는 중";
+      if (a.kind === "read") return "📄 " + shortPath(a.path) + " 읽는 중";
+      if (a.kind === "edit") return "✏️ " + shortPath(a.path) + " 고치는 중";
     }
     if (!it.end && it.text) return (this.modeOf(it) === "review" ? "🧐 " : "✍️ ") + it.text.length.toLocaleString() + "자 작성 중";
     return null;
   },
   readsHTML(it) {
-    const names = (it.reads || []).map(id => id === "question" ? "💬 사장님 질문" : (this.items[id] ? `${this.items[id].label} · ${this.items[id]._ai || ""}` : null)).filter(Boolean);
+    const names = (it.reads || []).map(id => id === "question" ? "💬 사장님 질문" : id === "request" ? "📝 개선 요청" : (this.items[id] ? `${this.items[id].label} · ${this.items[id]._ai || ""}` : null)).filter(Boolean);
     return names.length ? `<div class="wb-reads"><span class="muted">📥 읽는 자료</span>${names.map(n => `<span class="rd">${esc(n)}</span>`).join("")}</div>` : "";
   },
   researchHTML(it) {
@@ -937,7 +962,8 @@ const work = {
       if (a.kind === "search") return `<div class="ra"><span class="k">🔎</span><span class="v">검색: <b>${esc(a.query)}</b></span></div>`;
       if (a.kind === "results") return `<div class="links">${a.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc(l.title)}">${esc(host(l.url))}</a>`).join("")}</div>`;
       if (a.kind === "fetch") return `<div class="ra"><span class="k">📄</span><span class="v">읽는 중: ${esc(a.url)}</span></div>`;
-      if (a.kind === "read") return `<div class="ra"><span class="k">🖼️</span><span class="v">공유 화면 읽는 중 (${esc(a.path)})</span></div>`;
+      if (a.kind === "read") return `<div class="ra"><span class="k">📄</span><span class="v">읽는 중: ${esc(shortPath(a.path))}</span></div>`;
+      if (a.kind === "edit") return `<div class="ra"><span class="k">✏️</span><span class="v">고치는 중: ${esc(shortPath(a.path))}</span></div>`;
       if (a.kind === "tool_error") return `<div class="ra"><span class="k">⚠️</span><span class="v">${esc(a.text)}</span></div>`;
       return `<div class="ra"><span class="k">🛠️</span><span class="v">${esc(a.name || a.kind)}</span></div>`;
     }).join("") + `</div>`;
@@ -1064,6 +1090,7 @@ async function send() {
       status: (d) => ai.status(d.text),
       replace: (d) => { raw = d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); },
       tool_request: (d) => { toolRequestCard(d, ai.el); loadTools(); scrollDown(); },
+      improve_request: (d) => { improveCard(d, ai.el); refreshImpBadge(); scrollDown(); },
       market: (d) => ai.market(d.items || []),
       draft_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
       draft_done: (d) => { ai.team.done(d); },
@@ -1151,6 +1178,73 @@ async function renderToolsPage() {
   data.requests.forEach(r => { const t = data.tools.find(x => x.id === r.tool_id) || {};
     toolRequestCard({ ...r, desc: t.desc || "" }, $("#tools-reqs")); });
 }
+
+// ── 자기 개선 ──
+function shortPath(x) { return String(x || "파일").replace(/\\/g, "/").replace(/^.*\/(_cache\/improve\/[^/]+|_company)\//, ""); }
+function diffHTML(d) {
+  return `<div class="diff">${d.split("\n").map(l => `<div class="${l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : l.startsWith("@@") ? "hunk" : ""}">${esc(l) || " "}</div>`).join("")}</div>`;
+}
+function impStatus(st) {
+  return { proposed: ["제안됨", "wait"], working: ["만드는 중", "wait"], ready: ["검사 통과 · 적용 대기", "wait"], blocked: ["검사 실패", ""],
+           failed: ["실패", ""], applied: ["적용됨", "ok"], rolled_back: ["되돌림", ""], discarded: ["버림", ""], conflict: ["충돌 · 다시 만들기 필요", ""] }[st] || [st, ""];
+}
+async function refreshImpBadge() {
+  const d = await api("/api/improve"); const n = (d.jobs || []).filter(j => ["proposed", "ready"].includes(j.status)).length;
+  $("#imp-badge").hidden = !n; $("#imp-badge").textContent = n; return d;
+}
+function improveCard(job, container) {
+  const el = document.createElement("div"); el.className = "treq";
+  const draw = async (j, extraHTML = "") => {
+    let full = j;
+    if (["ready", "blocked", "applied", "rolled_back"].includes(j.status) && !j.files?.[0]?.diff) full = await api("/api/improve/" + j.id);
+    const [label, cls] = impStatus(full.status);
+    const files = (full.files || []).map(f => `<details class="imp-file"${(full.files || []).length <= 2 ? " open" : ""}><summary>${f.protected ? "🔒 " : ""}<b>${esc(f.path)}</b> <span class="muted">${{ added: "새 파일", deleted: "삭제", modified: "수정" }[f.status] || ""} · +${f.plus} −${f.minus}</span></summary>${f.diff ? diffHTML(f.diff) : ""}</details>`).join("");
+    const checks = (full.checks || []).map(c => `<div class="chk">${c.ok ? "✅" : "❌"} ${esc(c.name)} — <span class="muted">${esc(c.detail || "")}</span></div>`).join("");
+    el.innerHTML = `<div class="th">🛠️ <b>${full.team && full.team !== "사장님" ? esc(teamName(full.team)) + "이 개선을 제안해요" : "개선 요청"}</b><span class="tb ${cls}">${esc(label)}</span></div>
+      <div class="why">${esc(full.request)}${full.why ? `<br>이유: ${esc(full.why)}` : ""}</div>
+      ${full.summary ? `<div class="md" style="font-size:13.5px;margin:6px 0">${md(full.summary)}</div>` : ""}
+      ${checks ? `<div style="margin:6px 0">${checks}</div>` : ""}${files}
+      <div class="acts">
+        ${["proposed", "failed", "blocked", "conflict", "discarded"].includes(full.status) ? `<button class="btn primary" data-a="run">${full.status === "proposed" ? "변경안 만들기" : "다시 만들기"}</button>` : ""}
+        ${full.status === "ready" ? `<button class="btn primary" data-a="apply">적용</button>` : ""}
+        ${["proposed", "ready", "blocked", "conflict"].includes(full.status) ? `<button class="btn" data-a="discard">버리기</button>` : ""}
+        ${full.status === "applied" ? `<button class="btn" data-a="rollback">되돌리기</button>${full.needs_restart ? '<span class="muted">코드가 바뀌었어요. \'AI 시작.bat\' 을 다시 켜야 적용돼요</span>' : ""}` : ""}
+      </div>${extraHTML ? `<div class="res">${extraHTML}</div>` : ""}`;
+    el.querySelector('[data-a="run"]')?.addEventListener("click", () => runImprove(full, draw));
+    for (const a of ["apply", "rollback", "discard"]) el.querySelector(`[data-a="${a}"]`)?.addEventListener("click", async (e) => {
+      e.target.disabled = true; const res = await api("/api/improve/" + a, { id: full.id });
+      const fresh = await api("/api/improve/" + full.id);
+      draw(fresh.error ? { ...full, status: a === "discard" ? "discarded" : full.status } : fresh, (res.ok === false ? "⚠️ " : "✅ ") + esc(res.message || (res.ok ? "완료" : "실패")));
+      refreshImpBadge();
+    });
+  };
+  draw(job); container.appendChild(el); return el;
+}
+async function runImprove(job, draw) {
+  draw({ ...job, status: "working" });
+  work.start();
+  let result = null;
+  try {
+    await stream("/api/improve/run", { id: job.id, model: $("#model-select").value }, {
+      "*": (ev, d) => { if (ev !== "done") work.event(ev, d); },
+      improve_result: (d) => { result = d; },
+      error: (e) => { result = { ...job, status: "failed", summary: "⚠️ " + e.message }; },
+    });
+  } catch (e) { result = { ...job, status: "failed", summary: "⚠️ " + e.message }; }
+  work.finish(!!result && result.status !== "failed", true);
+  draw(result || { ...job, status: "failed" }); refreshImpBadge();
+}
+async function renderImprovePage() {
+  const d = await refreshImpBadge();
+  $("#imp-list").innerHTML = (d.jobs || []).length ? "" : `<p class="muted">아직 개선 기록이 없어요.</p>`;
+  (d.jobs || []).forEach(j => improveCard(j, $("#imp-list")));
+}
+$("#imp-new").onclick = async () => {
+  const t = $("#imp-input").value.trim(); if (!t) return $("#imp-input").focus();
+  const job = await api("/api/improve/new", { request: t }); if (job.error) return alert(job.error);
+  $("#imp-input").value = ""; const card = improveCard(job, document.createElement("div"));
+  $("#imp-list").prepend(card); card.querySelector('[data-a="run"]')?.click();
+};
 
 // ── 공부 노트 ──
 async function loadNotes() {

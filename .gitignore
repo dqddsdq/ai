@@ -18,3 +18,4 @@ _company/.env
 # 캐시·업로드 이미지 (토큰, 화면 캡처)
 _company/_cache/
 _company/_shared/tool_requests.json
+_company/_shared/improvements.json

@@ -438,6 +438,10 @@ def _read_stream_json(stdout, on_text, on_activity):
                     on_activity({"kind": "fetch", "url": inp.get("url", "")})
                 elif name == "Read":
                     on_activity({"kind": "read", "path": os.path.basename(str(inp.get("file_path", "")))})
+                elif name in ("Edit", "Write", "MultiEdit"):
+                    on_activity({"kind": "edit", "path": str(inp.get("file_path", "")).split("_cache")[-1][-80:]})
+                elif name in ("Grep", "Glob"):
+                    on_activity({"kind": "tool", "name": f"{name} {inp.get('pattern', '')}"[:80]})
                 else:
                     on_activity({"kind": "tool", "name": name})
         elif t == "user" and on_activity:

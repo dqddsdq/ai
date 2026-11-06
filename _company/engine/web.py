@@ -29,6 +29,7 @@ from . import providers as pv
 from . import team as tm
 from . import tools as tl
 from . import research as rs
+from . import improve as im
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
 UPLOAD_DIR = ag.COMPANY_DIR / "_cache" / "uploads"   # git 에 안 올라감
@@ -259,6 +260,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(_wiki_list())
         if path == "/api/tools":
             return self._json(tl.overview())
+        if path == "/api/improve":
+            return self._json({"jobs": im.history()[:50]})
+        m = re.match(r"^/api/improve/([\w\-]+)$", path)
+        if m:
+            job = im.get(m.group(1))
+            if not job:
+                return self._json({"error": "없는 개선 요청"}, 404)
+            files = im.changes(job["id"]) if (im.WORK_ROOT / job["id"]).exists() else []
+            return self._json({**job, "files": files})
         m = re.match(r"^/api/wiki/(.+)$", path)
         if m:
             return self._wiki_file(unquote(m.group(1)))
@@ -287,7 +297,8 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
         except json.JSONDecodeError:
             return self._json({"error": "JSON 형식 오류"}, 400)
-        routes = {"/api/chat": self._chat, "/api/learn": self._learn, "/api/simulate": self._simulate}
+        routes = {"/api/chat": self._chat, "/api/learn": self._learn, "/api/simulate": self._simulate,
+                  "/api/improve/run": self._improve_run}
         if path in routes:
             self._sse_start()
             try:
@@ -300,6 +311,14 @@ class Handler(BaseHTTPRequestHandler):
                 with contextlib.suppress(Exception):
                     self._send("error", {"message": str(e)})
             return
+        if path == "/api/improve/new":
+            req = str(body.get("request", "")).strip()
+            return self._json(im.create(req, "", "사장님") if req else {"error": "무엇을 바꿀지 적어 주세요"})
+        if path in ("/api/improve/apply", "/api/improve/rollback", "/api/improve/discard"):
+            fn = {"apply": im.apply, "rollback": im.rollback, "discard": im.discard}[path.rsplit("/", 1)[1]]
+            res = fn(str(body.get("id", "")))
+            log(f"🛠️ 개선 {path.rsplit('/', 1)[1]}: {res.get('message', res)}")
+            return self._json(res)
         if path == "/api/tools/approve":
             return self._json(tl.approve(str(body.get("id", ""))))
         if path == "/api/tools/reject":
@@ -435,6 +454,7 @@ class Handler(BaseHTTPRequestHandler):
         tool_guide = tl.guide_for_agents(agent_id)
         if tool_guide:
             extra += "\n\n" + tool_guide
+        extra += "\n\n" + im.IMPROVE_GUIDE
         refs, sources = kn.context_and_sources(text) if body.get("knowledge", True) else ("", [])
         if refs:
             extra += "\n\n" + refs
@@ -512,6 +532,11 @@ class Handler(BaseHTTPRequestHandler):
                                  "drafts": [{"member": d.member, "view": d.view, "text": d.text, "error": d.error}
                                             for d in drafts],
                                  "steps": [st.as_dict() for st in steps]})
+        for what, why in im.find_proposals(reply):
+            job = im.create(what, why, agent_id)
+            conv["messages"][-1].setdefault("improvements", []).append(job["id"])
+            log(f"  🛠️ 개선 제안: {what[:40]}")
+            self._send("improve_request", job)
         reqs = [tl.add_request(tool, why, agent_id) for tool, why in tl.find_requests(reply)]
         if reqs:
             conv["messages"][-1]["tool_requests"] = [r["id"] for r in reqs]
@@ -558,6 +583,27 @@ class Handler(BaseHTTPRequestHandler):
         conv["messages"].append({"role": "assistant", "kind": "tool", "tool": f"{label}: {arg}",
                                  "content": content, "agent": label, "footer": footer})
         save_conv(conv)
+
+    # 자기 개선 실행 (복사본에서 고치고 검사 → 결과만 보여줌, 적용은 따로)
+    def _improve_run(self, body: dict):
+        job = im.get(str(body.get("id", "")))
+        if not job or job["status"] not in ("proposed", "failed", "blocked", "discarded", "conflict"):
+            return self._send("error", {"message": "변경안을 만들 수 있는 상태가 아니에요"})
+        step = tm.Step("improve", "🛠️ 코드·지시문 개선", "dev", "개발 AI · 복사본에서 작업", reads=["request"], kind="code",
+                       model=body.get("model") or "claudecode")
+        self._send("step_start", step.as_dict())
+        log(f"🛠️ 개선 변경안 만드는 중: {job['request'][:40]}")
+        try:
+            res = im.run(job["id"], on_text=lambda t: self._send("step_text", {"id": "improve", "text": t}),
+                         on_activity=lambda a: self._send("step_activity", {"id": "improve", **a}), model=body.get("model"))
+        except pv.ProviderError as e:
+            step.error = str(e)
+            self._send("step_done", step.as_dict())
+            return self._send("error", {"message": str(e)})
+        step.text, step.verdict = res.get("summary", ""), ("pass" if res["ok"] else "fix")
+        self._send("step_done", step.as_dict())
+        self._send("improve_result", res)
+        self._send("done", {})
 
     # 공부
     def _learn(self, body: dict):
