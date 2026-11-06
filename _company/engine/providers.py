@@ -109,6 +109,12 @@ class ModelSpec:
         return f"{self.provider}:{self.model}"
 
 
+LOGIN_HELP = ("이 PC 에 Claude Code 가 없어요. 설치·로그인은 채팅창이 아니라 PowerShell(콘솔)에서 해요:\n"
+              "1) 설치: irm https://claude.ai/install.ps1 | iex\n"
+              "2) 실행: & \"$HOME\\.local\\bin\\claude.exe\"  → Esc → /login → 브라우저에서 승인\n"
+              "3) 이 창(AI 시작.bat)을 닫고 다시 켜기")
+
+
 def claude_cli() -> str | None:
     """claude 명령 위치. PATH 에 없어도 흔한 설치 위치를 직접 찾아봅니다 (윈도우 설치 직후 PATH 미등록 대비)."""
     found = os.getenv("CLAUDE_CLI") or shutil.which("claude")
@@ -326,7 +332,7 @@ def _with_images_claude(messages: list[Message], images: list[str]) -> list[Mess
 def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), timeout=None, on_activity=None):
     exe = claude_cli()
     if not exe:
-        raise ProviderError("Claude Code(claude 명령)를 못 찾았어요. 설치 후 `claude` 로 한 번 로그인하세요.")
+        raise ProviderError(LOGIN_HELP)
     # Windows 의 claude.cmd 는 명령줄 길이 제한(8191자)이 있어서 긴 내용은 전부 stdin 으로 보냅니다.
     history = messages[:-1]
     parts = ["<instructions>", system, "</instructions>"]

@@ -348,6 +348,10 @@ class Handler(BaseHTTPRequestHandler):
                 routes[path](body)
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 log("  (사용자가 중지했거나 연결이 끊김)")
+            except pv.ProviderError as e:  # 설치·로그인·한도 같은 안내성 오류는 긴 오류 내역 없이
+                log(f"  ⚠️ {e}")
+                with contextlib.suppress(Exception):
+                    self._send("error", {"message": str(e)})
             except Exception as e:
                 log(f"  ⚠️ 오류: {e}")
                 traceback.print_exc()
@@ -467,6 +471,10 @@ class Handler(BaseHTTPRequestHandler):
             text = "첨부한 화면을 분석해 줘."
         if not text:
             return self._send("error", {"message": "메시지가 비어 있어요"})
+        if text.lower() in ("/login", "/logout", "login", "로그인"):  # 로그인은 채팅이 아니라 콘솔에서
+            return self._send("error", {"message": ("로그인은 여기 채팅이 아니라 PowerShell(콘솔)에서 해요. "
+                                                    + ("Claude Code 는 설치돼 있어요: PowerShell 에서 claude 실행 → /login → 브라우저 승인 → 이 창을 다시 켜기"
+                                                       if pv.claude_cli() else pv.LOGIN_HELP))})
         cid = body.get("conversation_id")
         conv = load_conv(cid) if cid else new_conv(text)
         requested = body.get("agent") or "auto"
