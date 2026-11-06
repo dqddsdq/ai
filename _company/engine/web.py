@@ -29,6 +29,7 @@ from . import providers as pv
 from . import team as tm
 from . import tools as tl
 from . import research as rs
+from . import dart
 from . import improve as im
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
@@ -390,15 +391,30 @@ class Handler(BaseHTTPRequestHandler):
                        if re.fullmatch(r"\d{6}(\.(KS|KQ))?|[A-Za-z][A-Za-z.\-]{0,9}", t.strip())][:5]
         except pv.ProviderError:
             tickers = []
+        use_dart = dart.enabled()
+        if use_dart:  # 글에 나온 상장사 이름을 DART 공식 목록과 맞춰 빠진 종목을 보충 (AI 가 코드를 못 짚었을 때 대비)
+            try:
+                have = {t.split(".")[0] for t in tickers}
+                for code in dart.find_in_text(text):
+                    if code not in have and len(tickers) < 5:
+                        tickers.append(code + dart.market_suffix(dart.lookup(code)[0]))
+            except dart.DartError as e:
+                log(f"DART 회사 목록 실패: {e}")
         if not tickers:
             self._send("status", {"text": ""})
             return ""
-        self._send("status", {"text": "📈 " + ", ".join(tickers) + " 시세·차트 지표 가져오는 중..."})
-        with ThreadPoolExecutor(max_workers=len(tickers)) as pool:
-            snaps = list(pool.map(mk.snapshot, tickers))
+        kr = [t.split(".")[0] for t in tickers if re.fullmatch(r"\d{6}(\.(KS|KQ))?", t)] if use_dart else []
+        self._send("status", {"text": "📈 " + ", ".join(tickers) + " 시세·차트 지표" + (" · DART 공시" if kr else "") + " 가져오는 중..."})
+        with ThreadPoolExecutor(max_workers=len(tickers) + len(kr)) as pool:
+            snap_jobs = [pool.submit(mk.snapshot, t) for t in tickers]
+            dart_jobs = [pool.submit(dart.report, c) for c in kr]
+            snaps = [j.result() for j in snap_jobs]
+            reports = [j.result() for j in dart_jobs]
         self._send("market", {"items": [s.brief() for s in snaps]})
+        if reports:
+            self._send("dart", {"items": [dart.brief(r) for r in reports]})
         self._send("status", {"text": ""})
-        return mk.format_for_prompt(snaps)
+        return "\n\n".join(x for x in (mk.format_for_prompt(snaps), dart.format_for_prompt(reports)) if x)
 
     # 채팅
     def _chat(self, body: dict):

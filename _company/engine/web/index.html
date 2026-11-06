@@ -886,6 +886,9 @@ const work = {
       case "market": this.done("status"); (d.items || []).forEach((m, i) => { const bad = m.error && m.price == null;
         this.add("mk" + i, `📈 ${m.name || m.ticker}`, bad ? "데이터 못 가져옴" : `${m.price != null ? Number(m.price).toLocaleString() : "-"} · ${(m.source || "").replace(/\s*\(.*\)/, "")}`, "data");
         this.done("mk" + i, bad ? "⚠️" : "✅", { text: bad ? m.error : `**${m.name || m.ticker}** ${m.price ?? "-"} (${m.change_pct ?? "-"}%)\n\n출처: ${m.source} · ${m.asof}` }); }); break;
+      case "dart": (d.items || []).forEach((r, i) => { this.add("dart" + i, `📑 ${r.name || r.code} 공시·실적`,
+          r.error ? "DART 못 가져옴" : `DART · ${r.prelim ? "잠정실적 " + r.prelim.slice(5) + " · " : ""}${r.report || "공시"}${r.op ? " · 영업이익 " + r.op + (r.op_yoy != null ? ` (${r.op_yoy > 0 ? "+" : ""}${r.op_yoy}%)` : "") : ""}`, "data");
+        this.done("dart" + i, r.error ? "⚠️" : "✅", { text: r.text }); }); break;
       case "draft_start": this.add("d" + d.i, `✍️ 팀원${d.i}`, d.view, this.lead); break;
       case "draft_done": this.done("d" + d.i, d.error ? "⚠️" : "✅", { text: d.error || d.text }); break;
       case "judge_start": this.add("judge", "🏆 답변 비교·심사", "", this.lead); break;
