@@ -15,6 +15,9 @@
 
 ### 팀 검토 과정 (분석·판단 질문일 때)
 ```
+⓪ 🌐 공용 자료수집 3명 (리서치 팀, 동시에): 공식 출처 / 최신 뉴스·업계 / 데이터·반대 근거
+   → 홈페이지·공식 자료에서 찾은 '자료 묶음'(출처·날짜·핵심 내용·신뢰도)을 아래 모든 단계에 전달
+   → 웹 검색이 없는 팀(CEO·포트폴리오·창업자금·개발·글쓰기)도 이 자료로 일해요
 ① 초안 1명 (Claude)
 ② 중간 검토 최대 6명
    - Claude 3명 (항상): 🔍 근거·출처 / 🧮 숫자·계산 / 😈 반대·리스크
@@ -44,6 +47,7 @@ FREELLM_MODELS=gemini-2.5-flash,llama-3.3-70b-versatile,auto   ← FreeLLMAPI �
 - `max_parallel`: 동시에 돌리는 최대 인원 (사용량 아끼려면 1~2)
 - `team_mode`: auto / on / off
 - `team_style`: review (위 검토 과정) / compare (팀원이 각자 답 → 비교해서 최고 답)
+- `shared_research`: 공용 자료수집을 돌릴지 — auto(분석 질문만, 기본) / always / off
 - `max_review_rounds`: 반려 시 '수정 → 재검토' 최대 반복 횟수 (기본 3)
 - `reject_threshold`: 이 인원 이상 반려해야 재수정 (기본 2)
 - `reviewers` / `approvers`: 검토·승인 자리. `models` 는 앞에서부터 쓸 수 있는 첫 AI, `optional: true` 면 쓸 수 있을 때만 참여

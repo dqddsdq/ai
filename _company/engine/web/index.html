@@ -909,11 +909,12 @@ const work = {
     const acts = it.acts || [];
     if (!it.end && acts.length && (it.text || "").length < 40) return "research";
     if (it.kind === "review" || it.kind === "approve") return "review";
+    if (it.kind === "collect") return "collect";
     return "write";
   },
   modeLabel(mode, it) {
-    if (it.end) return { research: "🔎 자료 조사 완료", write: "✍️ 작성 완료", review: "🧐 검사 완료", code: "💻 코드 완료", data: "📊 데이터", prep: "⚙️ 준비 완료" }[mode];
-    return { research: "🔎 자료 조사 중", write: "✍️ 작성 중", review: "🧐 검사 중", code: "💻 코딩 중", data: "📊 데이터", prep: "⚙️ 준비 중" }[mode];
+    if (it.end) return { research: "🔎 자료 조사 완료", collect: "📦 자료 수집 완료", write: "✍️ 작성 완료", review: "🧐 검사 완료", code: "💻 코드 완료", data: "📊 데이터", prep: "⚙️ 준비 완료" }[mode];
+    return { research: "🔎 자료 조사 중", collect: "📦 자료 정리 중", write: "✍️ 작성 중", review: "🧐 검사 중", code: "💻 코딩 중", data: "📊 데이터", prep: "⚙️ 준비 중" }[mode];
   },
   liveSub(it) {   // 가운데 작업 줄에 보여줄 '지금 하는 일'
     const a = (it.acts || []).slice(-1)[0];

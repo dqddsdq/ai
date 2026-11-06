@@ -266,6 +266,8 @@ def run_review(
     images: list[str] | None = None,
     on_step_text: Callable[[Step, str], None] | None = None,
     on_step_activity: Callable[[Step, dict], None] | None = None,
+    context_ids: list[str] | None = None,
+    header_note: str = "",
 ) -> tuple[str, list[Step], str]:
     """(최종 답, 단계 기록, 수정 모델). on_step_text/on_step_activity: 각 AI 가 쓰는 글·검색을 실시간으로."""
     members = ag.team_members(team)
@@ -311,7 +313,7 @@ def run_review(
     steps: list[Step] = []
 
     # ① 초안
-    draft = Step("draft", "✍️ 초안", pick(0), ag.member_view(pick(0)), reads=["question"], kind="write")
+    draft = Step("draft", "✍️ 초안", pick(0), ag.member_view(pick(0)), reads=["question", *(context_ids or [])], kind="write")
     run_parallel([(draft, system_for(pick(0)), history, member_spec, web)])
     steps.append(draft)
     if not draft.text.strip():
@@ -337,7 +339,7 @@ def run_review(
             icon, rname = ROLE_NAMES.get(role, ("🔍", role))
             member = pick(i)
             st = Step(f"{tag}_r{i + 1}", f"{icon} {'재검토 ' + tag + ' · ' if must_fix else '검토 · '}{rname}", member, label,
-                      reads=[source, *extra_reads], kind="review")
+                      reads=[source, *extra_reads, *((context_ids or []) if role == "evidence" else [])], kind="review")
             use_web = web and role == "evidence" and spec.provider == "claudecode"
             jobs.append((st, system_for(member, prompts.get(role, VERIFY_LOGIC)), base + [{"role": "user", "content": content}],
                          spec, use_web, "verify"))
@@ -420,7 +422,7 @@ def run_review(
     header = (f"🏆 검토 완료 · 검토 {sum(v.verdict == 'pass' for v in counted)}/{len(counted)} 통과"
               + (f" (다른 AI {others}명 참여)" if others else " (Claude만)")
               + (f" · 지적 {len(fixes)}건 반영" if fixes else "")
-              + f" · 최종 승인 {ok}/{n}")
+              + f" · 최종 승인 {ok}/{n}" + header_note)
     if minor_rejects:
         header += f" (반려 {len(minor_rejects)}건은 기준 {threshold}명 미만이라 참고만)"
     if rejects and not unresolved:

@@ -28,6 +28,7 @@ from . import learn as ln
 from . import providers as pv
 from . import team as tm
 from . import tools as tl
+from . import research as rs
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
 UPLOAD_DIR = ag.COMPANY_DIR / "_cache" / "uploads"   # git 에 안 올라감
@@ -460,15 +461,33 @@ class Handler(BaseHTTPRequestHandler):
             extra += "\n\n" + market
         drafts, steps = [], []
         style = tm.settings().get("team_style", "review")
+        # 공용 자료수집: 리서치 팀 3명이 먼저 홈페이지·공식 자료를 찾아 모든 팀원에게 넘겨줌
+        research_ids, header_note = [], ""
+        if rs.wanted(use_team) and agent_id != "researcher":
+            log("  🌐 공용 자료수집 3명 조사 중...")
+            pack, rsteps = rs.run_research(
+                text, agent_id, override,
+                on_step_start=lambda st: self._send("step_start", st.as_dict()),
+                on_step_done=lambda st: self._send("step_done", st.as_dict()),
+                on_step_text=lambda st, t: self._send("step_text", {"id": st.id, "text": t}),
+                on_step_activity=lambda st, a: self._send("step_activity", {"id": st.id, **a}))
+            steps += rsteps
+            if pack:
+                extra += "\n\n" + pack
+                research_ids = [st.id for st in rsteps if st.text.strip()]
+                header_note = f" · 공용 자료 {rs.count_items(rsteps)}건"
+                log(f"  🌐 자료 {rs.count_items(rsteps)}건 수집")
         if use_team and style == "review":
-            reply, steps, _ = tm.run_review(
+            reply, review_steps, _ = tm.run_review(
                 agent_id, history, extra, override, effort,
                 on_step_start=lambda st: self._send("step_start", st.as_dict()),
                 on_step_done=lambda st: self._send("step_done", st.as_dict()),
                 on_text=delta, images=images,
                 on_step_text=lambda st, t: self._send("step_text", {"id": st.id, "text": t}),
                 on_step_activity=lambda st, a: self._send("step_activity", {"id": st.id, **a}),
+                context_ids=research_ids, header_note=header_note,
             )
+            steps += review_steps
         elif use_team:
             reply, drafts, _ = tm.run_team(
                 agent_id, history, extra, override, effort,
