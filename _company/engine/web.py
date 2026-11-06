@@ -20,6 +20,7 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from hmac import compare_digest as secrets_eq
 from urllib.parse import unquote, urlparse
 
 from . import agents as ag
@@ -215,13 +216,50 @@ class Handler(BaseHTTPRequestHandler):
         """다른 웹사이트가 이 서버로 요청을 보내지 못하도록:
         POST 는 커스텀 헤더(X-Company-AI)가 있어야 함 → 브라우저가 교차 출처 요청을 막음."""
         host = (self.headers.get("Host") or "").split(":")[0]
-        if host not in ("127.0.0.1", "localhost"):
-            self._json({"error": "로컬 접속만 허용"}, 403)
-            return False
+        client = self.client_address[0]
+        local = host in ("127.0.0.1", "localhost") and client in ("127.0.0.1", "::1")
+        if not local:
+            # 폰 접속: 켜져 있을 때만, 주소창은 이 PC 의 IP 로만 (다른 도메인 위장 차단), PIN 등록한 기기만
+            if not PHONE["on"] or host != PHONE["url"].split("//")[1].split(":")[0]:
+                self._json({"error": "로컬 접속만 허용"}, 403)
+                return False
+            path = urlparse(self.path).path
+            if self.command == "POST" and path == "/api/pin" and self.headers.get("X-Company-AI") == "1":
+                self._pin_login()
+                return False
+            cookies = dict(c.strip().split("=", 1) for c in (self.headers.get("Cookie") or "").split(";") if "=" in c)
+            if not secrets_eq(cookies.get("cai", ""), PHONE["token"]):
+                if self.command == "GET" and path in ("/", "/index.html"):
+                    body = PIN_PAGE.encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers(); self.wfile.write(body)
+                else:
+                    self._json({"error": "PIN 이 필요해요"}, 401)
+                return False
         if self.command == "POST" and self.headers.get("X-Company-AI") != "1":
             self._json({"error": "잘못된 요청"}, 403)
             return False
         return True
+
+    def _pin_login(self):
+        ip = self.client_address[0]
+        now = time.time()
+        fails = [x for x in _PIN_FAILS.get(ip, []) if now - x < 600]
+        if len(fails) >= 8:
+            return self._json({"error": "너무 많이 틀렸어요. 10분 뒤에 다시 해 주세요"}, 429)
+        if not secrets_eq(str(self._body().get("pin", "")), PHONE["pin"]):
+            _PIN_FAILS[ip] = fails + [now]
+            return self._json({"error": f"PIN 이 틀렸어요 ({len(fails) + 1}/8)"}, 403)
+        _PIN_FAILS.pop(ip, None)
+        log(f"📱 폰 접속 등록: {ip}")
+        body = b'{"ok": true}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Set-Cookie", f"cai={PHONE['token']}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Strict")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers(); self.wfile.write(body)
 
     # GET
     def do_GET(self):
@@ -230,6 +268,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/" or path == "/index.html":
             return self._static("index.html", "text/html; charset=utf-8")
+        if path == "/api/phone":
+            if self.client_address[0] not in ("127.0.0.1", "::1"):
+                return self._json({"on": PHONE["on"], "remote": True})
+            return self._json({"on": PHONE["on"], "url": PHONE["url"], "pin": PHONE["pin"]})
         if path == "/api/meta":
             models = ag.load_models()
             return self._json({
@@ -671,10 +713,49 @@ def _wiki_list() -> list[dict]:
     return out
 
 
-def serve(port: int = 8765, open_browser: bool = True) -> None:
-    url = f"http://127.0.0.1:{port}"
+# ── 폰 접속 (같은 와이파이) ──
+PHONE = {"on": False, "url": "", "pin": "", "token": ""}
+_PIN_FAILS: dict[str, list[float]] = {}
+PIN_PAGE = """<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>1인 기업 AI</title><style>body{font-family:system-ui,sans-serif;background:#f6f4ee;color:#222;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
+@media (prefers-color-scheme:dark){body{background:#1d1c1a;color:#eee}input{background:#2a2926;color:#eee}}
+.b{width:min(320px,90vw);text-align:center}input{font-size:28px;letter-spacing:8px;text-align:center;width:100%;padding:12px;border:1px solid #bbb;border-radius:12px;box-sizing:border-box}
+button{margin-top:12px;width:100%;padding:14px;font-size:17px;border:0;border-radius:12px;background:#c96442;color:#fff}p{color:#888;font-size:14px}</style></head>
+<body><div class="b"><h2>📱 1인 기업 AI</h2><p>PC 화면 왼쪽 아래 <b>📱 폰으로 열기</b>에 나온 숫자 6자리</p>
+<input id="pin" inputmode="numeric" maxlength="6" autofocus><button id="go">들어가기</button><p id="msg"></p></div>
+<script>const go=async()=>{const r=await fetch("/api/pin",{method:"POST",headers:{"Content-Type":"application/json","X-Company-AI":"1"},body:JSON.stringify({pin:document.getElementById("pin").value.trim()})});
+const d=await r.json();if(d.ok)location.href="/";else document.getElementById("msg").textContent=d.error||"틀렸어요";};
+document.getElementById("go").onclick=go;document.getElementById("pin").onkeydown=e=>{if(e.key==="Enter")go()};</script></body></html>"""
+
+
+def _lan_ip() -> str:
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        s.connect(("192.168.0.1", 9))  # 실제로 보내지 않음 — 내 PC 의 와이파이 주소만 알아냄
+        return s.getsockname()[0]
+    except OSError:
+        return ""
+    finally:
+        s.close()
+
+
+def _phone_secret(name: str, make) -> str:
+    """PIN·토큰은 _cache 에 보관 → 다시 켜도 폰을 또 등록할 필요 없음"""
+    f = ag.COMPANY_DIR / "_cache" / name
+    if f.is_file() and f.read_text().strip():
+        return f.read_text().strip()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    v = make(); f.write_text(v)
+    return v
+
+
+def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> None:
+    import secrets
+    url = f"http://127.0.0.1:{port}"
+    ip = _lan_ip() if phone else ""
+    try:
+        server = ThreadingHTTPServer(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
     except OSError:  # 이미 켜져 있음 (AI 시작.bat 두 번 실행 등)
         print(f"이미 다른 창에서 켜져 있어요. 브라우저로 {url} 을 엽니다.")
         if open_browser:
@@ -682,6 +763,14 @@ def serve(port: int = 8765, open_browser: bool = True) -> None:
         return
     server.daemon_threads = True
     print(f"🌐 {url} 에서 열렸어요. 끄려면 이 창에서 Ctrl+C")
+    if ip:
+        PHONE.update(on=True, url=f"http://{ip}:{port}",
+                     pin=_phone_secret("phone_pin.txt", lambda: f"{secrets.randbelow(10**6):06d}"),
+                     token=_phone_secret("phone_token.txt", lambda: secrets.token_hex(24)))
+        print(f"📱 폰(같은 와이파이)에서: {PHONE['url']}  ·  PIN {PHONE['pin']}")
+        print("   처음 켤 때 윈도우 방화벽 창이 뜨면 '개인 네트워크' 허용을 눌러 주세요.")
+    elif phone:
+        print("📱 와이파이 주소를 못 찾아서 폰 접속은 꺼 두었어요 (PC 에서만 사용 가능)")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:

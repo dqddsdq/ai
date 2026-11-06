@@ -259,7 +259,7 @@ def cmd_doctor(args) -> None:
 def cmd_web(args) -> None:
     from . import web
 
-    web.serve(port=args.port, open_browser=not args.no_browser)
+    web.serve(port=args.port, open_browser=not args.no_browser, phone=args.phone)
 
 
 def cmd_set_model(args) -> None:
@@ -314,6 +314,7 @@ def main(argv=None) -> None:
     s = sub.add_parser("web", help="브라우저 화면 열기 (Claude 앱 스타일)")
     s.add_argument("--port", type=int, default=8765)
     s.add_argument("--no-browser", action="store_true")
+    s.add_argument("--phone", action="store_true", help="같은 와이파이의 폰에서도 접속 (PIN 필요)")
     s.set_defaults(func=cmd_web)
     s = sub.add_parser("models", help="AI 제공자 상태")
     s.set_defaults(func=cmd_models)
