@@ -130,7 +130,20 @@ def claude_cli() -> str | None:
         os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "claude", "claude.exe"),
         "/usr/local/bin/claude", "/opt/homebrew/bin/claude",
     ]
-    return next((c for c in candidates if c and os.path.isfile(c)), None)
+    hit = next((c for c in candidates if c and os.path.isfile(c)), None)
+    if hit:
+        return hit
+    # 윈도우: 데스크톱 앱 내장본·winget·버전별 폴더까지 (가장 최신 버전 우선)
+    import glob
+    pats = [os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links", "claude.exe"),
+            os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Packages", "Anthropic.ClaudeCode*", "**", "claude.exe"),
+            os.path.join(os.getenv("APPDATA", ""), "Claude", "claude-code", "*", "claude.exe"),
+            os.path.join(os.getenv("LOCALAPPDATA", ""), "AnthropicClaude", "**", "claude-code", "**", "claude.exe"),
+            os.path.join(home, ".local", "share", "claude", "versions", "*"),
+            os.path.join(os.getenv("ProgramFiles", ""), "nodejs", "claude.cmd")]
+    found = [f for pat in pats if pat and not pat.startswith(os.sep + "Microsoft")
+             for f in glob.glob(pat, recursive=True) if os.path.isfile(f)]
+    return max(found, key=os.path.getmtime) if found else None
 
 
 def _auto_default() -> str:
