@@ -1,0 +1,1331 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1인 기업 AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<style>
+:root {
+  --bg: #faf9f5; --sidebar: #f0eee6; --panel: #ffffff; --line: #e5e2d8; --line-strong: #d6d2c4;
+  --text: #29261b; --muted: #73705f; --faint: #a19d8c;
+  --accent: #c96442; --accent-hover: #b4573a; --accent-soft: #f5e6de;
+  --user-bubble: #eeece2; --code-bg: #f3f1ea; --ok: #4f7a4a; --warn: #b07a20;
+  --shadow: 0 1px 2px rgba(41,38,27,.06), 0 4px 16px rgba(41,38,27,.06);
+  --live: #16a34a; --live-soft: #dcfce7; --live-glow: rgba(22,163,74,.28);
+  --serif: "Noto Serif KR", Georgia, serif;
+  --sans: Pretendard, "Pretendard Variable", -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #262624; --sidebar: #1f1e1d; --panel: #30302e; --line: #3d3d3a; --line-strong: #4a4a46;
+    --text: #ece9e1; --muted: #a8a496; --faint: #77746a;
+    --accent: #d97757; --accent-hover: #e08a6d; --accent-soft: #4a3329;
+    --user-bubble: #141413; --code-bg: #1d1d1b; --ok: #8bb784; --warn: #d9a54a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    --live: #4ade80; --live-soft: rgba(74,222,128,.14); --live-glow: rgba(74,222,128,.35);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #262624; --sidebar: #1f1e1d; --panel: #30302e; --line: #3d3d3a; --line-strong: #4a4a46;
+  --text: #ece9e1; --muted: #a8a496; --faint: #77746a;
+  --accent: #d97757; --accent-hover: #e08a6d; --accent-soft: #4a3329;
+  --user-bubble: #141413; --code-bg: #1d1d1b; --ok: #8bb784; --warn: #d9a54a;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  --live: #4ade80; --live-soft: rgba(74,222,128,.14); --live-glow: rgba(74,222,128,.35);
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 15px/1.65 var(--sans); display: flex; overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+/* 사이드바 */
+#sidebar { width: 268px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; padding: 14px 10px; gap: 4px; }
+.brand { font-family: var(--serif); font-size: 19px; font-weight: 600; padding: 4px 10px 12px; display: flex; align-items: center; gap: 8px; }
+.brand-mark { width: 26px; height: 26px; border-radius: 7px; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 14px; }
+.side-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; background: none;
+  border-radius: 8px; text-align: left; color: var(--text); font-size: 14px; }
+.side-btn:hover { background: rgba(0,0,0,.05); }
+:root[data-theme="dark"] .side-btn:hover { background: rgba(255,255,255,.06); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .side-btn:hover { background: rgba(255,255,255,.06); } }
+.side-btn.active { background: var(--panel); box-shadow: var(--shadow); }
+.side-btn.primary { color: var(--accent); font-weight: 600; }
+.side-btn .ico { width: 18px; text-align: center; }
+.side-label { font-size: 12px; color: var(--faint); padding: 14px 10px 4px; }
+#conv-list { flex: 1; overflow-y: auto; margin: 0 -2px; padding: 0 2px; }
+.conv { position: relative; }
+.conv .side-btn { padding-right: 30px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.conv .del { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: none;
+  color: var(--faint); opacity: 0; padding: 2px 6px; border-radius: 6px; }
+.conv:hover .del { opacity: 1; }
+.conv .del:hover { color: var(--accent); }
+.side-foot { border-top: 1px solid var(--line); padding-top: 8px; font-size: 12px; color: var(--faint); display: flex; justify-content: space-between; align-items: center; padding-left: 10px; }
+
+/* 메인 */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+.topbar { height: 52px; display: flex; align-items: center; padding: 0 20px; gap: 10px; border-bottom: 1px solid transparent; }
+.topbar .title { font-size: 14px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#menu-btn { display: none; border: 0; background: none; font-size: 20px; padding: 4px 8px; }
+.view { flex: 1; display: none; flex-direction: column; min-height: 0; }
+.view.active { display: flex; }
+.scroll { flex: 1; overflow-y: auto; }
+.column { max-width: 760px; margin: 0 auto; padding: 8px 24px 24px; }
+
+/* 빈 화면 */
+.hero { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 24px; }
+.hero h1 { font-family: var(--serif); font-weight: 500; font-size: 34px; margin: 0 0 28px; letter-spacing: -.01em; text-align: center; }
+.hero h1 .spark { color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 16px; max-width: 720px; }
+.chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 6px 14px; font-size: 13px; color: var(--muted); }
+.chip:hover { border-color: var(--line-strong); color: var(--text); }
+
+/* 메시지 */
+.msg { margin: 22px 0; }
+.msg.user { display: flex; justify-content: flex-end; }
+.msg.user .bubble { background: var(--user-bubble); border-radius: 16px; padding: 10px 16px; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+.msg.ai .who { font-size: 12.5px; color: var(--muted); margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.who .agent { font-weight: 600; color: var(--text); }
+.tag { font-size: 11.5px; border: 1px solid var(--line); border-radius: 6px; padding: 0 6px; color: var(--muted); background: var(--panel); }
+.tag.src { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+.md { word-break: break-word; }
+.md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
+.md h1, .md h2, .md h3 { font-family: var(--serif); font-weight: 600; line-height: 1.35; margin: 1.2em 0 .5em; }
+.md h1 { font-size: 1.4em; } .md h2 { font-size: 1.2em; } .md h3 { font-size: 1.05em; }
+.md p { margin: .6em 0; } .md ul, .md ol { padding-left: 1.4em; margin: .5em 0; } .md li { margin: .2em 0; }
+.md code { background: var(--code-bg); border-radius: 5px; padding: .1em .35em; font-size: .9em; font-family: ui-monospace, Consolas, monospace; }
+.md pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+.md pre code { background: none; padding: 0; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
+.md table { border-collapse: collapse; margin: .8em 0; font-size: .93em; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--line); padding: 5px 10px; text-align: left; }
+.md th { background: var(--code-bg); }
+.md a { color: var(--accent); }
+.md blockquote { border-left: 3px solid var(--line-strong); margin: .6em 0; padding: 0 0 0 12px; color: var(--muted); }
+.cursor::after { content: "●"; color: var(--accent); animation: blink 1s infinite; margin-left: 2px; font-size: .8em; }
+@keyframes blink { 50% { opacity: .2; } }
+.tool-card { border: 1px solid var(--line); background: var(--panel); border-radius: 14px; padding: 14px 16px; box-shadow: var(--shadow); }
+.tool-card pre.result { margin: 6px 0 10px; }
+.sim-title { font-family: var(--serif); font-weight: 600; font-size: 15.5px; }
+.sim-vars summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.sim-vars { margin-bottom: 12px; }
+.tool-log { font: 12.5px/1.6 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; }
+.tool-foot { font-size: 12px; color: var(--faint); margin-top: 10px; }
+.spin { display: inline-block; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.team { display: grid; gap: 14px; margin: 6px 0 16px; }
+.member { border-left: 3px solid var(--line-strong); padding: 2px 0 2px 14px; }
+.mhead { display: flex; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+.mhead .st { font-size: 12px; color: var(--muted); }
+.mhead .mname { font-weight: 700; font-size: 15px; }
+.mhead .mview { color: var(--muted); font-size: 13px; }
+.member.pending .md { color: var(--faint); font-size: 13.5px; }
+.step { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.step > summary { list-style: none; cursor: pointer; display: flex; gap: 8px; align-items: center; padding: 7px 12px; font-size: 13px; }
+.step > summary::-webkit-details-marker { display: none; }
+.step .stitle { font-weight: 600; }
+.step .sview { color: var(--muted); }
+.step .sverdict { margin-left: auto; font-size: 12px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.sverdict.pass, .sverdict.approve { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.sverdict.fix, .sverdict.reject { background: var(--accent-soft); color: var(--accent); }
+.sverdict.wait { color: var(--faint); }
+.step .md { padding: 4px 14px 12px; font-size: 13.5px; border-top: 1px dashed var(--line); }
+.team.steps { gap: 6px; }
+.final-head { font-weight: 700; font-size: 15px; margin: 4px 0 6px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; gap: 6px; align-items: center; }
+.team-judge { padding: 4px 2px; color: var(--accent); font-size: 13.5px; }
+.winner { display: inline-block; background: var(--accent-soft); color: var(--accent); border-radius: 8px; padding: 3px 10px; font-size: 13px; margin-bottom: 8px; }
+.attach-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.attach-row:empty { display: none; }
+.thumb { position: relative; width: 64px; height: 64px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--code-bg); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumb button { position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 11px; line-height: 20px; padding: 0; }
+.thumb.loading::after { content: "…"; position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.25); color: #fff; }
+.tool-btn { border: 0; background: none; color: var(--muted); font-size: 16px; width: 32px; height: 32px; border-radius: 8px; }
+.tool-btn:hover { background: var(--code-bg); color: var(--text); }
+.msg.user .imgs { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; margin-bottom: 6px; }
+.msg.user .imgs img { max-width: 220px; max-height: 160px; border-radius: 12px; border: 1px solid var(--line); cursor: zoom-in; }
+.msg.user { flex-direction: column; align-items: flex-end; }
+.status-line { font-size: 13px; color: var(--muted); margin: 2px 0 8px; }
+.market { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 10px; }
+.mchip { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 4px 10px; font-size: 12.5px; }
+.mchip b { font-weight: 600; } .up { color: #d1453b; } .down { color: #2f6fd1; }
+.mchip .src { color: var(--faint); font-size: 11px; margin-left: 4px; }
+.drop-hint { position: fixed; inset: 0; background: color-mix(in srgb, var(--accent) 12%, transparent); border: 3px dashed var(--accent); display: grid; place-items: center; font-size: 20px; color: var(--accent); z-index: 50; pointer-events: none; }
+.countdown { position: fixed; inset: 0; background: rgba(0,0,0,.55); color: #fff; display: grid; place-items: center; text-align: center; z-index: 60; font-size: 18px; }
+.countdown b { font-size: 64px; display: block; font-family: var(--serif); }
+#lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: grid; place-items: center; z-index: 70; cursor: zoom-out; }
+#lightbox img { max-width: 94vw; max-height: 94vh; border-radius: 8px; }
+.share-btn.on { color: #d1453b; background: color-mix(in srgb, #d1453b 12%, transparent); }
+#work-panel { position: fixed; right: 18px; top: 60px; width: 300px; max-height: 46vh; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow); z-index: 25; overflow: hidden; }
+#work-panel .wp-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 12.5px; border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; }
+#work-panel .wp-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#work-panel .wp-time { color: var(--faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+#work-panel .wp-list { overflow-y: auto; padding: 4px 0; }
+#work-panel .wp-item { display: flex; gap: 8px; align-items: baseline; padding: 4px 12px; font-size: 12.5px; }
+#work-panel .wp-item .st { width: 16px; text-align: center; flex-shrink: 0; }
+#work-panel .wp-item .who { flex: 1; min-width: 0; }
+#work-panel .wp-item .who b { font-weight: 600; }
+#work-panel .wp-item .sub { display: block; color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#work-panel .wp-item .sec { color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+#work-panel .wp-item.done { opacity: .55; }
+#work-panel.min { width: auto; border-radius: 999px; }
+#work-panel.min .wp-list { display: none; }
+#work-panel.min .wp-head { border-bottom: 0; padding: 6px 14px; }
+@media (max-width: 800px) { #work-panel { width: 230px; right: 10px; top: 56px; } }
+/* 작업 현황 크게 보기: 왼쪽 담당 AI · 가운데 작업 · 오른쪽 작업 화면 */
+#work-big { position: fixed; inset: 56px 18px 18px 286px; z-index: 30; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.18); overflow: hidden; }
+#work-big .wb-head { display: flex; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+#work-big .wb-head b { font-family: var(--serif); font-size: 15px; }
+#work-big .wb-head .wp-time { color: var(--faint); margin-left: auto; font-variant-numeric: tabular-nums; }
+#work-big .wb-body { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: 240px minmax(240px, 1fr) minmax(280px, 1.25fr); gap: 0 56px; padding: 18px 20px; }
+#work-big .wb-col { min-height: 0; overflow-y: auto; position: relative; z-index: 1; }
+#work-big .wb-label { font-size: 11.5px; color: var(--faint); margin-bottom: 8px; letter-spacing: .02em; }
+#work-big svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+#work-big svg path { fill: none; stroke: var(--line-strong); stroke-width: 1.6; }
+#work-big svg path.on { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 5; animation: dash .8s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -11; } }
+.ai-chip { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-bottom: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); font-size: 13.5px; }
+.ai-chip .ic { width: 22px; text-align: center; }
+.ai-chip .nm { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-chip .ct { font-size: 11.5px; color: var(--faint); }
+.ai-chip.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ai-chip.on .ct { color: var(--accent); }
+.task-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); cursor: pointer; font-size: 13px; }
+.task-row:hover { border-color: var(--line-strong); }
+.task-row.sel { border-color: var(--accent); }
+.task-row.on { background: color-mix(in srgb, var(--accent) 7%, var(--bg)); }
+.task-row .st { width: 16px; text-align: center; }
+.task-row .tx { flex: 1; min-width: 0; }
+.task-row .tx b { font-weight: 600; } .task-row .tx span { display: block; font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-row .sec { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.wb-screen { border: 1px solid var(--line); border-radius: 14px; background: var(--bg); padding: 14px 16px; min-height: 100%; }
+.wb-screen .sh { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.wb-screen .sh b { font-size: 14.5px; } .wb-screen .sh .tag { margin-left: auto; }
+.wb-screen .md { font-size: 13.5px; }
+/* 폰 접속 안내 */
+.phone-pop { position: fixed; left: 16px; bottom: 56px; z-index: 50; width: min(300px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: 0 8px 30px rgba(0,0,0,.18); font-size: 13.5px; }
+.phone-pop .big { font: 600 22px/1.3 ui-monospace, Consolas, monospace; letter-spacing: 1px; margin: 2px 0 8px; word-break: break-all; }
+/* 자기 개선 */
+.diff { background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font: 12px/1.55 ui-monospace, Consolas, monospace; overflow-x: auto; margin: 4px 0 8px; }
+.diff div { white-space: pre; padding: 0 10px; }
+.diff .add { background: color-mix(in srgb, var(--live) 16%, transparent); }
+.diff .del { background: var(--accent-soft); }
+.diff .hunk { color: var(--faint); }
+.imp-file > summary { cursor: pointer; font-size: 13px; padding: 3px 0; }
+.chk { font-size: 12.5px; margin: 2px 0; }
+/* 도구 요청 카드 / 도구 화면 */
+.treq { border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); padding: 12px 14px; margin-top: 10px; box-shadow: var(--shadow); font-size: 13.5px; }
+.treq .th { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.treq .th b { font-size: 14px; }
+.treq .why { color: var(--muted); margin: 6px 0 8px; }
+.treq .acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.treq .res { margin-top: 8px; font-size: 13px; }
+.treq ol { margin: 6px 0 0; padding-left: 1.3em; }
+.tb { font-size: 11.5px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); color: var(--muted); }
+.tb.ok { color: var(--live); border-color: var(--live); } .tb.wait { color: var(--warn); border-color: var(--warn); }
+.tool-card { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 12px 14px; margin: 8px 0; }
+.tool-card .row { margin-top: 8px; }
+.tool-card input[type=password] { flex: 1; min-width: 180px; }
+/* 활동 중·상호작용 중인 AI = 초록 */
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 0 var(--live-glow); animation: pulse 1.4s infinite; flex-shrink: 0; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--live-glow); } 70% { box-shadow: 0 0 0 7px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+.ai-chip.on { border-color: var(--live) !important; background: var(--live-soft) !important; box-shadow: 0 0 0 3px var(--live-glow) !important; }
+.ai-chip.on .ct { color: var(--live) !important; font-weight: 600; }
+.ai-chip.talk:not(.on) { border: 1.5px dashed var(--live); }
+.ai-chip.talk:not(.on) .ct { color: var(--live); }
+.task-row.on { background: var(--live-soft) !important; border-color: color-mix(in srgb, var(--live) 45%, var(--line)) !important; box-shadow: inset 3px 0 0 var(--live); }
+.task-row.on .spin, .wp-item:not(.done) .spin, #wb-screen .wb-mode:not(.done) .spin { color: var(--live); }
+#work-big svg path.on { stroke: var(--live) !important; }
+#work-big svg path.link.on { stroke: var(--live) !important; opacity: .75; }
+.wb-mode:not(.done) { background: var(--live-soft) !important; color: var(--live) !important; }
+.wp-item:not(.done) .who b { color: var(--live); }
+#work-panel .wp-title .live-dot { margin-right: 6px; vertical-align: 1px; }
+.typing::after { color: var(--live) !important; }
+/* 작업 화면 모양: 자료 조사 / 작성 / 검사 / 코딩 */
+.wb-reads { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 10px; font-size: 12px; }
+.wb-reads .rd { border: 1px dashed var(--line-strong); border-radius: 8px; padding: 2px 8px; color: var(--muted); background: var(--panel); }
+.wb-mode { font-size: 11.5px; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+.wb-mode.done { background: var(--code-bg); color: var(--muted); }
+.wb-research { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 8px 10px; margin-bottom: 10px; font-size: 12.5px; }
+.wb-research .ra { display: flex; gap: 8px; padding: 3px 0; align-items: baseline; }
+.wb-research .ra .k { width: 18px; text-align: center; flex-shrink: 0; }
+.wb-research .ra .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-research .links { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0 4px 26px; }
+.wb-research .links a { font-size: 11.5px; border: 1px solid var(--line); border-radius: 6px; padding: 1px 7px; color: var(--muted); text-decoration: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-doc { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; font-size: 13.5px; line-height: 1.7; }
+.wb-check { display: grid; gap: 5px; font-size: 13px; }
+.wb-check .ci { display: flex; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); }
+.wb-check .ci.bad { border-color: var(--accent); background: var(--accent-soft); }
+.wb-check .ci.warn { border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.wb-check .ci .m { flex-shrink: 0; }
+.wb-check .note { color: var(--muted); font-size: 12.5px; padding: 2px 4px; }
+.wb-check .verdict { margin-top: 6px; font-weight: 700; padding: 6px 10px; border-radius: 8px; text-align: center; }
+.wb-check .verdict.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.wb-check .verdict.no { background: var(--accent-soft); color: var(--accent); }
+.wb-code { background: #1e1e1c; color: #e8e6df; border-radius: 10px; padding: 10px 0; font: 12.5px/1.6 ui-monospace, Consolas, monospace; overflow-x: auto; }
+.wb-code .ln { display: flex; } .wb-code .ln i { width: 38px; flex-shrink: 0; text-align: right; padding-right: 10px; color: #6f6d66; font-style: normal; user-select: none; }
+.wb-code .ln span { white-space: pre; padding-right: 12px; }
+.wb-code .cap { color: #9a978d; font-size: 11px; padding: 0 12px 6px; }
+.typing::after { content: "▍"; color: var(--accent); animation: blink 1s infinite; }
+#work-big svg path.link { stroke: #6b8fd6; stroke-width: 1.4; stroke-dasharray: 3 4; }
+#work-big svg path.link.on { animation: dash .8s linear infinite; }
+.wb-empty { color: var(--faint); font-size: 13px; padding: 24px 0; text-align: center; }
+@media (max-width: 1000px) {
+  #work-big { inset: 56px 8px 8px 8px; }
+  #work-big .wb-body { grid-template-columns: 1fr; gap: 10px; overflow-y: auto; }
+  #work-big svg { display: none; }
+  #work-big .wb-col { overflow: visible; }
+}
+#share-panel { position: fixed; right: 18px; bottom: 150px; width: 300px; background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; z-index: 20; }
+#share-panel video { width: 100%; display: block; background: #000; aspect-ratio: 16/10; object-fit: contain; }
+.share-head { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 12.5px; }
+.share-head .live { color: #d1453b; font-weight: 700; white-space: nowrap; }
+.share-head .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
+.share-head .spacer { flex: 1; }
+.share-head .icon-btn { white-space: nowrap; flex-shrink: 0; }
+.share-foot { display: flex; align-items: center; gap: 6px; padding: 7px 10px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+.share-foot label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+#share-panel.min video { display: none; }
+@media (max-width: 800px) { #share-panel { width: 200px; bottom: 140px; right: 10px; } }
+.err { color: var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 10px 14px; font-size: 14px; }
+.msg-actions { margin-top: 6px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
+.msg.ai:hover .msg-actions { opacity: 1; }
+.icon-btn { border: 0; background: none; color: var(--faint); font-size: 12.5px; padding: 3px 8px; border-radius: 6px; }
+.icon-btn:hover { background: var(--code-bg); color: var(--text); }
+
+/* 입력창 */
+.composer-wrap { padding: 0 24px 18px; }
+.composer { max-width: 760px; margin: 0 auto; background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: 18px; box-shadow: var(--shadow); padding: 12px 12px 8px 16px; transition: border-color .15s; }
+.composer:focus-within { border-color: var(--faint); }
+.composer textarea { width: 100%; border: 0; outline: 0; resize: none; background: none; min-height: 26px; max-height: 240px; line-height: 1.55; }
+.composer-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.composer select { border: 1px solid transparent; background: none; color: var(--muted); font-size: 13px; padding: 4px 6px; border-radius: 8px; max-width: 170px; }
+.composer select:hover { background: var(--code-bg); }
+.spacer { flex: 1; }
+.send { width: 34px; height: 34px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; display: grid; place-items: center; font-size: 16px; }
+.send:hover { background: var(--accent-hover); }
+.send:disabled { opacity: .35; cursor: default; }
+.send.stop { background: var(--text); }
+.hint { text-align: center; font-size: 11.5px; color: var(--faint); margin-top: 8px; }
+.toggle { display: flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--muted); padding: 4px 6px; border-radius: 8px; user-select: none; cursor: pointer; }
+.toggle:hover { background: var(--code-bg); }
+
+/* 공부 / 시뮬 */
+.page-head { font-family: var(--serif); font-size: 26px; font-weight: 500; margin: 18px 0 4px; }
+.page-sub { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin: 12px 0; box-shadow: var(--shadow); }
+.field { width: 100%; border: 1px solid var(--line-strong); background: var(--bg); border-radius: 10px; padding: 9px 12px; outline: 0; }
+.field:focus { border-color: var(--faint); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.btn { border: 1px solid var(--line-strong); background: var(--panel); border-radius: 10px; padding: 8px 14px; font-size: 14px; }
+.btn:hover { background: var(--code-bg); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-hover); }
+.btn:disabled { opacity: .5; cursor: default; }
+.log { font: 12.5px/1.6 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
+.note-list { display: grid; gap: 6px; }
+.note-item { display: flex; justify-content: space-between; gap: 10px; align-items: center; text-align: left; width: 100%;
+  border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 9px 12px; }
+.note-item:hover { border-color: var(--line-strong); }
+.status { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.status.todo { background: var(--accent-soft); color: var(--accent); }
+.status.done { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 ui-monospace, Consolas, monospace; margin: 0; }
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.tab { border: 0; background: none; padding: 6px 12px; border-radius: 8px; color: var(--muted); }
+.tab.active { background: var(--code-bg); color: var(--text); font-weight: 600; }
+.muted { color: var(--muted); font-size: 13px; }
+
+@media (max-width: 800px) {
+  #sidebar { position: fixed; inset: 0 auto 0 0; z-index: 10; transform: translateX(-100%); transition: transform .2s; box-shadow: var(--shadow); }
+  #sidebar.open { transform: none; }
+  #menu-btn { display: block; }
+  .column, .composer-wrap { padding-left: 16px; padding-right: 16px; }
+  .hero h1 { font-size: 26px; }
+}
+</style>
+</head>
+<body>
+<aside id="sidebar">
+  <div class="brand"><span class="brand-mark">✳</span><span id="company">1인 기업 AI</span></div>
+  <button class="side-btn primary" id="new-chat"><span class="ico">＋</span>새 대화</button>
+  <button class="side-btn nav" data-view="chat"><span class="ico">💬</span>채팅</button>
+  <button class="side-btn nav" data-view="learn"><span class="ico">📚</span>공부 노트</button>
+  <button class="side-btn nav" data-view="sim"><span class="ico">🎲</span>시뮬레이션</button>
+  <button class="side-btn nav" data-view="tools"><span class="ico">🧰</span>도구 <span class="tb wait" id="tools-badge" hidden></span></button>
+  <button class="side-btn nav" data-view="improve"><span class="ico">🛠️</span>개선 <span class="tb wait" id="imp-badge" hidden></span></button>
+  <div class="side-label">최근 대화</div>
+  <div id="conv-list"></div>
+  <div class="side-foot"><span id="where">내 PC에서만 실행 중</span><button class="icon-btn" id="phone-btn" title="폰으로 열기" hidden>📱</button><button class="icon-btn" id="theme-btn" title="화면 테마">◐</button></div>
+</aside>
+
+<main id="main">
+  <div class="topbar"><button id="menu-btn" aria-label="메뉴">☰</button><div class="title" id="top-title"></div></div>
+
+  <!-- 채팅 -->
+  <section class="view active" id="view-chat">
+    <div class="hero" id="hero">
+      <h1><span class="spark">✳</span> <span id="greet">무엇을 도와드릴까요?</span></h1>
+      <div style="width:100%;max-width:760px" id="hero-slot"></div>
+      <div class="chips" id="chips"></div>
+    </div>
+    <div class="scroll" id="chat-scroll" hidden><div class="column" id="messages"></div></div>
+    <div class="composer-wrap" id="composer-home">
+      <div class="composer" id="composer">
+        <div class="attach-row" id="attach-row"></div>
+        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요. 🖥️ 로 토스 화면을 공유하면 질문할 때 같이 봐요."></textarea>
+        <div class="composer-row">
+          <button class="tool-btn" id="attach-btn" title="이미지 첨부 (Ctrl+V 붙여넣기, 끌어다 놓기도 돼요)">📎</button>
+          <button class="tool-btn share-btn" id="share-btn" title="화면 공유 (디스코드 방송처럼) — 토스 창이나 탭을 고르면, 질문할 때마다 그 화면이 자동으로 같이 가요">🖥️</button>
+          <input type="file" id="file-input" accept="image/*" multiple hidden>
+          <select id="agent-select" title="담당 에이전트"></select>
+          <select id="model-select" title="AI 모델"></select>
+          <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료</label>
+          <select id="team-mode" title="팀 비교: 팀원들이 각자 답하고 비교해서 최고 답을 드려요 (시간·사용량 늘어남)">
+            <option value="auto">👥 팀 검토: 자동</option><option value="on">👥 팀 검토: 항상</option><option value="off">👥 팀 검토: 끄기</option>
+          </select>
+          <div class="spacer"></div>
+          <button class="send" id="send-btn" disabled title="보내기 (Enter)">↑</button>
+        </div>
+      </div>
+      <div class="hint">Enter 보내기 · Shift+Enter 줄바꿈 · AI는 실수할 수 있어요</div>
+    </div>
+  </section>
+
+  <!-- 공부 노트 -->
+  <section class="view" id="view-learn">
+    <div class="scroll"><div class="column">
+      <div class="page-head">공부 노트</div>
+      <p class="page-sub">AI가 스스로 검색하고 읽어서 정리한 노트예요. 채팅할 때 자동으로 참고해요.</p>
+      <div class="card">
+        <div class="row">
+          <input class="field" id="learn-topic" placeholder="공부할 주제 (예: 블로그 애드센스 승인 조건)" style="flex:1;min-width:200px">
+          <button class="btn primary" id="learn-btn">공부시키기</button>
+          <button class="btn" id="learn-auto">주제 알아서 고르기</button>
+        </div>
+        <div class="log" id="learn-log" hidden></div>
+      </div>
+      <div id="note-view" hidden class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px">
+        <span class="muted" id="note-path"></span><button class="icon-btn" id="note-close">닫기 ✕</button></div>
+        <div class="md" id="note-body"></div></div>
+      <div class="note-list" id="note-list"></div>
+    </div></div>
+  </section>
+
+  <!-- 도구 -->
+  <section class="view" id="view-tools">
+    <div class="scroll"><div class="column">
+      <div class="page-head">도구</div>
+      <p class="page-sub">AI 팀이 쓸 수 있는 도구예요. 허용 목록에 있는 것만 설치·연결돼요. 키는 이 PC의 <code>.env</code> 에만 저장돼요.</p>
+      <div id="tools-list"></div>
+      <div class="page-head" style="font-size:19px;margin-top:22px">요청 기록</div>
+      <div id="tools-reqs"></div>
+    </div></div>
+  </section>
+
+  <div class="phone-pop" id="phone-pop" hidden></div>
+  <!-- 자기 개선 -->
+  <section class="view" id="view-improve">
+    <div class="scroll"><div class="column">
+      <div class="page-head">자기 개선</div>
+      <p class="page-sub">AI 팀의 지시문·설정·코드를 고쳐요. 개발 AI 가 <b>복사본</b>에서 고치고 자동 검사까지 한 뒤, 바뀐 내용을 보여 드려요. [적용]을 눌러야 실제로 바뀌고, 언제든 [되돌리기]로 원상복구돼요. 키·도구 허용 목록·도구 설치 코드는 고칠 수 없어요.</p>
+      <div class="card">
+        <textarea class="field" id="imp-input" rows="3" placeholder="예: 주식 팀 답 끝에 '이번 주 체크할 날짜'를 항상 넣게 해줘 / 작업 현황 창 글씨를 조금 키워줘"></textarea>
+        <div class="row" style="margin-top:8px"><div class="spacer"></div><button class="btn primary" id="imp-new">변경안 만들기</button></div>
+      </div>
+      <div id="imp-list"></div>
+    </div></div>
+  </section>
+
+  <!-- 시뮬레이션 -->
+  <section class="view" id="view-sim">
+    <div class="scroll"><div class="column">
+      <div class="page-head">시뮬레이션</div>
+      <p class="page-sub">원하는 걸 말하면 1만 번 가상으로 돌려서 달성 확률을 알려줘요. 예측이 아니라 "가정이 맞다면"의 결과예요.</p>
+      <div class="card">
+        <div class="tabs"><button class="tab active" data-sim="goal">사업 목표</button><button class="tab" data-sim="stock">주식</button></div>
+        <div id="sim-goal-form">
+          <textarea class="field" id="sim-goal" rows="2" placeholder="예: 애드센스 블로그로 2년 안에 월 1000만원"></textarea>
+        </div>
+        <div id="sim-stock-form" hidden class="row">
+          <input class="field" id="sim-ticker" placeholder="티커 (예: 005930.KS, AAPL)" style="flex:2;min-width:160px">
+          <input class="field" id="sim-years" type="number" step="0.5" value="1" style="flex:1;min-width:80px" title="기간(년)">
+          <input class="field" id="sim-target" type="number" value="20" style="flex:1;min-width:80px" title="목표 수익률 %">
+        </div>
+        <div class="row" style="margin-top:10px"><div class="spacer"></div><button class="btn primary" id="sim-btn">시뮬레이션 실행</button></div>
+        <div class="log" id="sim-log" hidden></div>
+      </div>
+      <div id="sim-out" hidden class="card">
+        <div id="sim-result"></div>
+        <div class="md" id="sim-explain" style="margin-top:14px"></div>
+        <div class="muted" id="sim-report" style="margin-top:10px"></div>
+      </div>
+    </div></div>
+  </section>
+  <div id="work-panel" hidden>
+    <div class="wp-head" id="wp-head" title="눌러서 접기/펼치기"><span class="wp-title" id="wp-title">🔄 AI 작업 중</span><span class="wp-time" id="wp-time"></span><button class="icon-btn" id="wp-big" title="크게 보기 (담당 AI · 작업 · 작업 화면)">⛶</button><button class="icon-btn" id="wp-min" title="최소화">－</button></div>
+    <div class="wp-list" id="wp-list"></div>
+  </div>
+  <div id="work-big" hidden>
+    <div class="wb-head"><b>🛰️ AI 작업 현황</b><span id="wb-title" class="muted"></span><span class="wp-time" id="wb-time"></span>
+      <button class="icon-btn" id="wb-small" title="작은 창으로">작게</button><button class="icon-btn" id="wb-min" title="최소화">－</button></div>
+    <div class="wb-body" id="wb-body">
+      <svg id="wb-lines"></svg>
+      <div class="wb-col" id="wb-ais"><div class="wb-label">담당 AI</div></div>
+      <div class="wb-col" id="wb-tasks"><div class="wb-label">작업</div></div>
+      <div class="wb-col"><div class="wb-label">작업 화면</div><div class="wb-screen" id="wb-screen"></div></div>
+    </div>
+  </div>
+  <div id="share-panel" hidden>
+    <div class="share-head"><span class="live">● 공유 중</span><span class="muted">질문하면 이 화면이 같이 가요</span><div class="spacer"></div>
+      <button class="icon-btn" id="share-min" title="미리보기 접기">－</button><button class="icon-btn" id="share-stop" title="공유 중지">중지</button></div>
+    <video id="share-video" autoplay muted playsinline></video>
+    <div class="share-foot"><label><input type="checkbox" id="share-auto" checked>질문할 때 자동 첨부</label><div class="spacer"></div>
+      <button class="icon-btn" id="share-snap" title="지금 화면을 첨부 목록에 추가">📸 지금 첨부</button></div>
+  </div>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const state = { conv: null, meta: null, busy: false, controller: null };
+
+// ── 유틸 ──
+// 가벼운 마크다운 → HTML (먼저 전부 이스케이프하므로 안전, 오프라인 동작)
+function inline(t) {
+  return t
+    .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN|TOOL_REQUEST|IMPROVE):[^\]]*\]\]/g;
+function md(text) {
+  const lines = esc((text || "").replace(ACTION_TAG, "").trimEnd()).split("\n"); const out = []; let i = 0;
+  const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${buf.join("\n")}</code></pre>`); continue; }
+    const h = l.match(/^(#{1,4})\s+(.*)$/); if (h) { const n = Math.min(h[1].length, 3); out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
+    if (/^\s*(-{3,}|\*{3,})\s*$/.test(l)) { out.push("<hr>"); i++; continue; }
+    if (l.includes("|") && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(cells(lines[i++]));
+      out.push(`<table><thead><tr>${head.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`); continue;
+    }
+    if (/^&gt;\s?/.test(l)) { const buf = []; while (i < lines.length && /^&gt;\s?/.test(lines[i])) buf.push(inline(lines[i++].replace(/^&gt;\s?/, ""))); out.push(`<blockquote>${buf.join("<br>")}</blockquote>`); continue; }
+    const li = l.match(/^\s*([-*+]|\d+[.)])\s+(.*)$/);
+    if (li) {
+      const ordered = /\d/.test(li[1]); const items = [];
+      while (i < lines.length) {
+        const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+        if (m) { items.push({ depth: m[1].length >= 2 ? 1 : 0, text: inline(m[3].replace(/^\[ \]\s*/, "☐ ").replace(/^\[x\]\s*/i, "☑ ")) }); i++; }
+        else if (lines[i].trim() && /^\s{2,}/.test(lines[i]) && items.length) { items[items.length - 1].text += "<br>" + inline(lines[i].trim()); i++; }
+        else break;
+      }
+      const tag = ordered ? "ol" : "ul"; let html = `<${tag}>`;
+      items.forEach((it, k) => { const next = items[k + 1];
+        html += `<li>${it.text}`; if (next && next.depth > it.depth) html += "<ul>"; else html += "</li>";
+        if (it.depth > 0 && (!next || next.depth < it.depth)) html += "</ul></li>"; });
+      out.push(html + `</${tag}>`); continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const buf = []; while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*([-*+]|\d+[.)])\s|&gt;)/.test(lines[i]) && !(lines[i].includes("|") && isTableSep(lines[i + 1] || ""))) buf.push(inline(lines[i++]));
+    out.push(`<p>${buf.join("<br>")}</p>`);
+  }
+  return out.join("");
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+async function api(path, body) {
+  const opt = body ? { method: "POST", headers: { "Content-Type": "application/json", "X-Company-AI": "1" }, body: JSON.stringify(body) } : {};
+  const r = await fetch(path, opt); return r.json();
+}
+// POST + Server-Sent Events 읽기
+async function stream(path, body, handlers, signal) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Company-AI": "1" }, body: JSON.stringify(body), signal });
+  const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  while (true) {
+    const { value, done } = await reader.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i; while ((i = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, i); buf = buf.slice(i + 2);
+      const ev = (block.match(/^event: (.*)$/m) || [])[1]; const data = (block.match(/^data: (.*)$/m) || [])[1];
+      if (ev && data) { const d = JSON.parse(data); handlers["*"]?.(ev, d); handlers[ev]?.(d); }
+    }
+  }
+}
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+// ── 테마 ──
+function applyTheme(t) { if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+applyTheme(store.get("theme", ""));
+$("#theme-btn").onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark"; applyTheme(next); store.set("theme", next);
+};
+
+// ── 화면 전환 ──
+function show(view) {
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + view));
+  document.querySelectorAll(".side-btn.nav").forEach(b => b.classList.toggle("active", b.dataset.view === view));
+  $("#sidebar").classList.remove("open");
+  if (view === "learn") loadNotes();
+  if (view === "tools") renderToolsPage();
+  if (view === "improve") renderImprovePage();
+  $("#top-title").textContent = view === "chat" ? (state.conv?.title || "") : "";
+}
+document.querySelectorAll(".side-btn.nav").forEach(b => b.onclick = () => show(b.dataset.view));
+$("#menu-btn").onclick = () => $("#sidebar").classList.toggle("open");
+
+// ── 초기화 ──
+async function init() {
+  const meta = await api("/api/meta"); state.meta = meta;
+  $("#company").textContent = meta.company; document.title = meta.company + " · AI";
+  const hour = new Date().getHours();
+  $("#greet").textContent = (hour < 12 ? "좋은 아침이에요" : hour < 18 ? "좋은 오후예요" : "좋은 저녁이에요") + ", 사장님";
+  const as = $("#agent-select");
+  as.innerHTML = `<option value="auto">🧭 자동 배정</option>` + meta.agents.map(a => `<option value="${esc(a.id)}">${esc((a.summary || "").split("`")[0].trim() || a.id)} (${a.members.length}명)</option>`).join("");
+  $("#model-select").innerHTML = meta.models.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join("");
+  as.value = store.get("agent", "auto"); if (!as.value) as.value = "auto";
+  $("#model-select").value = store.get("model", "");
+  as.onchange = () => store.set("agent", as.value); $("#model-select").onchange = () => store.set("model", $("#model-select").value);
+  $("#team-mode").value = store.get("teamMode", meta.team_mode || "auto");
+  $("#team-mode").onchange = () => store.set("teamMode", $("#team-mode").value);
+  const ideas = ["삼성전자 지금 들어가도 될까?", "엔비디아 실적 발표 전에 사도 돼?", "100만원 어떻게 나눠서 투자할까?", "전세 보증금 못 돌려받으면 어떻게 해?", "프리랜서 계약서 볼 때 뭘 확인해?", "온라인 쇼핑몰로 1년 안에 월 300만원 가능할까?"];
+  $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
+  document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
+  newChat(); loadConvs(); show("chat"); loadTools(); refreshImpBadge(); initPhone();
+}
+
+// ── 대화 목록 ──
+async function loadConvs() {
+  const list = await api("/api/conversations");
+  $("#conv-list").innerHTML = list.map(c => `<div class="conv"><button class="side-btn${state.conv?.id === c.id ? " active" : ""}" data-id="${esc(c.id)}" title="${esc(c.title)}">${esc(c.title)}</button><button class="del" data-del="${esc(c.id)}" title="삭제">✕</button></div>`).join("") || `<div class="muted" style="padding:6px 10px">아직 대화가 없어요</div>`;
+  document.querySelectorAll("#conv-list [data-id]").forEach(b => b.onclick = () => openConv(b.dataset.id));
+  document.querySelectorAll("#conv-list [data-del]").forEach(b => b.onclick = async (e) => {
+    e.stopPropagation(); if (!confirm("이 대화를 삭제할까요?")) return;
+    await api(`/api/conversations/${b.dataset.del}/delete`, {}); if (state.conv?.id === b.dataset.del) newChat(); loadConvs();
+  });
+}
+function newChat() {
+  state.conv = null; $("#messages").innerHTML = ""; $("#chat-scroll").hidden = true; $("#hero").hidden = false;
+  $("#hero-slot").appendChild($("#composer")); $("#top-title").textContent = ""; show("chat"); $("#input").focus();
+  document.querySelectorAll("#conv-list .side-btn").forEach(b => b.classList.remove("active"));
+}
+$("#new-chat").onclick = newChat;
+function enterThread() {
+  if (!$("#chat-scroll").hidden) return;
+  $("#hero").hidden = true; $("#chat-scroll").hidden = false; $("#composer-home").prepend($("#composer"));
+}
+async function openConv(id) {
+  const c = await api("/api/conversations/" + id); if (c.error) return;
+  if (c.messages.some(m => (m.tool_requests || []).length)) await loadTools();
+  state.conv = c; show("chat"); enterThread(); $("#messages").innerHTML = "";
+  for (const m of c.messages) {
+    if (m.role === "user") addUser(m.content, m.images || []);
+    else if (m.kind === "tool") {
+      const t = addTool({ label: m.agent, arg: (m.tool || "").split(": ").slice(1).join(": ") }); t.log.hidden = true;
+      const code = m.content.match(/^```\n([\s\S]*?)\n```\n*/);
+      if (code) { t.pre.hidden = false; t.pre.innerHTML = simHTML(code[1]); t.out.innerHTML = md(m.content.slice(code[0].length)); }
+      else t.out.innerHTML = md(m.content);
+      t.foot.textContent = m.footer ? "📝 " + m.footer : "";
+    }
+    else {
+      const a = addAI(m); a.body.innerHTML = finalHTML(m.content); a.el.dataset.raw = m.content;
+      (m.drafts || []).forEach((d, i) => a.team.done({ ...d, i: i + 1 }));
+      if ((m.drafts || []).length > 1) a.team.judged();
+      (m.steps || []).forEach(st => a.team.stepDone(st));
+      (m.improvements || []).forEach(async id => { const j = await api("/api/improve/" + id); if (!j.error) improveCard(j, a.el); });
+      (m.tool_requests || []).forEach(id => { const r = (toolsCache?.requests || []).find(x => x.id === id); if (r) toolRequestCard(r, a.el); });
+      if ((m.steps || []).length) a.team.judged();
+    }
+  }
+  $("#top-title").textContent = c.title; scrollDown(true); loadConvs();
+}
+
+// ── 메시지 그리기 ──
+function addUser(text, images = []) {
+  const el = document.createElement("div"); el.className = "msg user";
+  el.innerHTML = (images.length ? `<div class="imgs">${images.map(i => `<img src="/api/upload/${esc(i)}" alt="첨부 이미지">`).join("")}</div>` : "") + `<div class="bubble">${esc(text)}</div>`;
+  el.querySelectorAll("img").forEach(img => img.onclick = () => lightbox(img.src));
+  $("#messages").appendChild(el);
+}
+function teamName(id) {
+  const a = state.meta?.agents.find(x => x.id === id);
+  return ((a?.summary || "").split("`")[0].trim() || id || "…") + " 팀";
+}
+function addAI(info = {}) {
+  const el = document.createElement("div"); el.className = "msg ai";
+  el.innerHTML = `<div class="who"></div><div class="status-line" hidden></div><div class="market" hidden></div><div class="team" hidden></div><div class="final-head" hidden></div><div class="md"></div><div class="msg-actions"><button class="icon-btn copy">복사</button></div>`;
+  $("#messages").appendChild(el);
+  const who = el.querySelector(".who"), body = el.querySelector(".md"), finalHead = el.querySelector(".final-head");
+  let agentId = info.agent;
+  const setWho = (i) => {
+    agentId = i.agent || agentId;
+    const agent = state.meta?.agents.find(a => a.id === i.agent);
+    const name = agent ? teamName(i.agent) : (i.agent || "…");
+    who.innerHTML = (i.reason ? `<span>🧭 CEO →</span>` : "") + `<span class="agent">${esc(name)}</span>`
+      + (i.team > 1 ? `<span class="tag" title="팀원 모델: ${esc(i.member_model || "기본")}">👥 팀 검토</span>` : "")
+      + (i.model ? `<span class="tag">${esc(i.model)}</span>` : "")
+      + (i.sources || []).map(s => `<span class="tag src" title="${esc(s)}">📚 ${esc(s.split("/").pop().replace(/\.md$/, ""))}</span>`).join("");
+    if (agent) who.title = agent.summary;
+  };
+  setWho(info);
+  el.querySelector(".copy").onclick = (e) => { navigator.clipboard?.writeText((el.dataset.raw || body.innerText).replace(ACTION_TAG, "").replace(/^\s*`?(?:🏆|⚠️ 검토)[^\n]*\n+/, "").trim()); e.target.textContent = "복사됨"; setTimeout(() => e.target.textContent = "복사", 1200); };
+  const teamBox = el.querySelector(".team");
+  const cards = {}, steps = {};
+  const team = {
+    start(d) {
+      teamBox.hidden = false;
+      const c = document.createElement("div"); c.className = "member pending";
+      c.innerHTML = `<div class="mhead"><span class="st"><span class="spin">◌</span></span><span class="mname">팀원${d.i}</span><span class="mview">· ${esc(d.view)}</span></div><div class="md">답변 작성 중...</div>`;
+      teamBox.appendChild(c); cards[d.i] = c;
+    },
+    done(d) {
+      const c = cards[d.i] || (team.start(d), cards[d.i]);
+      c.classList.remove("pending");
+      c.querySelector(".st").textContent = d.error ? "⚠️" : "";
+      c.querySelector(".md").innerHTML = d.error ? `<div class="err">⚠️ ${esc(d.error)}</div>` : md(d.text);
+    },
+    judge() {
+      finalHead.hidden = false;
+      finalHead.innerHTML = `<span class="team-judge"><span class="spin">◌</span> 🏆 팀원 답변 비교 중...</span>`;
+    },
+    judged() { if (!teamBox.hidden) { finalHead.hidden = false; finalHead.textContent = "🏆 최종 답"; } },
+    // 검토 파이프라인 단계 (초안 → 검토 → 승인)
+    stepStart(st) {
+      teamBox.hidden = false; teamBox.classList.add("steps");
+      let r = steps[st.id];
+      if (!r) { r = document.createElement("details"); r.className = "step"; teamBox.appendChild(r); steps[st.id] = r; }
+      r.innerHTML = `<summary><span class="stitle">${esc(st.title)}</span><span class="sview">· ${esc(st.view || "")}</span><span class="sverdict wait"><span class="spin">◌</span> 진행 중</span></summary><div class="md"></div>`;
+    },
+    stepDone(st) {
+      if (!steps[st.id]) team.stepStart(st);
+      const r = steps[st.id], v = r.querySelector(".sverdict");
+      const label = { pass: "✅ 통과", fix: "✏️ 수정 필요", approve: "✅ 승인", reject: "↩️ 반려" }[st.verdict] || (st.error ? "⚠️ 오류" : "완료");
+      v.className = "sverdict " + (st.error ? "fix" : (st.verdict || "pass")); v.textContent = label;
+      r.querySelector(".md").innerHTML = st.error ? `<div class="err">⚠️ ${esc(st.error)}</div>` : md(st.text || "");
+    },
+  };
+  const statusLine = el.querySelector(".status-line"), marketBox = el.querySelector(".market");
+  const status = (t) => { statusLine.hidden = !t; statusLine.innerHTML = t ? `<span class="spin">◌</span> ${esc(t)}` : ""; };
+  const market = (items) => {
+    marketBox.hidden = !items.length;
+    marketBox.innerHTML = items.map(m => m.error && m.price == null
+      ? `<span class="mchip">⚠️ ${esc(m.ticker)} 데이터 못 가져옴</span>`
+      : `<span class="mchip"><b>${esc(m.name || m.ticker)}</b> ${m.price != null ? Number(m.price).toLocaleString(undefined, { maximumFractionDigits: 2 }) : "-"}
+         ${m.change_pct != null ? `<span class="${m.change_pct >= 0 ? "up" : "down"}">${m.change_pct >= 0 ? "▲" : "▼"}${Math.abs(m.change_pct).toFixed(2)}%</span>` : ""}
+         <span class="src">${esc((m.source || "").replace(/\s*\(.*\)/, ""))} · ${esc(m.asof || "")}</span></span>`).join("");
+  };
+  return { el, body, setWho, team, status, market };
+}
+// 심사 결과 첫 줄(🏆 채택: ...)은 배지로 표시
+function finalHTML(raw) {
+  const m = raw.match(/^\s*`?((?:🏆|⚠️ 검토)[^\n]*?)`?\s*(\n|$)/);
+  return m ? `<div class="winner">${esc(m[1])}</div>` + md(raw.slice(m[0].length)) : md(raw);
+}
+// 시뮬 결과: 확률·범위를 먼저, 가정(변수 목록)은 접어두기
+function simHTML(text) {
+  const lines = text.split("\n");
+  const head = lines.find(l => l.startsWith("📐") || l.startsWith("📈")) || "";
+  const vars = lines.filter(l => /^\s+· /.test(l));
+  const rest = lines.filter(l => l !== head && !/^\s+· /.test(l)).join("\n").trim();
+  const title = head.replace(/^📐\s*/, "").split("  —  ")[0];
+  return `<div class="sim-title">${esc(title || head)}</div><pre class="result">${esc(rest)}</pre>`
+    + (vars.length ? `<details class="sim-vars"><summary>가정 ${vars.length}개 보기</summary><pre class="result">${esc((head.split("  —  ")[1] || "") + "\n" + vars.map(v => v.trim()).join("\n"))}</pre></details>` : "");
+}
+function addTool(info) {
+  const el = document.createElement("div"); el.className = "msg ai";
+  el.innerHTML = `<div class="who"><span class="agent">${esc(info.label)}</span>${info.arg ? `<span class="tag">${esc(info.arg)}</span>` : ""}</div>
+    <div class="tool-card"><div class="tool-log"></div><div class="sim" hidden></div><div class="md"></div><div class="tool-foot"></div></div>`;
+  $("#messages").appendChild(el);
+  return { el, log: el.querySelector(".tool-log"), pre: el.querySelector(".sim"), out: el.querySelector(".md"), foot: el.querySelector(".tool-foot") };
+}
+function scrollDown(force) {
+  const s = $("#chat-scroll"); if (force || s.scrollHeight - s.scrollTop - s.clientHeight < 160) s.scrollTop = s.scrollHeight;
+}
+
+// ── 보내기 ──
+const input = $("#input"), sendBtn = $("#send-btn");
+function autosize() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 240) + "px"; sendBtn.disabled = !state.busy && !input.value.trim() && !attachments.length; }
+
+// ── 이미지 첨부 / 붙여넣기 / 화면 캡처 ──
+let attachments = [];  // {id?, url, loading}
+function renderAttachments() {
+  const row = $("#attach-row");
+  row.innerHTML = attachments.map((a, i) => `<div class="thumb${a.id ? "" : " loading"}"><img src="${a.url}" alt=""><button data-rm="${i}" title="빼기">✕</button></div>`).join("");
+  row.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { attachments.splice(+b.dataset.rm, 1); renderAttachments(); autosize(); });
+  autosize();
+}
+async function uploadBlob(blob) {
+  if (!blob.type.startsWith("image/")) return;
+  if (attachments.length >= 6) return alert("이미지는 한 번에 6장까지 올릴 수 있어요");
+  const url = URL.createObjectURL(blob); const item = { url }; attachments.push(item); renderAttachments();
+  const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+  const res = await api("/api/upload", { data });
+  if (res.id) item.id = res.id; else { attachments = attachments.filter(a => a !== item); alert(res.error || "업로드 실패"); }
+  renderAttachments();
+}
+$("#attach-btn").onclick = () => $("#file-input").click();
+$("#file-input").onchange = (e) => { [...e.target.files].forEach(uploadBlob); e.target.value = ""; };
+input.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.items || [])].filter(i => i.type.startsWith("image/")).map(i => i.getAsFile());
+  if (files.length) { e.preventDefault(); files.forEach(uploadBlob); }
+});
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => { if ([...e.dataTransfer.types].includes("Files") && ++dragDepth === 1) document.body.insertAdjacentHTML("beforeend", `<div class="drop-hint" id="drop-hint">이미지를 여기에 놓으세요</div>`); });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; $("#drop-hint")?.remove(); } });
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", (e) => { e.preventDefault(); dragDepth = 0; $("#drop-hint")?.remove(); [...e.dataTransfer.files].forEach(uploadBlob); });
+// ── 화면 공유 (브라우저 기본 기능: getDisplayMedia) ──
+// 공유 화면은 내 PC 안에서만 보이고, 질문할 때 그 순간 한 장만 AI에게 보내요.
+const share = {
+  stream: null,
+  async start() {
+    if (!navigator.mediaDevices?.getDisplayMedia) return alert("이 브라우저는 화면 공유를 지원하지 않아요. 크롬이나 엣지를 써 주세요.");
+    try {
+      this.stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: 5, width: { ideal: 1920 } }, audio: false,
+        selfBrowserSurface: "exclude", surfaceSwitching: "include", monitorTypeSurfaces: "include",
+      });
+    } catch (e) { if (e.name !== "NotAllowedError") alert("화면 공유 실패: " + e.message); return; }
+    const track = this.stream.getVideoTracks()[0];
+    track.onended = () => this.stop();
+    $("#share-video").srcObject = this.stream;
+    $("#share-panel").hidden = false; $("#share-btn").classList.add("on"); $("#share-btn").title = "화면 공유 중 (누르면 중지)";
+  },
+  stop() {
+    this.stream?.getTracks().forEach(t => t.stop()); this.stream = null;
+    $("#share-video").srcObject = null; $("#share-panel").hidden = true;
+    $("#share-btn").classList.remove("on"); $("#share-btn").title = "화면 공유 (디스코드 방송처럼)";
+  },
+  async frameBlob() {
+    const v = $("#share-video");
+    if (!this.stream || !v.videoWidth) { await new Promise(r => setTimeout(r, 300)); if (!v.videoWidth) return null; }
+    const scale = Math.min(1, 1920 / v.videoWidth);
+    const c = document.createElement("canvas"); c.width = Math.round(v.videoWidth * scale); c.height = Math.round(v.videoHeight * scale);
+    c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(r, "image/png"));
+  },
+  async frameId() {
+    const blob = await this.frameBlob(); if (!blob) return null;
+    const data = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+    const res = await api("/api/upload", { data }); return res.id || null;
+  },
+};
+$("#share-btn").onclick = () => share.stream ? share.stop() : share.start();
+$("#share-stop").onclick = () => share.stop();
+$("#share-min").onclick = () => { const p = $("#share-panel"); p.classList.toggle("min"); $("#share-min").textContent = p.classList.contains("min") ? "＋" : "－"; };
+$("#share-snap").onclick = async () => { const b = await share.frameBlob(); if (b) uploadBlob(b); };
+$("#share-auto").checked = store.get("shareAuto", "1") === "1";
+$("#share-auto").onchange = () => store.set("shareAuto", $("#share-auto").checked ? "1" : "0");
+function lightbox(src) {
+  const lb = document.createElement("div"); lb.id = "lightbox"; lb.innerHTML = `<img src="${src}" alt="">`;
+  lb.onclick = () => lb.remove(); document.body.appendChild(lb);
+}
+input.addEventListener("input", autosize);
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!state.busy) send(); }
+});
+sendBtn.onclick = () => state.busy ? state.controller?.abort() : send();
+function setBusy(b) { state.busy = b; sendBtn.classList.toggle("stop", b); sendBtn.textContent = b ? "■" : "↑"; sendBtn.title = b ? "중지" : "보내기 (Enter)"; autosize(); }
+
+// ── AI 작업 현황: 작업 중일 때만 표시. 작은 창 / 크게 보기(담당 AI·작업·작업 화면) / 최소화 ──
+function host(u) { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return String(u || "").slice(0, 30); } }
+function aiName(model) {
+  const m = String(model || "");
+  const [prov, ...rest] = m.split(":"); const name = rest.join(":");
+  if (!m || prov === "claudecode") return { ic: "✳", nm: { haiku: "Claude Haiku", sonnet: "Claude Sonnet", opus: "Claude Opus" }[name] || "Claude" };
+  if (prov === "claude") return { ic: "✳", nm: "Claude API" };
+  if (prov === "freellm") return { ic: "⚡", nm: "FreeLLMAPI" + (name && name !== "auto" ? " · " + name : "") };
+  if (prov === "gemini") return { ic: "✦", nm: "Gemini" };
+  if (prov === "openai") return { ic: "◎", nm: "GPT" };
+  if (prov === "mistral") return { ic: "▲", nm: "Mistral" };
+  if (["local", "lmstudio", "ollama", "llamacpp", "vllm"].includes(prov)) return { ic: "💻", nm: "로컬 AI" };
+  return { ic: "◇", nm: m };
+}
+const work = {
+  items: {}, order: [], t0: 0, timer: null, hideTimer: null, running: false, sel: null, lead: "",
+  get view() { return store.get("workView", "small"); },      // small | big | min
+  setView(v) { store.set("workView", v); this.show(); this.render(); },
+  show() {
+    const v = this.view, on = this.running || this.order.length;
+    $("#work-panel").hidden = !on || v === "big"; $("#work-big").hidden = !on || v !== "big";
+    $("#work-panel").classList.toggle("min", v === "min"); $("#wp-min").textContent = v === "min" ? "＋" : "－";
+  },
+  start(firstLabel) {
+    clearTimeout(this.hideTimer); this.items = {}; this.order = []; this.t0 = Date.now(); this.running = true; this.sel = null; this.manualSel = false;
+    if (firstLabel) this.add("route", firstLabel, "", "claudecode:haiku");
+    this.show(); clearInterval(this.timer); this.timer = setInterval(() => this.render(), 1000); this.render();
+  },
+  add(id, label, sub = "", model = "") {
+    if (!this.items[id]) this.order.push(id);
+    this.items[id] = { label, sub, model, t: Date.now(), end: 0, mark: "", text: "" }; this.render();
+  },
+  set(id, patch) { if (this.items[id]) { Object.assign(this.items[id], patch); this.render(); } },
+  done(id, mark = "✅", patch) {
+    const it = this.items[id]; if (!it || it.end) return;
+    it.end = Date.now(); it.mark = mark; if (patch) Object.assign(it, patch); this.render();
+  },
+  finish(ok = true, autoHide = false) {
+    if (!this.running) return;
+    this.running = false; this.order.forEach(id => this.done(id, ok ? "✅" : "⏹️"));
+    clearInterval(this.timer); this.render();
+    if (this.view !== "big" || autoHide) this.hideTimer = setTimeout(() => { this.order = []; this.show(); }, 4000);  // 크게 보기는 직접 닫을 때까지 유지
+  },
+  event(ev, d) {
+    const V = { pass: "✅", approve: "✅", fix: "✏️", reject: "↩️" };
+    switch (ev) {
+      case "meta": this.lead = d.model; this.set("route", { model: d.router_model || "claudecode:haiku" });
+        this.done("route", "✅", { sub: `→ ${teamName(d.agent)}` });
+        if ((d.team || 1) <= 1) { this.add("answer", `💬 ${teamName(d.agent)} 답변`, "답변 작성 중", d.model); this.set("answer", { kind: "write", reads: ["question"] }); } break;
+      case "status": if (d.text) this.add("status", d.text.replace(/\.{3}$/, ""), "", "claudecode:haiku"); else this.done("status"); break;
+      case "market": this.done("status"); (d.items || []).forEach((m, i) => { const bad = m.error && m.price == null;
+        this.add("mk" + i, `📈 ${m.name || m.ticker}`, bad ? "데이터 못 가져옴" : `${m.price != null ? Number(m.price).toLocaleString() : "-"} · ${(m.source || "").replace(/\s*\(.*\)/, "")}`, "data");
+        this.done("mk" + i, bad ? "⚠️" : "✅", { text: bad ? m.error : `**${m.name || m.ticker}** ${m.price ?? "-"} (${m.change_pct ?? "-"}%)\n\n출처: ${m.source} · ${m.asof}` }); }); break;
+      case "dart": (d.items || []).forEach((r, i) => { this.add("dart" + i, `📑 ${r.name || r.code} 공시·실적`,
+          r.error ? "DART 못 가져옴" : `DART · ${r.prelim ? "잠정실적 " + r.prelim.slice(5) + " · " : ""}${r.report || "공시"}${r.op ? " · 영업이익 " + r.op + (r.op_yoy != null ? ` (${r.op_yoy > 0 ? "+" : ""}${r.op_yoy}%)` : "") : ""}`, "data");
+        this.done("dart" + i, r.error ? "⚠️" : "✅", { text: r.text }); }); break;
+      case "draft_start": this.add("d" + d.i, `✍️ 팀원${d.i}`, d.view, this.lead); break;
+      case "draft_done": this.done("d" + d.i, d.error ? "⚠️" : "✅", { text: d.error || d.text }); break;
+      case "judge_start": this.add("judge", "🏆 답변 비교·심사", "", this.lead); break;
+      case "step_start": this.add(d.id, d.title, d.view, d.model); this.set(d.id, { kind: d.kind, reads: d.reads || [] }); break;
+      case "step_text": if (this.items[d.id]) { this.items[d.id].text += d.text; this.items[d.id].live = true; this.render(); } break;
+      case "step_activity": if (this.items[d.id]) { (this.items[d.id].acts ||= []).push(d); this.render(); } break;
+      case "activity": { const id = this.items.answer ? "answer" : "route"; if (this.items[id]) { (this.items[id].acts ||= []).push(d); this.render(); } break; }
+      case "step_done": this.done(d.id, d.error ? "⚠️" : (V[d.verdict] || "✅"), { text: d.error || d.text }); break;
+      case "delta":
+        if (this.items.answer && !this.items.answer.end) { this.items.answer.text += d.text; this.render(); break; }
+        this.done("judge");
+        if (!this.items.final) { this.add("final", "🏆 최종 답", "사장님께 보내는 답", this.lead); this.set("final", { kind: "write", reads: this.order.filter(i => /^approve/.test(i)).slice(-3) }); }
+        this.items.final.text += d.text; this.render(); break;
+      case "replace": if (this.items.answer) this.items.answer.text = d.text; break;
+      case "tool_start": this.add("tool", d.label, d.arg, "claudecode"); break;
+      case "tool_log": this.set("tool", { sub: d.text, text: (this.items.tool?.text || "") + d.text + "\n" }); break;
+      case "tool_done": this.done("tool"); break;
+      case "tool_error": this.done("tool", "⚠️", { sub: d.message }); break;
+      case "done": this.done("answer"); this.finish(true); break;
+      case "error": this.finish(false); break;
+    }
+  },
+  render() {
+    const now = Date.now(), secs = (a, b) => Math.round(((b || now) - a) / 1000);
+    const active = this.order.filter(id => !this.items[id].end).length;
+    const title = this.running ? (active ? `AI ${active}명 작업 중` : "🔄 마무리 중") : "✅ 작업 완료";
+    const time = secs(this.t0, 0) + "초";
+    $("#wp-time").textContent = time; $("#wb-time").textContent = time;
+    const dot = this.running && active ? '<span class="live-dot"></span>' : "";
+    $("#wp-title").innerHTML = dot + esc(title); $("#wb-title").innerHTML = dot + esc(title);
+    const v = this.view;
+    if (v === "small") {
+      const list = $("#wp-list");
+      list.innerHTML = this.order.map(id => { const it = this.items[id];
+        return `<div class="wp-item${it.end ? " done" : ""}"><span class="st">${it.end ? it.mark : '<span class="live-dot"></span>'}</span>
+          <span class="who"><b>${esc(it.label)}</b><span class="sub">${esc(it.model === "data" ? it.sub : aiName(it.model).nm + " · " + (this.liveSub(it) || (it.sub && it.sub !== "Claude" ? it.sub : "")))}</span></span><span class="sec">${secs(it.t, it.end)}초</span></div>`; }).join("");
+      if (this.running) list.scrollTop = list.scrollHeight;
+    } else if (v === "big") this.renderBig(secs);
+  },
+  // 작업 화면 모양 고르기: 자료 조사 / 작성 / 검사 / 코딩 / 데이터
+  modeOf(it) {
+    if (it.model === "data") return "data";
+    if (!it.kind && !(it.acts || []).length && !it.text) return "prep";   // 팀 고르기·종목 찾기 같은 준비 작업
+    if (/```/.test(it.text || "")) return "code";
+    const acts = it.acts || [];
+    if (!it.end && acts.length && (it.text || "").length < 40) return "research";
+    if (it.kind === "review" || it.kind === "approve") return "review";
+    if (it.kind === "collect") return "collect";
+    return "write";
+  },
+  modeLabel(mode, it) {
+    if (it.end) return { research: "🔎 자료 조사 완료", collect: "📦 자료 수집 완료", write: "✍️ 작성 완료", review: "🧐 검사 완료", code: "💻 코드 완료", data: "📊 데이터", prep: "⚙️ 준비 완료" }[mode];
+    return { research: "🔎 자료 조사 중", collect: "📦 자료 정리 중", write: "✍️ 작성 중", review: "🧐 검사 중", code: "💻 코딩 중", data: "📊 데이터", prep: "⚙️ 준비 중" }[mode];
+  },
+  liveSub(it) {   // 가운데 작업 줄에 보여줄 '지금 하는 일'
+    const a = (it.acts || []).slice(-1)[0];
+    if (!it.end && a && (it.text || "").length < 40) {
+      if (a.kind === "search") return "🔎 " + a.query;
+      if (a.kind === "results") return "🌐 " + a.links.map(l => host(l.url)).slice(0, 3).join(", ");
+      if (a.kind === "fetch") return "📄 " + host(a.url) + " 읽는 중";
+      if (a.kind === "read") return "📄 " + shortPath(a.path) + " 읽는 중";
+      if (a.kind === "edit") return "✏️ " + shortPath(a.path) + " 고치는 중";
+    }
+    if (!it.end && it.text) return (this.modeOf(it) === "review" ? "🧐 " : "✍️ ") + it.text.length.toLocaleString() + "자 작성 중";
+    return null;
+  },
+  readsHTML(it) {
+    const names = (it.reads || []).map(id => id === "question" ? "💬 사장님 질문" : id === "request" ? "📝 개선 요청" : (this.items[id] ? `${this.items[id].label} · ${this.items[id]._ai || ""}` : null)).filter(Boolean);
+    return names.length ? `<div class="wb-reads"><span class="muted">📥 읽는 자료</span>${names.map(n => `<span class="rd">${esc(n)}</span>`).join("")}</div>` : "";
+  },
+  researchHTML(it) {
+    const acts = it.acts || []; if (!acts.length) return "";
+    return `<div class="wb-research">` + acts.map(a => {
+      if (a.kind === "search") return `<div class="ra"><span class="k">🔎</span><span class="v">검색: <b>${esc(a.query)}</b></span></div>`;
+      if (a.kind === "results") return `<div class="links">${a.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc(l.title)}">${esc(host(l.url))}</a>`).join("")}</div>`;
+      if (a.kind === "fetch") return `<div class="ra"><span class="k">📄</span><span class="v">읽는 중: ${esc(a.url)}</span></div>`;
+      if (a.kind === "read") return `<div class="ra"><span class="k">📄</span><span class="v">읽는 중: ${esc(shortPath(a.path))}</span></div>`;
+      if (a.kind === "edit") return `<div class="ra"><span class="k">✏️</span><span class="v">고치는 중: ${esc(shortPath(a.path))}</span></div>`;
+      if (a.kind === "tool_error") return `<div class="ra"><span class="k">⚠️</span><span class="v">${esc(a.text)}</span></div>`;
+      return `<div class="ra"><span class="k">🛠️</span><span class="v">${esc(a.name || a.kind)}</span></div>`;
+    }).join("") + `</div>`;
+  },
+  contentHTML(it, mode) {
+    const text = it.text || "", typing = !it.end ? " typing" : "";
+    if (mode === "prep") return `<div class="wb-empty">${it.end ? "✅ " + esc(it.sub || "완료") : '<span class="spin">◌</span> ' + esc(it.label) + "…"}</div>`;
+    if (!text) return it.end ? `<div class="wb-empty">내용 없음</div>` : `<div class="wb-empty"><span class="spin">◌</span> ${mode === "research" ? "자료 찾는 중…" : "생각하는 중… 글이 써지면 여기에 실시간으로 떠요"}</div>`;
+    if (mode === "code") {   // 코드 편집기 모양
+      const blocks = [...text.matchAll(/```(\w*)\n([\s\S]*?)(```|$)/g)];
+      const outside = text.replace(/```[\s\S]*?(```|$)/g, "").trim();
+      return (outside ? `<div class="wb-doc" style="margin-bottom:8px">${md(outside)}</div>` : "") + blocks.map(b =>
+        `<div class="wb-code${typing}"><div class="cap">${esc(b[1] || "code")}</div>${b[2].split("\n").map((l, i) => `<div class="ln"><i>${i + 1}</i><span>${esc(l)}</span></div>`).join("")}</div>`).join("");
+    }
+    if (mode === "review") { // 체크리스트 모양
+      const rows = text.split("\n").filter(l => l.trim()).map(l => {
+        const t = l.replace(/^\s*[-*•\d.)]+\s*/, "");
+        if (/^(\*\*)?\s*(판정\s*[:：]|`?승인`?$|`?반려`?$)/.test(t.replace(/\*\*/g, "").trim()) || /^`?(승인|반려)`?$/.test(t.trim())) {
+          const ok = /통과|승인/.test(t) && !/수정|반려/.test(t);
+          return `<div class="verdict ${ok ? "ok" : "no"}">${esc(t.replace(/\*\*|`/g, ""))}</div>`;
+        }
+        const m = t.match(/^(✅|❌|⚠️)/);
+        return m ? `<div class="ci ${m[1] === "❌" ? "bad" : m[1] === "⚠️" ? "warn" : ""}"><span class="m">${m[1]}</span><span>${inline(esc(t.slice(m[1].length).trim()))}</span></div>`
+                 : `<div class="note">${inline(esc(t))}</div>`;
+      });
+      return `<div class="wb-check${typing}">${rows.join("")}</div>`;
+    }
+    return `<div class="wb-doc${typing}">${finalHTML(text)}</div>`;  // 문서 작성 모양
+  },
+  // 부제목이 담당 AI 이름과 같으면("Claude") 굳이 반복하지 않음
+  cleanSub(it) { const s = (it.sub || "").trim(); return !s || s === "Claude" || (it._ai && it._ai.startsWith(s.split(" ·")[0])) ? "" : s; },
+  renderBig(secs) {
+    // 왼쪽: 담당 AI (처음 등장한 순서)
+    const ais = [];
+    this.order.forEach(id => { const it = this.items[id]; const key = it.model === "data" ? "📊 시세 데이터" : aiName(it.model).nm;
+      let a = ais.find(x => x.key === key); if (!a) ais.push(a = { key, ic: it.model === "data" ? "📊" : aiName(it.model).ic, total: 0, on: 0 });
+      a.total++; if (!it.end) a.on++; it._ai = key; });
+    // 상호작용: 진행 중인 작업이 읽고 있는 작업의 AI 는 '대화 중'(연한 초록 점선)
+    const talking = new Set();
+    this.order.forEach(id => { const it = this.items[id]; if (it.end) return;
+      (it.reads || []).forEach(src => { const s2 = this.items[src]; if (s2 && s2._ai) talking.add(s2._ai); }); });
+    $("#wb-ais").innerHTML = `<div class="wb-label">담당 AI</div>` + ais.map(a =>
+      `<div class="ai-chip${a.on ? " on" : ""}${talking.has(a.key) ? " talk" : ""}" data-ai="${esc(a.key)}">${a.on ? '<span class="live-dot"></span>' : ""}<span class="ic">${a.ic}</span><span class="nm">${esc(a.key.replace(/^📊 /, ""))}</span><span class="ct">${a.on ? `작업 중 ${a.on}` : talking.has(a.key) ? "읽히는 중" : `완료 ${a.total}`}</span></div>`).join("");
+    // 가운데: 작업
+    if (!this.manualSel || !this.items[this.sel]) {   // 직접 누르기 전까지는 지금 진행 중인 작업을 따라감
+      const running = this.order.filter(id => !this.items[id].end);
+      const writing = running.filter(id => this.items[id].text || (this.items[id].acts || []).length);
+      this.sel = writing[writing.length - 1] || running[running.length - 1] || this.order[this.order.length - 1];
+    }
+    $("#wb-tasks").innerHTML = `<div class="wb-label">작업</div>` + this.order.map(id => { const it = this.items[id];
+      return `<div class="task-row${it.end ? "" : " on"}${id === this.sel ? " sel" : ""}" data-id="${esc(id)}"><span class="st">${it.end ? it.mark : '<span class="live-dot"></span>'}</span>
+        <span class="tx"><b>${esc(it.label)}</b>${(this.liveSub(it) || this.cleanSub(it)) ? `<span>${esc(this.liveSub(it) || this.cleanSub(it))}</span>` : ""}</span><span class="sec">${secs(it.t, it.end)}초</span></div>`; }).join("");
+    $("#wb-tasks").querySelectorAll(".task-row").forEach(r => r.onclick = () => { this.sel = r.dataset.id; this.manualSel = true; this.render(); });
+    // 오른쪽: 작업 화면
+    const it = this.items[this.sel];
+    if (!it) { $("#wb-screen").innerHTML = `<div class="wb-empty">작업을 누르면 내용이 보여요</div>`; }
+    else {
+      const mode = this.modeOf(it), screen = $("#wb-screen");
+      const keepBottom = screen.scrollHeight - screen.scrollTop - screen.clientHeight < 60;
+      screen.innerHTML = `<div class="sh"><b>${esc(it.label)}</b><span class="muted">${esc(it._ai || "")}${this.cleanSub(it) ? " · " + esc(this.cleanSub(it)) : ""}</span>
+          <span class="wb-mode${it.end ? " done" : ""}" style="margin-left:auto">${this.modeLabel(mode, it)} · ${secs(it.t, it.end)}초 ${it.end ? it.mark : ""}</span></div>`
+        + this.readsHTML(it) + this.researchHTML(it) + this.contentHTML(it, mode);
+      if (keepBottom && !it.end) screen.scrollTop = screen.scrollHeight;
+    }
+    requestAnimationFrame(() => this.drawLines());
+  },
+  drawLines() {
+    const svg = $("#wb-lines"), body = $("#wb-body"); if (!svg || $("#work-big").hidden) return;
+    const b = body.getBoundingClientRect(); let paths = "";
+    $("#wb-tasks").querySelectorAll(".task-row").forEach(r => {
+      const it = this.items[r.dataset.id]; if (!it) return;
+      const chip = [...$("#wb-ais").querySelectorAll(".ai-chip")].find(c => c.dataset.ai === it._ai); if (!chip) return;
+      const c = chip.getBoundingClientRect(), t = r.getBoundingClientRect();
+      if (t.bottom < b.top || t.top > b.bottom) return;
+      const x1 = c.right - b.left, y1 = c.top + c.height / 2 - b.top, x2 = t.left - b.left, y2 = t.top + t.height / 2 - b.top, mx = (x1 + x2) / 2;
+      paths += `<path class="${it.end ? "" : "on"}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+    });
+    // AI 끼리 주고받는 것: 진행 중이거나 선택한 작업이 읽는 작업 → 그 작업 (파란 점선)
+    const rowOf = id => $("#wb-tasks").querySelector(`.task-row[data-id="${CSS.escape(id)}"]`);
+    this.order.forEach(id => { const it = this.items[id]; if (!(it.reads || []).length || (it.end && id !== this.sel)) return;
+      const tr = rowOf(id); if (!tr) return; const t = tr.getBoundingClientRect();
+      it.reads.forEach(src => { const sr = src !== "question" && rowOf(src); if (!sr) return; const r = sr.getBoundingClientRect();
+        const x = r.right - b.left, y1 = r.top + r.height / 2 - b.top, y2 = t.top + t.height / 2 - b.top, bulge = 26 + Math.min(40, Math.abs(y2 - y1) / 8);
+        paths += `<path class="link${it.end ? "" : " on"}" d="M${x},${y1} C${x + bulge},${y1} ${x + bulge},${y2} ${x},${y2}"/>`; }); });
+    const sel = $("#wb-tasks .task-row.sel"), screen = $("#wb-screen");
+    if (sel && screen) {
+      const t = sel.getBoundingClientRect(), s2 = screen.getBoundingClientRect();
+      const x1 = t.right - b.left, y1 = t.top + t.height / 2 - b.top, x2 = s2.left - b.left, y2 = Math.min(Math.max(y1, s2.top - b.top + 20), s2.bottom - b.top - 20), mx = (x1 + x2) / 2;
+      paths += `<path class="${this.items[this.sel]?.end ? "" : "on"}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}"/>`;
+    }
+    svg.innerHTML = paths;
+  },
+};
+$("#wp-min").onclick = (e) => { e.stopPropagation(); work.setView(work.view === "min" ? "small" : "min"); };
+$("#wp-big").onclick = (e) => { e.stopPropagation(); work.setView("big"); };
+$("#wp-head").onclick = () => work.setView(work.view === "min" ? "small" : "min");
+$("#wb-small").onclick = () => work.setView("small");
+$("#wb-min").onclick = () => work.setView("min");
+window.addEventListener("resize", () => work.drawLines());
+$("#wb-tasks").addEventListener("scroll", () => work.drawLines());
+
+async function send() {
+  const text = input.value.trim();
+  if ((!text && !attachments.length) || state.busy) return;
+  if (attachments.some(a => !a.id)) return alert("이미지 올리는 중이에요. 잠시만요.");
+  const images = attachments.filter(a => a.id).map(a => a.id);
+  if (share.stream && $("#share-auto").checked) {
+    const id = await share.frameId(); if (id) images.push(id);
+  }
+  input.value = ""; attachments = []; renderAttachments(); autosize(); enterThread(); addUser(text || "첨부한 화면을 분석해 줘.", images);
+  const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
+  const t0 = Date.now(); let gotAny = false;
+  work.start(!state.conv && $("#agent-select").value === "auto" ? "🧭 담당 팀 고르기" : "💬 답변 준비");
+  const tick = setInterval(() => { if (!gotAny) ai.status(`${!state.conv && $("#agent-select").value === "auto" ? "CEO가 담당 팀 고르는 중" : "답변 준비 중"}... ${Math.round((Date.now() - t0) / 1000)}초`); }, 1000);
+  ai.body.classList.add("cursor"); scrollDown(true);
+  let raw = "", tool = null; setBusy(true); state.controller = new AbortController();
+  try {
+    await stream("/api/chat", {
+      conversation_id: state.conv?.id, message: text, images, agent: $("#agent-select").value,
+      model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-mode").value,
+    }, {
+      "*": (ev, d) => work.event(ev, d),
+      meta: (m) => { gotAny = true; ai.status(""); state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
+      status: (d) => ai.status(d.text),
+      replace: (d) => { raw = d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); },
+      tool_request: (d) => { toolRequestCard(d, ai.el); loadTools(); scrollDown(); },
+      improve_request: (d) => { improveCard(d, ai.el); refreshImpBadge(); scrollDown(); },
+      market: (d) => ai.market(d.items || []),
+      draft_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
+      draft_done: (d) => { ai.team.done(d); },
+      step_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.stepStart(d); scrollDown(); },
+      step_done: (d) => { ai.team.stepDone(d); },
+      judge_start: () => { ai.team.judge(); scrollDown(); },
+      delta: (d) => { if (!raw) { ai.team.judged(); ai.body.classList.add("cursor"); } raw += d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); scrollDown(); },
+      error: (e) => { ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ ${esc(e.message)}</div>`); },
+      tool_start: (d) => { ai.body.classList.remove("cursor"); ai.body.innerHTML = finalHTML(raw); tool = addTool(d); tool.log.innerHTML = `<span class="spin">◌</span> 실행 준비 중...\n`; tool.raw = ""; scrollDown(true); },
+      tool_log: (d) => { tool.log.textContent = tool.log.textContent.replace("◌ 실행 준비 중...\n", "") + d.text + "\n"; scrollDown(); },
+      tool_result: (d) => {
+        tool.log.hidden = true;
+        if (d.text) { tool.pre.hidden = false; tool.pre.innerHTML = simHTML(d.text); tool.out.classList.add("cursor"); }
+        if (d.markdown) tool.out.innerHTML = md(d.markdown);
+        scrollDown();
+      },
+      tool_delta: (d) => { tool.raw += d.text; tool.out.innerHTML = md(tool.raw); scrollDown(); },
+      tool_done: (d) => { tool.out.classList.remove("cursor"); tool.foot.textContent = d.footer || ""; scrollDown(); },
+      tool_error: (e) => { tool.log.hidden = false; tool.out.classList.remove("cursor"); tool.log.textContent += "⚠️ " + e.message + "\n"; },
+      done: () => {},
+    }, state.controller.signal);
+  } catch (e) {
+    if (e.name !== "AbortError") ai.body.insertAdjacentHTML("beforeend", `<div class="err">⚠️ 연결 오류: ${esc(e.message)}<br>검은 창이 켜져 있는지 확인하세요. 꺼졌다면 'AI 시작.bat' 을 다시 실행하고, 계속되면 '진단.bat' 을 실행해 결과를 보여주세요.</div>`);
+    else ai.body.insertAdjacentHTML("beforeend", `<div class="muted">(중지됨)</div>`);
+  } finally {
+    clearInterval(tick); if (!gotAny) ai.status(""); work.finish(gotAny);
+    ai.body.classList.remove("cursor"); tool?.out.classList.remove("cursor"); setBusy(false); loadConvs(); input.focus();
+  }
+}
+
+// ── 도구 요청 카드 / 도구 화면 ──
+let toolsCache = null;
+async function loadTools() { toolsCache = await api("/api/tools"); renderToolsBadge(); return toolsCache; }
+function renderToolsBadge() {
+  const n = (toolsCache?.requests || []).filter(r => r.status === "pending" || r.status === "approved").length;
+  $("#tools-badge").hidden = !n; $("#tools-badge").textContent = n;
+}
+function reqStatusLabel(st) {
+  return { pending: "승인 대기", approved: "승인됨 · 키 입력 대기", done: "완료", rejected: "거절함", noted: "기록만 (목록에 없음)", failed: "실패" }[st] || st;
+}
+function toolRequestCard(req, container) {
+  const el = document.createElement("div"); el.className = "treq";
+  const kind = !req.in_catalog ? "목록에 없음" : req.type === "pip" ? "무료 · 설치형" : "무료 · 가입 필요";
+  const draw = (r, result) => {
+    const pending = r.status === "pending";
+    el.innerHTML = `<div class="th">🧰 <b>${esc(teamName(r.team))}이 도구를 요청해요: ${esc(r.name)}</b><span class="tb">${esc(kind)}</span><span class="tb ${r.status === "done" ? "ok" : pending || r.status === "approved" ? "wait" : ""}">${esc(reqStatusLabel(r.status))}</span></div>
+      ${r.why ? `<div class="why">이유: ${esc(r.why)}</div>` : ""}${req.desc ? `<div class="why">${esc(req.desc)}</div>` : ""}
+      ${!r.in_catalog ? `<div class="why">⚠️ 허용 목록에 없는 도구라 자동으로 설치하지 않아요. 기록만 남겼어요.</div>` : ""}
+      ${pending ? `<div class="acts"><button class="btn primary" data-a="approve">허용</button><button class="btn" data-a="reject">거절</button></div>` : ""}
+      ${result ? `<div class="res">${result}</div>` : ""}`;
+    el.querySelector('[data-a="approve"]')?.addEventListener("click", async (e) => {
+      e.target.disabled = true; e.target.textContent = req.type === "pip" ? "설치 중…" : "처리 중…";
+      const res = await api("/api/tools/approve", { id: r.id });
+      const steps = (res.steps || []).map(x => `<li>${esc(x)}</li>`).join("");
+      draw({ ...r, status: res.ok ? (req.type === "pip" ? "done" : "approved") : "failed" },
+        (res.ok ? "✅ " : "⚠️ ") + esc(res.message) + (res.signup ? `<br>가입: <a href="${esc(res.signup)}" target="_blank" rel="noopener">${esc(res.signup)}</a>` : "")
+        + (steps ? `<ol>${steps}</ol>` : "") + (req.type === "api_key" && res.ok ? `<div style="margin-top:6px"><button class="btn" data-a="open">🧰 도구 화면에서 키 입력</button></div>` : ""));
+      el.querySelector('[data-a="open"]')?.addEventListener("click", () => show("tools"));
+      loadTools();
+    });
+    el.querySelector('[data-a="reject"]')?.addEventListener("click", async () => {
+      await api("/api/tools/reject", { id: r.id }); draw({ ...r, status: "rejected" }); loadTools();
+    });
+  };
+  draw(req); container.appendChild(el); return el;
+}
+async function renderToolsPage() {
+  const data = await loadTools();
+  const label = { installed: ["설치됨", "ok"], missing: ["설치 안 됨", ""], key_set: ["연결됨 (키 있음)", "ok"], key_needed: ["키 필요", "wait"] };
+  $("#tools-list").innerHTML = data.tools.map(t => { const [txt, cls] = label[t.status] || [t.status, ""];
+    return `<div class="tool-card"><div class="row" style="margin:0;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><b>${esc(t.name)}</b><span class="tb ${cls}">${txt}</span><span class="tb">${t.type === "pip" ? "무료 설치형" : "무료 · 가입 필요"}</span></div>
+      <div class="muted" style="margin-top:4px">${esc(t.desc)} · ${esc((t.teams || []).map(teamName).join(", "))}</div>
+      ${t.type === "api_key" ? `<div class="row" style="display:flex;gap:6px;flex-wrap:wrap"><input class="field" type="password" placeholder="${t.status === "key_set" ? "새 키로 바꾸려면 입력" : "발급받은 키 붙여넣기"}" data-key="${esc(t.id)}" autocomplete="off"><button class="btn primary" data-save="${esc(t.id)}">저장</button>
+        <a class="btn" href="${esc(t.signup)}" target="_blank" rel="noopener">가입하러 가기</a></div>
+        ${(t.steps || []).length ? `<ol class="muted" style="margin:8px 0 0;padding-left:1.3em">${t.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol>` : ""}` : ""}
+      <div class="muted" data-msg="${esc(t.id)}" style="margin-top:6px"></div></div>`; }).join("");
+  document.querySelectorAll("[data-save]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.save, inp = document.querySelector(`[data-key="${CSS.escape(id)}"]`);
+    if (!inp.value.trim()) return inp.focus();
+    const res = await api("/api/tools/key", { tool_id: id, value: inp.value }); inp.value = "";
+    document.querySelector(`[data-msg="${CSS.escape(id)}"]`).textContent = (res.ok ? "✅ " : "⚠️ ") + res.message;
+    if (res.ok) setTimeout(renderToolsPage, 900);
+  });
+  $("#tools-reqs").innerHTML = data.requests.length ? "" : `<p class="muted">아직 요청이 없어요. AI 가 필요하다고 판단하면 채팅에 요청 카드가 떠요.</p>`;
+  data.requests.forEach(r => { const t = data.tools.find(x => x.id === r.tool_id) || {};
+    toolRequestCard({ ...r, desc: t.desc || "" }, $("#tools-reqs")); });
+}
+
+// ── 폰 접속 ──
+async function initPhone() {
+  if (!navigator.mediaDevices?.getDisplayMedia) {  // 폰은 화면 공유 불가 → 토스 캡처를 📎 로 첨부
+    $("#share-btn").hidden = true; $("#input").placeholder = "무엇이든 물어보세요. 📎 로 토스 화면 캡처를 붙이면 같이 봐요.";
+  }
+  const d = await api("/api/phone").catch(() => ({}));
+  if (d.remote) { $("#where").textContent = "📱 폰에서 접속 중 (집 PC 가 일하는 중)"; return; }
+  if (!d.on) return;
+  $("#where").textContent = "PC · 폰(같은 와이파이)에서 사용 중"; $("#phone-btn").hidden = false;
+  $("#phone-pop").innerHTML = `<b>📱 폰으로 열기</b><div class="muted" style="margin:6px 0 2px">폰이 집 와이파이에 연결된 상태에서 주소창에:</div>
+    <div class="big">${esc(d.url.replace("http://", ""))}</div><div class="muted">PIN (처음 한 번만)</div><div class="big">${esc(d.pin)}</div>
+    <div class="muted">한 번 들어가면 30일 동안 기억해요. 홈 화면에 추가하면 앱처럼 쓸 수 있어요.</div>`;
+  $("#phone-btn").onclick = (e) => { e.stopPropagation(); $("#phone-pop").hidden = !$("#phone-pop").hidden; };
+  document.addEventListener("click", (e) => { if (!e.target.closest("#phone-pop")) $("#phone-pop").hidden = true; });
+}
+
+// ── 자기 개선 ──
+function shortPath(x) { return String(x || "파일").replace(/\\/g, "/").replace(/^.*\/(_cache\/improve\/[^/]+|_company)\//, ""); }
+function diffHTML(d) {
+  return `<div class="diff">${d.split("\n").map(l => `<div class="${l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : l.startsWith("@@") ? "hunk" : ""}">${esc(l) || " "}</div>`).join("")}</div>`;
+}
+function impStatus(st) {
+  return { proposed: ["제안됨", "wait"], working: ["만드는 중", "wait"], ready: ["검사 통과 · 적용 대기", "wait"], blocked: ["검사 실패", ""],
+           failed: ["실패", ""], applied: ["적용됨", "ok"], rolled_back: ["되돌림", ""], discarded: ["버림", ""], conflict: ["충돌 · 다시 만들기 필요", ""] }[st] || [st, ""];
+}
+async function refreshImpBadge() {
+  const d = await api("/api/improve"); const n = (d.jobs || []).filter(j => ["proposed", "ready"].includes(j.status)).length;
+  $("#imp-badge").hidden = !n; $("#imp-badge").textContent = n; return d;
+}
+function improveCard(job, container) {
+  const el = document.createElement("div"); el.className = "treq";
+  const draw = async (j, extraHTML = "") => {
+    let full = j;
+    if (["ready", "blocked", "applied", "rolled_back"].includes(j.status) && !j.files?.[0]?.diff) full = await api("/api/improve/" + j.id);
+    const [label, cls] = impStatus(full.status);
+    const files = (full.files || []).map(f => `<details class="imp-file"${(full.files || []).length <= 2 ? " open" : ""}><summary>${f.protected ? "🔒 " : ""}<b>${esc(f.path)}</b> <span class="muted">${{ added: "새 파일", deleted: "삭제", modified: "수정" }[f.status] || ""} · +${f.plus} −${f.minus}</span></summary>${f.diff ? diffHTML(f.diff) : ""}</details>`).join("");
+    const checks = (full.checks || []).map(c => `<div class="chk">${c.ok ? "✅" : "❌"} ${esc(c.name)} — <span class="muted">${esc(c.detail || "")}</span></div>`).join("");
+    el.innerHTML = `<div class="th">🛠️ <b>${full.team && full.team !== "사장님" ? esc(teamName(full.team)) + "이 개선을 제안해요" : "개선 요청"}</b><span class="tb ${cls}">${esc(label)}</span></div>
+      <div class="why">${esc(full.request)}${full.why ? `<br>이유: ${esc(full.why)}` : ""}</div>
+      ${full.summary ? `<div class="md" style="font-size:13.5px;margin:6px 0">${md(full.summary)}</div>` : ""}
+      ${checks ? `<div style="margin:6px 0">${checks}</div>` : ""}${files}
+      <div class="acts">
+        ${["proposed", "failed", "blocked", "conflict", "discarded"].includes(full.status) ? `<button class="btn primary" data-a="run">${full.status === "proposed" ? "변경안 만들기" : "다시 만들기"}</button>` : ""}
+        ${full.status === "ready" ? `<button class="btn primary" data-a="apply">적용</button>` : ""}
+        ${["proposed", "ready", "blocked", "conflict"].includes(full.status) ? `<button class="btn" data-a="discard">버리기</button>` : ""}
+        ${full.status === "applied" ? `<button class="btn" data-a="rollback">되돌리기</button>${full.needs_restart ? '<span class="muted">코드가 바뀌었어요. \'AI 시작.bat\' 을 다시 켜야 적용돼요</span>' : ""}` : ""}
+      </div>${extraHTML ? `<div class="res">${extraHTML}</div>` : ""}`;
+    el.querySelector('[data-a="run"]')?.addEventListener("click", () => runImprove(full, draw));
+    for (const a of ["apply", "rollback", "discard"]) el.querySelector(`[data-a="${a}"]`)?.addEventListener("click", async (e) => {
+      e.target.disabled = true; const res = await api("/api/improve/" + a, { id: full.id });
+      const fresh = await api("/api/improve/" + full.id);
+      draw(fresh.error ? { ...full, status: a === "discard" ? "discarded" : full.status } : fresh, (res.ok === false ? "⚠️ " : "✅ ") + esc(res.message || (res.ok ? "완료" : "실패")));
+      refreshImpBadge();
+    });
+  };
+  draw(job); container.appendChild(el); return el;
+}
+async function runImprove(job, draw) {
+  draw({ ...job, status: "working" });
+  work.start();
+  let result = null;
+  try {
+    await stream("/api/improve/run", { id: job.id, model: $("#model-select").value }, {
+      "*": (ev, d) => { if (ev !== "done") work.event(ev, d); },
+      improve_result: (d) => { result = d; },
+      error: (e) => { result = { ...job, status: "failed", summary: "⚠️ " + e.message }; },
+    });
+  } catch (e) { result = { ...job, status: "failed", summary: "⚠️ " + e.message }; }
+  work.finish(!!result && result.status !== "failed", true);
+  draw(result || { ...job, status: "failed" }); refreshImpBadge();
+}
+async function renderImprovePage() {
+  const d = await refreshImpBadge();
+  $("#imp-list").innerHTML = (d.jobs || []).length ? "" : `<p class="muted">아직 개선 기록이 없어요.</p>`;
+  (d.jobs || []).forEach(j => improveCard(j, $("#imp-list")));
+}
+$("#imp-new").onclick = async () => {
+  const t = $("#imp-input").value.trim(); if (!t) return $("#imp-input").focus();
+  const job = await api("/api/improve/new", { request: t }); if (job.error) return alert(job.error);
+  $("#imp-input").value = ""; const card = improveCard(job, document.createElement("div"));
+  $("#imp-list").prepend(card); card.querySelector('[data-a="run"]')?.click();
+};
+
+// ── 공부 노트 ──
+async function loadNotes() {
+  const notes = await api("/api/wiki");
+  $("#note-list").innerHTML = notes.map(n => `<button class="note-item" data-path="${esc(n.path)}"><span>${esc(n.topic)}<br><span class="muted">${esc(n.path.split("/")[0])}</span></span><span class="status ${n.status.includes("완료") ? "done" : "todo"}">${esc(n.status || "—")}</span></button>`).join("")
+    || `<p class="muted">아직 노트가 없어요. 위에서 주제를 넣고 공부시켜 보세요.</p>`;
+  document.querySelectorAll(".note-item").forEach(b => b.onclick = () => openNote(b.dataset.path));
+}
+async function openNote(path) {
+  const n = await api("/api/wiki/" + encodeURIComponent(path)); if (n.error) return;
+  $("#note-path").textContent = n.path; $("#note-body").innerHTML = md(n.content.replace(/^---[\s\S]*?---\n/, ""));
+  $("#note-view").hidden = false; $("#note-view").scrollIntoView({ behavior: "smooth" });
+}
+$("#note-close").onclick = () => $("#note-view").hidden = true;
+async function runLearn(body) {
+  const log = $("#learn-log"); log.hidden = false; log.textContent = "";
+  const btns = [$("#learn-btn"), $("#learn-auto")]; btns.forEach(b => b.disabled = true);
+  try {
+    await stream("/api/learn", { ...body, model: $("#model-select").value }, {
+      log: (d) => { log.textContent += d.text + "\n"; log.scrollTop = log.scrollHeight; },
+      note: (d) => { loadNotes(); openNote(d.path); },
+      error: (e) => { log.textContent += "⚠️ " + e.message + "\n"; },
+      done: () => { log.textContent += "✅ 완료\n"; },
+    });
+  } catch (e) { log.textContent += "⚠️ " + e.message + "\n"; }
+  finally { btns.forEach(b => b.disabled = false); }
+}
+$("#learn-btn").onclick = () => { const t = $("#learn-topic").value.trim(); if (t) runLearn({ topic: t }); else $("#learn-topic").focus(); };
+$("#learn-topic").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) $("#learn-btn").click(); });
+$("#learn-auto").onclick = () => runLearn({ rounds: 1 });
+
+// ── 시뮬레이션 ──
+let simMode = "goal";
+document.querySelectorAll("[data-sim]").forEach(t => t.onclick = () => {
+  simMode = t.dataset.sim; document.querySelectorAll("[data-sim]").forEach(x => x.classList.toggle("active", x === t));
+  $("#sim-goal-form").hidden = simMode !== "goal"; $("#sim-stock-form").hidden = simMode !== "stock";
+});
+$("#sim-btn").onclick = async () => {
+  const body = simMode === "goal" ? { goal: $("#sim-goal").value.trim() }
+    : { stock: $("#sim-ticker").value.trim(), years: $("#sim-years").value, target: $("#sim-target").value };
+  if (simMode === "goal" && !body.goal) return $("#sim-goal").focus();
+  if (simMode === "stock" && !body.stock) return $("#sim-ticker").focus();
+  body.model = $("#model-select").value;
+  const log = $("#sim-log"); log.hidden = false; log.textContent = ""; $("#sim-out").hidden = true;
+  $("#sim-btn").disabled = true; let raw = "";
+  try {
+    await stream("/api/simulate", body, {
+      log: (d) => { log.textContent += d.text + "\n"; },
+      result: (d) => { $("#sim-out").hidden = false; $("#sim-result").innerHTML = simHTML(d.text); $("#sim-explain").innerHTML = ""; $("#sim-explain").classList.add("cursor"); $("#sim-report").textContent = ""; },
+      delta: (d) => { raw += d.text; $("#sim-explain").innerHTML = md(raw); },
+      error: (e) => { log.textContent += "⚠️ " + e.message + "\n"; },
+      done: (d) => { $("#sim-report").textContent = d.report ? "📝 보고서 저장: " + d.report : ""; log.hidden = true; },
+    });
+  } catch (e) { log.textContent += "⚠️ " + e.message + "\n"; }
+  finally { $("#sim-btn").disabled = false; $("#sim-explain").classList.remove("cursor"); }
+};
+
+init();
+</script>
+</body>
+</html>
