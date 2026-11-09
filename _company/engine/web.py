@@ -567,23 +567,30 @@ class Handler(BaseHTTPRequestHandler):
                             "member_model": (override or tm.team_config(agent_id).get("member_model") or "") if use_team else ""})
         delta = lambda t: self._send("delta", {"text": t})  # noqa: E731
         effort = body.get("effort") or "medium"
-        market = self._market_context(agent_id, text, history, spec)
+        drafts, steps = [], []
+        style = tm.settings().get("team_style", "review")
+        # 시세·공시 가져오기와 공용 자료수집(리서치 3명)을 '동시에' 시작 → 기다리는 시간 단축
+        from concurrent.futures import ThreadPoolExecutor
+        research_ids, header_note = [], ""
+        want_research = rs.wanted(use_team) and agent_id != "researcher"
+        with ThreadPoolExecutor(max_workers=2) as pre:
+            f_market = pre.submit(self._market_context, agent_id, text, history, spec)
+            f_research = None
+            if want_research:
+                log("  🌐 공용 자료수집 3명 조사 중...")
+                f_research = pre.submit(
+                    rs.run_research, text, agent_id, override,
+                    on_step_start=lambda st: self._send("step_start", st.as_dict()),
+                    on_step_done=lambda st: self._send("step_done", st.as_dict()),
+                    on_step_text=lambda st, t: self._send("step_text", {"id": st.id, "text": t}),
+                    on_step_activity=lambda st, a: self._send("step_activity", {"id": st.id, **a}))
+            market = f_market.result()
+            pack, rsteps = f_research.result() if f_research else ("", [])
         if market:
             extra += "\n\n" + market
         if at.ASK_WORDS.search(text) or (toss.ACCOUNT_WORDS.search(text) and at.config()["mode"] != "off"):
             extra += "\n\n" + at.summary_for_prompt()   # 자동매매가 산 것·오늘 손익을 채팅 AI 도 알게
-        drafts, steps = [], []
-        style = tm.settings().get("team_style", "review")
-        # 공용 자료수집: 리서치 팀 3명이 먼저 홈페이지·공식 자료를 찾아 모든 팀원에게 넘겨줌
-        research_ids, header_note = [], ""
-        if rs.wanted(use_team) and agent_id != "researcher":
-            log("  🌐 공용 자료수집 3명 조사 중...")
-            pack, rsteps = rs.run_research(
-                text, agent_id, override,
-                on_step_start=lambda st: self._send("step_start", st.as_dict()),
-                on_step_done=lambda st: self._send("step_done", st.as_dict()),
-                on_step_text=lambda st, t: self._send("step_text", {"id": st.id, "text": t}),
-                on_step_activity=lambda st, a: self._send("step_activity", {"id": st.id, **a}))
+        if want_research:
             steps += rsteps
             if pack:
                 extra += "\n\n" + pack
