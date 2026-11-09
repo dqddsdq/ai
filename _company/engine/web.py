@@ -263,6 +263,31 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers(); self.wfile.write(body)
 
+    def _autotrade_post(self, path: str, body: dict):
+        if path == "/api/autotrade/config":
+            return self._json(at.save_config(body if isinstance(body, dict) else {}))
+        if path == "/api/autotrade/stop":
+            return self._json(at.emergency_stop())
+        if path == "/api/autotrade/run":
+            try:
+                return self._json(at.run_once(force=True))
+            except Exception as e:
+                return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
+        if path == "/api/autotrade/action":
+            return self._json(at.apply_action(body.get("action") or {}))
+        if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
+            return self._json(at.unhalt())
+        if path == "/api/autotrade/review":
+            return self._json(at.review_now())
+        if path == "/api/autotrade/proposal":
+            from . import tradelearn as tlearn   # 'tl' 은 도구(tools) 모듈 이름이라 겹치면 안 됨
+            return self._json(tlearn.decide(str(body.get("id", "")), str(body.get("action", ""))))
+        if path == "/api/autotrade/scan":
+            return self._json(at.scan_now())
+        if path == "/api/autotrade/reset-paper":
+            return self._json(at.reset_paper())
+        return self._json({"error": "없는 주소"}, 404)
+
     # GET
     def do_GET(self):
         if not self._local_only():
@@ -270,10 +295,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/" or path == "/index.html":
             return self._static("index.html", "text/html; charset=utf-8")
-        if path == "/api/autotrade":
-            return self._json(at.overview())
-        if path == "/api/charts/auto":
-            return self._json({"items": at.auto_charts()})
+        if path in ("/api/autotrade", "/api/charts/auto"):   # ?market=US|KR (없으면 첫 시장)
+            qm = dict(parse_qsl(urlparse(self.path).query)).get("market")
+            with at.in_market(qm):
+                return self._json(at.overview() if path == "/api/autotrade" else {"items": at.auto_charts()})
         if path == "/api/chart":   # 📊 차트 그리기 (자동매매가 가진 종목이면 산 가격·손절·나눠 팔기선 표시)
             q = dict(parse_qsl(urlparse(self.path).query))
             try:
@@ -371,28 +396,9 @@ class Handler(BaseHTTPRequestHandler):
                 with contextlib.suppress(Exception):
                     self._send("error", {"message": str(e)})
             return
-        if path == "/api/autotrade/config":
-            return self._json(at.save_config(body if isinstance(body, dict) else {}))
-        if path == "/api/autotrade/stop":
-            return self._json(at.emergency_stop())
-        if path == "/api/autotrade/run":
-            try:
-                return self._json(at.run_once(force=True))
-            except Exception as e:
-                return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
-        if path == "/api/autotrade/action":
-            return self._json(at.apply_action(body.get("action") or {}))
-        if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
-            return self._json(at.unhalt())
-        if path == "/api/autotrade/review":
-            return self._json(at.review_now())
-        if path == "/api/autotrade/proposal":
-            from . import tradelearn as tlearn   # 'tl' 은 도구(tools) 모듈 이름이라 겹치면 안 됨
-            return self._json(tlearn.decide(str(body.get("id", "")), str(body.get("action", ""))))
-        if path == "/api/autotrade/scan":
-            return self._json(at.scan_now())
-        if path == "/api/autotrade/reset-paper":
-            return self._json(at.reset_paper())
+        if path.startswith("/api/autotrade/"):   # 시장별 동작은 body.market 기준
+            with at.in_market(body.get("market") if isinstance(body, dict) else None):
+                return self._autotrade_post(path, body)
         if path == "/api/improve/new":
             req = str(body.get("request", "")).strip()
             return self._json(im.create(req, "", "사장님") if req else {"error": "무엇을 바꿀지 적어 주세요"})

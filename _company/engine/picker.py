@@ -336,52 +336,65 @@ def _rsi(xs: list[float], n: int = 14) -> float | None:
     return 100.0 if l == 0 else 100 - 100 / (1 + g / l)
 
 
-def scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
-    """꾸준한 상승 추세 종목 (현재가 > 20일선 > 60일선, RSI 적당, 유동성) 상위 N개."""
+def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6) -> dict:
+    """스윙(추세) 후보: 현재가 > 20일선 > 60일선, RSI 적당, 유동성 · 점수 높은 순 N*2 개.
+    급등주 기준값(base)이 있으면 그 목록에서 거래대금·가격으로 먼저 걸러서 빠르게 (미장도 가능), 6개씩 동시에 조회."""
+    from concurrent.futures import ThreadPoolExecutor
     market = cfg.get("market", "KR")
     exclude = exclude or set()
-    infos = universe(market, log)
     fx = _fx(market, cfg)
-    plain = [s for s in infos if s not in exclude]
+    min_price = 1000 if market == "KR" else cfg.get("us_min_price", 1.0)
+    max_price = (cfg["max_order_krw"] / fx) if cfg.get("max_order_krw") else 1e12
+    base = load_base(market) if base_ready(market) else {}
+    if base.get("rows"):
+        names = {k: v["name"] for k, v in base["rows"].items()}
+        cands = [k for k, v in base["rows"].items() if k not in exclude and v["value20_krw"] >= cfg["min_trading_value_krw"]
+                 and min_price <= v["prev"] <= max_price]
+    else:
+        infos = universe(market, log)
+        names = {k: v.get("name", k) for k, v in infos.items()}
+        cands = [k for k in infos if k not in exclude]
     prices = {}
-    for chunk in _chunks(plain, 200):
+    for chunk in _chunks(cands, 200):
         try:
             prices.update({k: v["price"] for k, v in toss.prices(chunk).items()})
         except toss.TossError as e:
             log(f"   현재가 일부 실패: {e}")
-    min_price = 1000 if market == "KR" else cfg.get("us_min_price", 1.0)
-    afford = [s for s in plain if min_price <= prices.get(s, 0) <= cfg["max_order_krw"] / fx]
-    log(f"🔎 추세 종목 찾기: {len(afford)}개 차트 확인 (몇 분)")
+    afford = [x for x in cands if min_price <= prices.get(x, 0) <= max_price]
+    log(f"🔎 스윙(추세) 후보 찾기: {len(afford)}개 차트 확인 (동시 {workers}개)")
     today = session_date(market)
-    scored = []
-    for sym in afford:
+
+    def one(sym):
         try:
             r = toss._get("/api/v1/candles", symbol=sym, interval="1d", count=70) or {}
         except toss.TossError:
-            continue
+            return None
         cs = sorted(r.get("candles") or [], key=lambda c: c["timestamp"])
         if len(cs) < 61:
-            continue
+            return None
         closes = [float(c["closePrice"]) for c in cs]
         vols = [float(c.get("volume") or 0) for c in cs]
         price = prices[sym]
         series = (closes[:-1] if cs[-1]["timestamp"][:10] == today else closes) + [price]
         value20 = sum(c * v for c, v in zip(closes[-20:], vols[-20:])) / 20 * fx
         if value20 < cfg["min_trading_value_krw"]:
-            continue
+            return None
         ma20, ma60, rsi = sum(series[-20:]) / 20, sum(series[-60:]) / 60, _rsi(series)
         if not (price > ma20 > ma60 and rsi is not None and 45 <= rsi <= cfg["rsi_max_buy"]):
-            continue
+            return None
         r20, r60 = (price / series[-21] - 1) * 100, (price / series[-61] - 1) * 100
         rets = [math.log(b / a) for a, b in zip(series[-21:-1], series[-20:]) if a > 0 and b > 0]
         vol = (sum(x * x for x in rets) / max(len(rets), 1)) ** 0.5 * math.sqrt(252) * 100
-        scored.append({"symbol": sym, "name": infos[sym].get("name", sym), "price": price,
-                       "score": round(r20 + r60 / 2 - max(0.0, vol - 60) * 0.3, 1),
-                       "reason": f"20일 {r20:+.1f}% · 60일 {r60:+.1f}% · RSI {rsi:.0f} · 거래대금 {value20 / 1e8:,.0f}억원/일 · 변동성 {vol:.0f}%"})
+        return {"symbol": sym, "name": names.get(sym, sym), "price": price, "r20": round(r20, 1), "r60": round(r60, 1), "rsi": round(rsi),
+                "score": round(r20 + r60 / 2 - max(0.0, vol - 60) * 0.3, 1),
+                "reason": f"20일 {r20:+.1f}% · 60일 {r60:+.1f}% · RSI {rsi:.0f} · 거래대금 {value20 / 1e8:,.0f}억원/일 · 변동성 {vol:.0f}%"}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        scored = [x for x in pool.map(one, afford) if x]
     scored.sort(key=lambda x: -x["score"])
     picks = []
     for c in scored:
-        if len(picks) >= cfg.get("pick_count", 3):
+        if len(picks) >= cfg.get("pick_count", 3) * 2:
             break
         try:
             if toss._get(f"/api/v1/stocks/{c['symbol']}/warnings"):
@@ -389,5 +402,5 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
         except toss.TossError:
             pass
         picks.append(c)
-    note = f"{len(afford)}개 중 조건 통과 {len(scored)}개 → {len(picks)}개 선택"
+    note = f"{len(afford)}개 중 추세 조건 통과 {len(scored)}개 → {len(picks)}개"
     return {"day": today, "picks": picks, "note": note, "strategy": "trend", "market": market}

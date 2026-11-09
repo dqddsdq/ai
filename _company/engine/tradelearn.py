@@ -53,6 +53,17 @@ def _now() -> str:
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _tm(t: dict) -> str:
+    """거래의 시장 (예전 기록은 종목코드로 추정)"""
+    m = (t.get("features") or {}).get("mkt")
+    return m if m in ("US", "KR") else ("KR" if str(t.get("sym", "")).isdigit() else "US")
+
+
+def _ts(t: dict) -> str:
+    """거래의 종류: surge(단타) / swing(스윙)"""
+    return (t.get("features") or {}).get("style") or "surge"
+
+
 def _pnl(t: dict) -> float:
     q = sum(x["qty"] for x in t["exits"])
     return sum(x["qty"] * (x["px"] / t["entry_px"] - 1) for x in t["exits"]) / q * 100 if q and t["entry_px"] else 0.0
@@ -123,9 +134,12 @@ def _kind(reason: str) -> str:
 
 def _update_guard(d: dict, t: dict, cfg: dict) -> None:
     """장중 조심 규칙 (자동): 연속 손실 → 잠시 쉬기 / 오늘 프리장 매수 2번 다 손실 → 오늘 프리장 매수 중단"""
-    g = d["guard"]
-    if g.get("day") != t["day"]:
-        g.clear(); g["day"] = t["day"]
+    gk = f"{_tm(t)}:{t['day']}"
+    if not isinstance(d["guard"].get(gk), dict) or "day" in d["guard"]:
+        d["guard"] = {k: v for k, v in d["guard"].items() if isinstance(v, dict) and ":" in k}   # 예전 형식 정리
+    for k in sorted(d["guard"])[:-6]:
+        d["guard"].pop(k)
+    g = d["guard"].setdefault(gk, {"day": gk})
     if t["pnl_pct"] < 0:
         g["streak"] = g.get("streak", 0) + 1
     else:
@@ -136,7 +150,7 @@ def _update_guard(d: dict, t: dict, cfg: dict) -> None:
         g["pause_why"] = f"{g['streak']}번 연속 손실 → {cfg.get('pause_min', 30)}분 매수 쉬기"
         g["streak"] = 0
     if t.get("features", {}).get("pre"):
-        pre = [x for x in d["trades"] if x["day"] == t["day"] and x["closed"] and x.get("features", {}).get("pre")]
+        pre = [x for x in d["trades"] if x["day"] == t["day"] and _tm(x) == _tm(t) and x["closed"] and x.get("features", {}).get("pre")]
         if len(pre) >= 2 and all(x["pnl_pct"] < 0 for x in pre):
             g["no_premarket"] = f"오늘 프리장 매수 {len(pre)}번 모두 손실 → 오늘은 프리장 매수 중단"
 
@@ -144,8 +158,8 @@ def _update_guard(d: dict, t: dict, cfg: dict) -> None:
 def guard(day: str, premarket_now: bool) -> str:
     """지금 매수를 쉬어야 하면 이유, 아니면 ''"""
     with _lock:
-        g = _load()["guard"]
-    if g.get("day") != day:
+        g = _load()["guard"].get(day) or {}
+    if not isinstance(g, dict) or not g:
         return ""
     if g.get("pause_until") and _now() < g["pause_until"]:
         return g.get("pause_why", "잠시 쉬기") + f" (~{g['pause_until'][11:16]})"
@@ -212,24 +226,40 @@ def _bin(v, edges) -> int:
     return -1
 
 
+R20_EDGES = [-1e9, 5, 10, 20, 1e9]
+RSI_EDGES = [0, 55, 62, 100]
+
+
 def _key(f: dict) -> tuple:
+    """비슷한 조건 묶음: 시장 · 종류(단타/스윙) · (단타) 프리장·상승률·거래량 구간 / (스윙) 20일 수익률·RSI 구간"""
+    mkt, style = f.get("mkt") or "US", f.get("style") or "surge"
+    if style == "swing":
+        return (mkt, style, _bin(f.get("r20"), R20_EDGES), _bin(f.get("rsi"), RSI_EDGES))
     pre = bool(f.get("pre"))
-    return (pre, _bin(f.get("change"), CHANGE_EDGES), _bin(f.get("ratio"), PRE_RATIO_EDGES if pre else RATIO_EDGES))
+    return (mkt, style, pre, _bin(f.get("change"), CHANGE_EDGES), _bin(f.get("ratio"), PRE_RATIO_EDGES if pre else RATIO_EDGES))
+
+
+def _tkey(t: dict) -> tuple:
+    f = dict(t.get("features") or {})
+    f.setdefault("mkt", _tm(t)); f.setdefault("style", _ts(t))
+    return _key(f)
 
 
 def estimate(features: dict, cfg: dict) -> dict:
     """살 후보의 승률·기대 수익 추정. 기록이 적으면 전체 승률(없으면 40%) 쪽으로 보수적으로 당김.
     반환: {p, n, ev, avg_win, avg_loss, basis}"""
-    with _lock:
-        ts = [t for t in _load()["trades"] if t["closed"]][-200:]
+    f0 = dict(features); f0.setdefault("mkt", "US"); f0.setdefault("style", "surge")
+    with _lock:   # 같은 시장·같은 종류(단타/스윙) 거래만 기준으로
+        ts = [t for t in _load()["trades"] if t["closed"] and _tm(t) == f0["mkt"] and _ts(t) == f0["style"]][-200:]
     wins_all = [t["pnl_pct"] for t in ts if t["pnl_pct"] > 0]
     loss_all = [t["pnl_pct"] for t in ts if t["pnl_pct"] <= 0]
     base_p = len(wins_all) / len(ts) if len(ts) >= 10 else 0.4
-    avg_win = st.mean(wins_all) if len(wins_all) >= 3 else float(cfg.get("partial_tp_pct") or 5) * 0.8
-    avg_loss = st.mean(loss_all) if len(loss_all) >= 3 else -float(cfg.get("stop_loss_pct", 3))
-    k = _key(features)
-    exact = [t for t in ts if _key(t.get("features") or {}) == k]
-    part = [t for t in ts if (t.get("features") or {}).get("pre", False) == k[0] and _key(t.get("features") or {})[2] == k[2]]  # 같은 장·같은 거래량 구간
+    swing = f0["style"] == "swing"
+    avg_win = st.mean(wins_all) if len(wins_all) >= 3 else (float(cfg.get("swing_trail_pct", 8)) if swing else float(cfg.get("partial_tp_pct") or 5) * 0.8)
+    avg_loss = st.mean(loss_all) if len(loss_all) >= 3 else -float(cfg.get("swing_stop_pct", 6) if swing else cfg.get("stop_loss_pct", 3))
+    k = _key(f0)
+    exact = [t for t in ts if _tkey(t) == k]
+    part = [t for t in ts if _tkey(t)[:3] == k[:3] and _tkey(t)[-1] == k[-1]]   # 같은 시장·종류·(프리장/구간 하나) 묶음
     sample = exact if len(exact) >= 5 else (part if len(part) >= 5 else exact)
     n = len(sample)
     w = sum(1 for t in sample if t["pnl_pct"] > 0)
@@ -265,14 +295,15 @@ def _bucket(ts: list[dict], key, edges: list[float], unit: str) -> dict:
     return out
 
 
-def today_stats(day: str, mode: str) -> dict:
+def today_stats(day: str, mode: str, market: str | None = None) -> dict:
     with _lock:
         d = _load()
-    ts = [t for t in d["trades"] if t["day"] == day and t["closed"] and t["mode"] == mode]
-    open_ = [t for t in d["trades"] if t["day"] == day and not t["closed"] and t["mode"] == mode]
+    ts = [t for t in d["trades"] if t["day"] == day and t["closed"] and t["mode"] == mode and (not market or _tm(t) == market)]
+    open_ = [t for t in d["trades"] if not t["closed"] and t["mode"] == mode and (not market or _tm(t) == market)]
     s = _stats(ts)
     s["open"] = [{"sym": t["sym"], "mfe": t["mfe"], "mae": t["mae"]} for t in open_]
-    s["guard"] = d["guard"] if d["guard"].get("day") == day else {}
+    g = d["guard"].get(f"{market}:{day}") if market else None
+    s["guard"] = g if isinstance(g, dict) else {}
     return s
 
 
@@ -298,11 +329,13 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
     """장 마감 후 복기 + 규칙 조정 제안. 같은 날 다시 부르면 덮어씀."""
     with _lock:
         d = _load()
-    today = [t for t in d["trades"] if t["day"] == day and t["closed"] and t["mode"] == mode]
-    recent = [t for t in d["trades"] if t["closed"] and t["mode"] == mode][-30:]
-    w = d["watch"].get(day, {})
+    mk = cfg.get("market", "US")
+    today = [t for t in d["trades"] if t["day"] == day and t["closed"] and t["mode"] == mode and _tm(t) == mk]
+    recent = [t for t in d["trades"] if t["closed"] and t["mode"] == mode and _tm(t) == mk][-30:]
+    w = d["watch"].get(f"{mk}:{day}") or d["watch"].get(day, {})
     missed = [(s, (x["max"] / x["pick_px"] - 1) * 100) for s, x in w.items() if not x.get("bought") and x.get("pick_px")]
-    rep = {"day": day, "mode": mode, "created": _now(), "today": _stats(today), "recent": _stats(recent),
+    rep = {"day": day, "mode": mode, "market": mk, "created": _now(),
+           "by_style": {k: v for k, v in (("단타", _stats([t for t in recent if _ts(t) == "surge"])), ("스윙", _stats([t for t in recent if _ts(t) == "swing"]))) if v["n"]}, "today": _stats(today), "recent": _stats(recent),
            "by_exit": {k: _stats([t for t in today if t.get("exit_kind") == k]) for k in {t.get("exit_kind") for t in today}},
            "by_change": _bucket(recent, "change", [0, 8, 12, 20, 1e9], "%"),
            "by_ratio": _bucket(recent, "ratio", [0, 3, 5, 10, 1e9], "배"),
@@ -384,7 +417,7 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
                                               "거래량이 덜 붙은 종목을 산 게 성적이 나빠요", f"거래량 {med:.1f}배 미만 평균 {st.mean(low):+.2f}% vs 이상 {st.mean(high):+.2f}%"))
         rep["proposals"] = [p["id"] for p in proposals if p]
         rep["note"] = "" if len(recent) >= MIN_TRADES else f"거래가 {len(recent)}건뿐이라 규칙 조정 제안은 {MIN_TRADES}건 이상 쌓이면 시작해요"
-        d["reviews"] = [r for r in d["reviews"] if not (r["day"] == day and r["mode"] == mode)] + [rep]
+        d["reviews"] = [r for r in d["reviews"] if not (r["day"] == day and r["mode"] == mode and r.get("market", "US") == mk)] + [rep]
         _save(d)
 
     if use_ai and (today or missed):
@@ -392,7 +425,7 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
         with _lock:
             d = _load()
             for r in d["reviews"]:
-                if r["day"] == day and r["mode"] == mode:
+                if r["day"] == day and r["mode"] == mode and r.get("market", "US") == mk:
                     r["text"] = rep["text"]
             _save(d)
     return rep
@@ -462,30 +495,30 @@ def decide(pid: str, action: str, auto: bool = False, to=None) -> dict:
     return {"ok": True, "proposal": p}
 
 
-def overview(day: str, mode: str) -> dict:
+def overview(day: str, mode: str, market: str | None = None) -> dict:
     with _lock:
         d = _load()
-    revs = [r for r in d["reviews"] if r["mode"] == mode]
-    return {"today": today_stats(day, mode), "review": revs[-1] if revs else None,
+    revs = [r for r in d["reviews"] if r["mode"] == mode and (not market or r.get("market", "US") == market)]
+    return {"today": today_stats(day, mode, market), "review": revs[-1] if revs else None,
             "proposals": [p for p in d["proposals"] if p["status"] in ("pending", "applied")][-20:][::-1],
-            "trades": [t for t in d["trades"] if t["mode"] == mode][-30:][::-1]}
+            "trades": [t for t in d["trades"] if t["mode"] == mode and (not market or _tm(t) == market)][-30:][::-1]}
 
 
-def day_sums(mode: str, n: int = 5) -> list[float]:
+def day_sums(mode: str, n: int = 5, market: str | None = None) -> list[float]:
     """최근 복기 n일의 하루 손익 합(%) — 오래된 것 → 최근"""
     with _lock:
-        revs = [r for r in _load()["reviews"] if r["mode"] == mode and r["today"].get("n")]
+        revs = [r for r in _load()["reviews"] if r["mode"] == mode and r["today"].get("n") and (not market or r.get("market", "US") == market)]
     return [r["today"]["sum"] for r in revs[-n:]]
 
 
-def trades_since(mode: str, since: str) -> list[dict]:
+def trades_since(mode: str, since: str, market: str | None = None) -> list[dict]:
     with _lock:
-        return [t for t in _load()["trades"] if t["mode"] == mode and t["closed"] and t["entry_time"] >= since]
+        return [t for t in _load()["trades"] if t["mode"] == mode and t["closed"] and t["entry_time"] >= since and (not market or _tm(t) == market)]
 
 
-def last_review_text(mode: str) -> str:
+def last_review_text(mode: str, market: str | None = None) -> str:
     with _lock:
-        revs = [r for r in _load()["reviews"] if r["mode"] == mode]
+        revs = [r for r in _load()["reviews"] if r["mode"] == mode and (not market or r.get("market", "US") == market)]
     if not revs:
         return ""
     r = revs[-1]
