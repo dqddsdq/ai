@@ -168,37 +168,86 @@ def load_base(market: str) -> dict:
         return {}
 
 
-def prepare_day(cfg: dict, log=print) -> dict:
-    """장 전 하루 한 번: 종목별 전일 종가·20일 평균 거래량·거래대금(원 환산)."""
+def prepare_day(cfg: dict, log=print, workers: int = 6) -> dict:
+    """장 전 하루 한 번: 종목별 전일 종가·20일 평균 거래량·거래대금(원 환산).
+    빠르게: ① 예산으로 1주도 못 사는 종목·동전주는 미리 뺌 ② 6개씩 동시에 조회(속도 제한은 toss 가 지킴)
+    ③ 300개마다 중간 저장 → 다시 켜도 이어서"""
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
     market = cfg["market"]
     if base_ready(market):
         return load_base(market)
     today = session_date(market)
+    PROGRESS.update(done=0, total=0, what="종목 목록 받기")
     infos = universe(market, log)
     fx = _fx(market, cfg)
     syms = sorted(infos)
-    log(f"🔎 {'미장' if market == 'US' else '국장'} 급등주 준비: 보통주 {len(syms)}개 기준값 계산 중 (처음엔 몇 분~10여 분)")
-    rows = {}
-    PROGRESS.update(done=0, total=len(syms), what="급등주 기준값 계산")
-    for i, sym in enumerate(syms):
-        PROGRESS["done"] = i
-        if i and i % 500 == 0:
-            log(f"   {i}/{len(syms)}")
+
+    # ① 가격으로 미리 거르기 (예산의 1.5배까지는 남김 — 장중에 올라도 잡히게)
+    min_price = 1000 if market == "KR" else cfg.get("us_min_price", 1.0)
+    max_price = cfg["max_order_krw"] / fx * 1.5
+    PROGRESS.update(what="현재가로 거르기")
+    prices = {}
+    for chunk in _chunks(syms, 200):
+        try:
+            prices.update({k: v["price"] for k, v in toss.prices(chunk).items()})
+        except toss.TossError as e:
+            log(f"   현재가 일부 실패: {e}")
+    if prices:
+        no_cap = max_price < (5 if market == "US" else 5000)   # 예산을 아직 모르면(현금 0 등) 가격 상한은 안 씀
+        syms = [x for x in syms if x in prices and prices[x] >= min_price * 0.7 and (no_cap or prices[x] <= max_price)]
+
+    # ③ 중간 저장분 이어받기
+    part_file = _base_file(market).with_suffix(".partial.json")
+    rows: dict[str, dict] = {}
+    done: set[str] = set()
+    try:
+        part = json.loads(part_file.read_text(encoding="utf-8"))
+        if part.get("day") == today:
+            rows, done = part.get("rows", {}), set(part.get("done", []))
+    except Exception:
+        pass
+    todo = [x for x in syms if x not in done]
+    log(f"🔎 {'미장' if market == 'US' else '국장'} 급등주 준비: {len(syms)}개 기준값 계산" + (f" (이어서 {len(todo)}개 남음)" if done else "")
+        + f" · 동시 {workers}개")
+    PROGRESS.update(done=len(syms) - len(todo), total=len(syms), what="급등주 기준값 계산")
+    lock = threading.Lock()
+
+    def save_part():
+        part_file.parent.mkdir(parents=True, exist_ok=True)
+        part_file.write_text(json.dumps({"day": today, "rows": rows, "done": sorted(done)}, ensure_ascii=False), encoding="utf-8")
+
+    def one(sym: str):
         try:
             r = toss._get("/api/v1/candles", symbol=sym, interval="1d", count=22) or {}
         except toss.TossError:
-            continue
-        cs = [c for c in sorted(r.get("candles") or [], key=lambda c: c["timestamp"]) if c["timestamp"][:10] < today]
-        if len(cs) < 20:
-            continue
-        closes = [float(c["closePrice"]) for c in cs[-20:]]
-        vols = [float(c.get("volume") or 0) for c in cs[-20:]]
-        rows[sym] = {"name": infos[sym].get("name") or sym, "prev": closes[-1], "vol20": sum(vols) / 20,
-                     "value20_krw": sum(c * v for c, v in zip(closes, vols)) / 20 * fx}
-    PROGRESS.update(done=len(syms), total=len(syms), what="")
+            r = None
+        row = None
+        if r is not None:
+            cs = [c for c in sorted(r.get("candles") or [], key=lambda c: c["timestamp"]) if c["timestamp"][:10] < today]
+            if len(cs) >= 20:
+                closes = [float(c["closePrice"]) for c in cs[-20:]]
+                vols = [float(c.get("volume") or 0) for c in cs[-20:]]
+                row = {"name": infos[sym].get("name") or sym, "prev": closes[-1], "vol20": sum(vols) / 20,
+                       "value20_krw": sum(c * v for c, v in zip(closes, vols)) / 20 * fx}
+        with lock:
+            if row:
+                rows[sym] = row
+            if r is not None:   # 실패한 건 다음에 다시
+                done.add(sym)
+            PROGRESS["done"] += 1
+            n = PROGRESS["done"]
+            if n % 300 == 0:
+                save_part()
+                log(f"   {n}/{PROGRESS['total']}")
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(one, todo))
+    PROGRESS.update(done=PROGRESS["total"], what="")
     b = {"day": today, "market": market, "rows": rows}
     _base_file(market).parent.mkdir(parents=True, exist_ok=True)
     _base_file(market).write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
+    part_file.unlink(missing_ok=True)
     log(f"🔎 급등주 준비 끝: {len(rows)}개")
     return b
 
@@ -233,26 +282,31 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
     pre = mins is not None and mins < 0      # 프리장: 거래가 원래 적음 → '평소 하루 거래량의 몇 %가 벌써 거래됐나'로 판단
     elapsed = max(10, mins if mins is not None and mins > 0 else 390)
     frac = min(1.0, elapsed / 390)          # 정규장: 하루 중 지금까지 비율 → 거래량 비교 보정
-    found = []
-    for chg, s, p in movers[:40]:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def check(m):
+        chg, s, p = m
         try:
             cs = (toss._get("/api/v1/candles", symbol=s, interval="1d", count=1) or {}).get("candles") or []
         except toss.TossError:
-            continue
+            return None
         today_vol = float(cs[0].get("volume") or 0) if cs and cs[0]["timestamp"][:10] == session_date(market) else 0
         value_today = today_vol * p * fx
         if pre:
             ratio = today_vol / max(rows[s]["vol20"], 1)
             if ratio < cfg.get("pre_volume_ratio", 0.2) or value_today < cfg["min_trading_value_krw"] * 0.1:
-                continue
+                return None
         else:
             ratio = today_vol / max(rows[s]["vol20"] * frac, 1)
             if ratio < cfg["surge_volume_ratio"] or value_today < cfg["min_trading_value_krw"] * frac:
-                continue
+                return None
         cur = "원" if market == "KR" else "$"
-        found.append({"symbol": s, "name": rows[s]["name"], "price": p, "change": round(chg, 1), "score": round(chg * min(ratio, 10), 1),
-                      "reason": (f"[프리장] {chg:+.1f}% · 벌써 평소 하루 거래량의 {ratio * 100:.0f}%" if pre else f"오늘 {chg:+.1f}% · 거래량 평소의 {ratio:.1f}배")
-                                + f" · 거래대금 {value_today / 1e8:,.0f}억원 · 현재가 {p:,.2f}{cur}"})
+        return {"symbol": s, "name": rows[s]["name"], "price": p, "change": round(chg, 1), "score": round(chg * min(ratio, 10), 1),
+                "reason": (f"[프리장] {chg:+.1f}% · 벌써 평소 하루 거래량의 {ratio * 100:.0f}%" if pre else f"오늘 {chg:+.1f}% · 거래량 평소의 {ratio:.1f}배")
+                          + f" · 거래대금 {value_today / 1e8:,.0f}억원 · 현재가 {p:,.2f}{cur}"}
+
+    with ThreadPoolExecutor(max_workers=6) as pool:   # 후보 40개 거래량 확인을 동시에
+        found = [x for x in pool.map(check, movers[:40]) if x]
     found.sort(key=lambda x: -x["score"])
     out = []
     for c in found:

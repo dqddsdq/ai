@@ -296,12 +296,29 @@ def _bg(name: str, fn) -> dict:
     return {"ok": True, "message": f"{name} 시작 (몇 분 걸려요)"}
 
 
+def _prep_cfg(c: dict) -> dict:
+    """준비용: 종목당 예산(원)을 대략 계산해서 '1주도 못 사는 비싼 종목'을 미리 빼게 함"""
+    c = dict(c)
+    if c["budget_mode"] == "all_cash" and toss.enabled():
+        try:
+            fx = 1.0 if c["market"] == "KR" else usd_krw(c)
+            cur = "KRW" if c["market"] == "KR" else "USD"
+            cash = float((toss.buying_power(cur) or {}).get("cashBuyingPower") or 0)
+            with _lock:
+                held = sum(v["qty"] * v["avg"] for k, v in state()["bot_pos"].items() if _mkt(k) == c["market"])
+            c["max_order_krw"] = (cash + held) * fx / c["pick_count"]
+            c["usd_krw"] = fx
+        except toss.TossError:
+            c["max_order_krw"] = 0          # 모르면 가격 상한 없이
+    return c
+
+
 def prepare_now() -> dict:
     """급등주 기준값 준비 / 추세 종목 고르기."""
     c = config()
     if c["strategy"] == "surge":
         def go():
-            b = picker.prepare_day(c, log=_log_fn)
+            b = picker.prepare_day(_prep_cfg(c), log=_log_fn)
             event("준비", f"{'미장' if c['market'] == 'US' else '국장'} 급등주 기준값 {len(b.get('rows') or {})}개 준비 완료")
         return _bg("급등주 준비", go)
 

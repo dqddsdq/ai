@@ -137,8 +137,8 @@ def _get(path: str, account: bool = False, **params) -> object:
 _last_call = [0.0]
 
 
-def _throttle(gap: float = 0.13) -> None:
-    """초당 7~8건 이하로 (종목 훑기처럼 많이 부를 때 한도 초과 방지)"""
+def _throttle(gap: float = 0.1) -> None:
+    """초당 10건 이하로 (종목 훑기처럼 많이 부를 때 한도 초과 방지 — 넘으면 429 → 잠깐 쉬고 다시)"""
     with _lock:
         wait = _last_call[0] + gap - time.time()
         if wait > 0:
