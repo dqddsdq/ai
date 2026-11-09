@@ -56,7 +56,9 @@ DEFAULTS = {
     "max_daily_loss_pct": 5.0,     # all_cash: 예산 대비 하루 손실 한도 %
     "max_daily_loss_krw": 5000,    # fixed: 하루 손실 한도 금액
     "stop_loss_pct": 3.0,
-    "take_profit_pct": 10.0,
+    "take_profit_pct": 10.0,       # 남은 물량 전부 익절
+    "partial_tp_pct": 6.0,         # 나눠 팔기: 평단 대비 이만큼 오르면 일부 먼저 팔기 (0 = 안 씀)
+    "partial_tp_ratio": 0.5,       # 그때 파는 비율 (0.5 = 절반) — 나머지는 손절선을 산 가격으로 올림
     "trail_pct": 4.0,              # 산 뒤 최고가 대비 이만큼 떨어지면 팔기 (급등주)
     "surge_min_change_pct": 5.0,   # 오늘 이만큼 이상 오른 종목
     "surge_max_change_pct": 40.0,  # 너무 많이 오른 건 제외 (국장은 상한가 30%)
@@ -77,7 +79,7 @@ NUMS = {"monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": 
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
+        "limit_slip_pct": (0, 3), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
 CHOICES = {"mode": ("off", "paper", "live"), "market": ("US", "KR"), "strategy": ("surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -153,7 +155,7 @@ def state() -> dict:
             s = json.loads(STATE.read_text(encoding="utf-8"))
         except Exception:
             s = {}
-        for k, v in (("events", []), ("orders", []), ("bot_pos", {}), ("picks", {}), ("highs", {}), ("realized_today", 0.0), ("month", {})):
+        for k, v in (("events", []), ("orders", []), ("bot_pos", {}), ("picks", {}), ("highs", {}), ("realized_today", 0.0), ("month", {}), ("partial", {})):
             s.setdefault(k, v)
         s.setdefault("paper", {"cash": config()["paper_cash_krw"], "positions": {}, "realized": 0})
         for k, v in list(s["bot_pos"].items()):  # 예전 형식(수량만) 호환
@@ -253,7 +255,9 @@ def signal_trend(closes: list[float], price: float, qty: float, avg: float, c: d
     return "HOLD", f"조건 안 맞음 (RSI {rsi:.0f})"
 
 
-def signal_surge(price: float, qty: float, avg: float, high: float, minutes: int | None, picked: bool, c: dict) -> tuple[str, str]:
+def signal_surge(price: float, qty: float, avg: float, high: float, minutes: int | None, picked: bool, c: dict,
+                 partial_done: bool = False) -> tuple[str, str]:
+    """('BUY'|'SELL'|'SELL_PART'|'HOLD', 이유)"""
     if qty > 0 and avg > 0:
         pnl = (price / avg - 1) * 100
         drop = (price / high - 1) * 100 if high else 0
@@ -261,8 +265,12 @@ def signal_surge(price: float, qty: float, avg: float, high: float, minutes: int
             return "SELL", f"장 마감 15분 전 정리 (평단 대비 {pnl:+.1f}%)"
         if pnl <= -c["stop_loss_pct"]:
             return "SELL", f"손절: 평단 대비 {pnl:.1f}% (기준 -{c['stop_loss_pct']}%)"
+        if partial_done and pnl <= c["limit_slip_pct"] + 0.2:   # 일부 익절한 뒤엔 남은 물량을 손해 보고 팔지 않게 (파는 지정가 -0.5% 감안해 본전에서 정리)
+            return "SELL", f"나눠 팔기 후 본전 도달 → 남은 물량 정리 (평단 대비 {pnl:+.1f}%)"
         if pnl >= c["take_profit_pct"]:
             return "SELL", f"익절: 평단 대비 +{pnl:.1f}%"
+        if not partial_done and c.get("partial_tp_pct") and pnl >= c["partial_tp_pct"]:
+            return "SELL_PART", f"나눠 팔기: 평단 대비 +{pnl:.1f}% → {int(c['partial_tp_ratio'] * 100)}% 먼저 익절"
         if pnl > 0 and drop <= -c["trail_pct"]:
             return "SELL", f"고점 대비 {drop:.1f}% 하락 → 수익 지키기 (평단 대비 {pnl:+.1f}%)"
         return "HOLD", f"보유 유지 (평단 대비 {pnl:+.1f}% · 고점 대비 {drop:.1f}%)"
@@ -372,8 +380,10 @@ def _reconcile(fx: float) -> None:
                     left = bp["qty"] - delta
                     if left > 1e-9:
                         s["bot_pos"][rec["symbol"]] = {"qty": left, "avg": bp["avg"]}
+                        if rec.get("partial"):
+                            s["partial"][rec["symbol"]] = True
                     else:
-                        s["bot_pos"].pop(rec["symbol"], None); s["highs"].pop(rec["symbol"], None)
+                        s["bot_pos"].pop(rec["symbol"], None); s["highs"].pop(rec["symbol"], None); s["partial"].pop(rec["symbol"], None)
                 rec["counted"] = filled
             st = r.get("status") or ""
             if st:
@@ -526,7 +536,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 s3["highs"][sym] = max(float(s3["highs"].get(sym, 0)), price); _save(s3)
             high = float(s3["highs"].get(sym, price))
         if c["strategy"] == "surge":
-            side, reason = signal_surge(price, held["qty"], held["avg"], high, minutes, sym in picked, c)
+            side, reason = signal_surge(price, held["qty"], held["avg"], high, minutes, sym in picked, c,
+                                        partial_done=bool(state()["partial"].get(sym)))
             if side == "BUY":
                 info = next((x for x in (state().get("picks") or {}).get("picks", []) if x["symbol"] == sym), None)
                 reason = info["reason"] if info else reason
@@ -568,20 +579,25 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             results.append(_execute(sym, "BUY", qty, buy_px, reason, live, fx))
             invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
         else:
-            qty = int(held["qty"])
+            part = side == "SELL_PART"
+            qty = int(held["qty"] * c["partial_tp_ratio"]) if part else int(held["qty"])
+            if part and (qty < 1 or qty >= int(held["qty"])):   # 1주뿐이라 나눌 수 없으면 나눠 팔기 대신 계속 보유
+                with _lock:
+                    s4 = state(); s4["partial"][sym] = True; _save(s4)
+                results.append(f"{sym}: 나눠 팔 수량이 안 돼서(보유 {held['qty']:g}주) 계속 보유 — 손절선은 본전으로"); continue
             if qty < 1:
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if c["strategy"] == "surge" else price
-            results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx))
+            results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part))
     return {"ok": True, "mode": mode, "results": results}
 
 
-def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float) -> str:
+def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float, partial: bool = False) -> str:
     coid = "cai-" + uuid.uuid4().hex[:20]
     px = toss.order_price(sym, price, side)
     label = f"{sym} {'매수' if side == 'BUY' else '매도'} {qty}주 @ {px}"
     rec = {"t": datetime.now(KST).strftime("%m-%d %H:%M:%S"), "symbol": sym, "side": side, "qty": qty, "price": float(px),
-           "reason": reason, "mode": "live" if live else "paper", "client_order_id": coid}
+           "reason": reason, "mode": "live" if live else "paper", "client_order_id": coid, "partial": partial}
     if live:
         try:
             r = toss.place_limit_order(sym, side, qty, price, coid)
@@ -608,7 +624,13 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
                 gain = (p_ - cur["avg"]) * qty * f
                 p["realized"] += gain; s["realized_today"] = float(s.get("realized_today", 0)) + gain
                 s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
-                p["positions"].pop(sym, None); s["highs"].pop(sym, None)
+                left = cur["qty"] - qty
+                if left > 1e-9:
+                    p["positions"][sym] = {"qty": left, "avg": cur["avg"]}
+                    if partial:
+                        s["partial"][sym] = True
+                else:
+                    p["positions"].pop(sym, None); s["highs"].pop(sym, None); s["partial"].pop(sym, None)
             _save(s)
         rec["status"] = "paper_filled"
     with _lock:

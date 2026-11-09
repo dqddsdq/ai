@@ -473,7 +473,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>하루 손실 한도 (예산의 %)<input id="t-max_daily_loss_pct" type="number" step="0.5"></label>
           <label>손절 (%)<input id="t-stop_loss_pct" type="number" step="0.5"></label>
           <label>고점 대비 하락 시 팔기 (%)<input id="t-trail_pct" type="number" step="0.5"></label>
-          <label>익절 (%)<input id="t-take_profit_pct" type="number" step="0.5"></label>
+          <label>나눠 팔기: 먼저 팔 수익률 (%, 0=안 씀)<input id="t-partial_tp_pct" type="number" step="0.5"></label>
+          <label>나눠 팔기: 그때 팔 비율 (0.5=절반)<input id="t-partial_tp_ratio" type="number" step="0.1"></label>
+          <label>남은 물량 전부 익절 (%)<input id="t-take_profit_pct" type="number" step="0.5"></label>
           <label>급등 기준: 오늘 상승 최소 (%)<input id="t-surge_min_change_pct" type="number" step="0.5"></label>
           <label>급등 기준: 오늘 상승 최대 (%)<input id="t-surge_max_change_pct" type="number" step="1"></label>
           <label>급등 기준: 평소 거래량의 몇 배<input id="t-surge_volume_ratio" type="number" step="0.5"></label>
@@ -1259,7 +1261,7 @@ async function renderToolsPage() {
 }
 
 // ── 자동매매 ──
-const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "take_profit_pct", "surge_min_change_pct",
+const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
 const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "ai_check"];
 let tradeTimer = null;
