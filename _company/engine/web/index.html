@@ -480,7 +480,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>프리장 기준: 평소 하루 거래량의 몇 배가 벌써 (0.2 = 20%)<input id="t-pre_volume_ratio" type="number" step="0.05"></label>
           <label>최소 거래대금 (원/일)<input id="t-min_trading_value_krw" type="number"></label>
           <label>하루 최대 매수 횟수 (매도는 제한 없음)<input id="t-max_orders_per_day" type="number"></label>
-          <label>확인 간격 (분)<input id="t-interval_min" type="number"></label>
+          <label>급등 종목 찾기 간격 (분)<input id="t-interval_min" type="number"></label>
+          <label>보유 종목 손절 확인 간격 (초)<input id="t-exit_check_sec" type="number"></label>
           <label>[금액 한도] 총 투자 한도 (원)<input id="t-max_total_krw" type="number"></label>
           <label>[금액 한도] 하루 손실 한도 (원)<input id="t-max_daily_loss_krw" type="number"></label>
           <label>가상 매매 시작 금액 (원)<input id="t-paper_cash_krw" type="number"></label>
@@ -1259,7 +1260,7 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
 const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "ai_check"];
 let tradeTimer = null;
 function tradeBadge(d) {

@@ -264,13 +264,16 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
     fx = _fx(market, cfg)
     max_price = cfg["max_order_krw"] / fx
     min_price = 1000 if market == "KR" else cfg.get("us_min_price", 1.0)
+    lo, hi = cfg["surge_min_change_pct"], cfg["surge_max_change_pct"]
+    # 시세 묻기 전에 미리 빼기: 거래가 너무 적은 종목 · 급등해도 예산으로 못 살 만큼 비싼 종목
+    cands = [s for s, r in rows.items() if s not in exclude and r["value20_krw"] >= cfg["min_trading_value_krw"] * 0.3
+             and r["prev"] * (1 + lo / 100) <= max_price and r["prev"] * (1 + hi / 100) >= min_price]
     prices = {}
-    for chunk in _chunks([s for s in rows if s not in exclude], 200):
+    for chunk in _chunks(cands, 200):
         try:
             prices.update({k: v["price"] for k, v in toss.prices(chunk).items()})
         except toss.TossError as e:
             log(f"   현재가 일부 실패: {e}")
-    lo, hi = cfg["surge_min_change_pct"], cfg["surge_max_change_pct"]
     movers = []
     for s, p in prices.items():
         r = rows[s]

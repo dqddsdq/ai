@@ -39,6 +39,7 @@ CONFIG = SHARED_DIR / "autotrade.json"
 STATE = COMPANY_DIR / "_cache" / "autotrade_state.json"
 KST = timezone(timedelta(hours=9))
 DEFAULTS = {
+    "v": 2,                        # 설정 형식 버전 (예전 기본값 자동 갱신용)
     "mode": "off",
     "market": "US",
     "strategy": "surge",
@@ -66,7 +67,8 @@ DEFAULTS = {
     "us_min_price": 1.0,           # 1달러 미만 동전주 제외
     "limit_slip_pct": 0.5,         # 급등주: 사는 지정가는 현재가 +0.5%, 파는 건 -0.5% (체결 잘 되게)
     "rsi_max_buy": 68,             # 추세 전략: 과열 기준
-    "interval_min": 2,
+    "interval_min": 1,             # 급등 종목 찾기 간격 (보유 종목 손절 확인은 따로 20초마다)
+    "exit_check_sec": 10,
     "ai_check": False,             # 주문 전 AI 검토 (급등주는 속도가 중요해서 기본 꺼짐)
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
@@ -75,7 +77,7 @@ NUMS = {"monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": 
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
+        "limit_slip_pct": (0, 3), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
 CHOICES = {"mode": ("off", "paper", "live"), "market": ("US", "KR"), "strategy": ("surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -89,7 +91,12 @@ def config() -> dict:
         c = json.loads(CONFIG.read_text(encoding="utf-8"))
     except Exception:
         c = {}
-    return {**DEFAULTS, **{k: v for k, v in c.items() if k in DEFAULTS}}
+    out = {**DEFAULTS, **{k: v for k, v in c.items() if k in DEFAULTS}}
+    if int(c.get("v", 1)) < 2:   # 예전 기본값(2분)을 그대로 쓰던 경우 → 새 기본값 1분
+        if c.get("interval_min") == 2:
+            out["interval_min"] = 1
+        out["v"] = 2
+    return out
 
 
 def save_config(new: dict) -> dict:
@@ -403,8 +410,9 @@ def _cancel_stale(minutes: float) -> None:
 
 
 # ── 한 바퀴 ──
-def run_once(force: bool = False) -> dict:
-    """규칙 한 번. force=True(화면의 '한 번 돌려보기')면 꺼져 있어도 신호만 계산."""
+def run_once(force: bool = False, exits_only: bool = False) -> dict:
+    """규칙 한 번. force=True(화면의 '한 번 돌려보기')면 꺼져 있어도 신호만 계산.
+    exits_only=True 면 들고 있는 종목의 매도 조건만 빠르게 확인 (10초마다)."""
     c = config()
     mode, market = c["mode"], c["market"]
     with _lock:
@@ -422,7 +430,7 @@ def run_once(force: bool = False) -> dict:
         fx = 1.0 if market == "KR" else usd_krw(c)
         if live:
             _reconcile(fx)
-            _cancel_stale(3 if c["strategy"] == "surge" else 10)
+            _cancel_stale(1.5 if c["strategy"] == "surge" else 10)
             h = toss.holdings()
             raw = {it["symbol"]: {"qty": float(it.get("quantity") or 0), "avg": float(it.get("averagePurchasePrice") or 0)} for it in h.get("items") or []}
             with _lock:
@@ -432,7 +440,7 @@ def run_once(force: bool = False) -> dict:
             else:
                 pos = {k: v for k, v in raw.items() if k in c["symbols"]}
             pending = {o.get("symbol") for o in toss.open_orders()}
-            cash_local = float((toss.buying_power(cur) or {}).get("cashBuyingPower") or 0)
+            cash_local = 0.0 if exits_only else float((toss.buying_power(cur) or {}).get("cashBuyingPower") or 0)   # 매도만 볼 땐 현금 조회 생략
         else:
             p = s["paper"]
             pos = {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in p["positions"].items()}
@@ -456,7 +464,7 @@ def run_once(force: bool = False) -> dict:
         loss_limit = c["max_daily_loss_krw"]
     unreal = sum((quotes.get(k, {}).get("price", v["avg"]) - v["avg"]) * v["qty"] * fx for k, v in pos.items() if v["avg"])
     day_pl = float(s.get("realized_today", 0)) + unreal
-    if live and day_pl <= -loss_limit and loss_limit > 0:
+    if live and not exits_only and day_pl <= -loss_limit and loss_limit > 0:
         return _halt_today(f"자동매매 오늘 손익 {day_pl:,.0f}원 — 한도 -{loss_limit:,.0f}원 초과")
     month_key = datetime.now(KST).strftime("%Y-%m")
     with _lock:
@@ -475,7 +483,9 @@ def run_once(force: bool = False) -> dict:
     minutes = minutes_now(market, c)
     first = -330 if _ext(market, c) else 0
     picked: list[str] = []
-    if not c["auto_pick"]:
+    if exits_only:
+        pass
+    elif not c["auto_pick"]:
         picked = list(c["symbols"])
     elif c["strategy"] == "surge":
         if not picker.base_ready(market):
@@ -528,6 +538,8 @@ def run_once(force: bool = False) -> dict:
             side, reason = signal_trend(closes, price, held["qty"], held["avg"], c)
             if side == "BUY" and sym not in picked:
                 side, reason = "HOLD", "선택 종목 아님 (보유분은 매도 규칙만)"
+        if exits_only and side == "BUY":
+            side = "HOLD"
         if side == "HOLD":
             results.append(f"{sym}: {reason}"); continue
         if dry:
@@ -676,9 +688,9 @@ def start(log_fn=print) -> None:
         return
 
     def loop():
-        last = 0.0
+        last = last_exit = 0.0
         while True:
-            time.sleep(15)
+            time.sleep(5)
             c = config()
             if c["mode"] == "off":
                 continue
@@ -691,9 +703,26 @@ def start(log_fn=print) -> None:
                     (state().get("picks") or {}).get("day") == picker.session_date(c["market"])
                 if not ready and not _busy.is_set():
                     prepare_now()
-            # 마감 15분 전부터는 1분마다 (정리 매도가 확실히 나가게)
-            gap = 60 if (mins is not None and mins >= 370) else c["interval_min"] * 60
-            if time.time() - last < gap or mins is None:
+            if mins is None:
+                continue
+            # 들고 있는 종목은 자주(기본 10초) 매도 조건만 확인 — 급등주는 몇 분이면 크게 움직임
+            gap = c["interval_min"] * 60
+            if time.time() - last >= gap - 5 or time.time() - last_exit < c["exit_check_sec"]:
+                pass
+            else:
+                with _lock:
+                    s0 = state()
+                holding = s0["bot_pos"] if c["mode"] == "live" else s0["paper"]["positions"]
+                if holding:
+                    last_exit = time.time()
+                    try:
+                        r = run_once(exits_only=True)
+                        for line in r.get("results", []):
+                            if "✅" in line or "📝" in line or "거절" in line or "정지" in line:
+                                _log_fn("🤖 " + line)
+                    except Exception as e:
+                        event("오류", f"{type(e).__name__}: {e}")
+            if time.time() - last < gap:
                 continue
             last = time.time()
             try:
