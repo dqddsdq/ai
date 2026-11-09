@@ -382,6 +382,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
         if path == "/api/autotrade/action":
             return self._json(at.apply_action(body.get("action") or {}))
+        if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
+            return self._json(at.unhalt())
         if path == "/api/autotrade/review":
             return self._json(at.review_now())
         if path == "/api/autotrade/proposal":

@@ -248,7 +248,7 @@ def estimate(features: dict, cfg: dict) -> dict:
 def size_ratio(est: dict, cfg: dict) -> tuple[float, str]:
     """승률 → 살 금액 비율 (min_size_ratio ~ 1.0). 기록이 충분한데 기대 수익이 마이너스면 0 (건너뛰기)"""
     lo = float(cfg.get("min_size_ratio", 0.25))
-    if est["n"] >= 5 and est["ev"] < 0:
+    if (est["n"] >= 5 and est["ev"] < 0) or (est["n"] >= 3 and est["ev"] < -1):
         return 0.0, f"비슷한 거래 {est['n']}건 기대 수익 {est['ev']:+.2f}% → 건너뜀"
     if cfg.get("min_win_prob") and est["p"] < cfg["min_win_prob"] / 100:
         return 0.0, f"추정 승률 {est['p'] * 100:.0f}% < 기준 {cfg['min_win_prob']}% → 건너뜀"

@@ -192,7 +192,7 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
 def _fresh_day(s: dict, market: str) -> dict:
     day = picker.session_date(market)
     if s.get("day") != day:  # 장(현지 날짜)이 바뀌면 하루 카운트·정지·손익 초기화
-        s.update(day=day, orders_today=0, halted_today="", realized_today=0.0, highs={})
+        s.update(day=day, orders_today=0, halted_today="", realized_today=0.0, highs={}, day_budget=0.0)
     return s
 
 
@@ -523,8 +523,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         s = state()
     if mode == "off" and not force:
         return {"ok": True, "message": "꺼져 있어요"}
-    if s.get("halted_today"):
-        return {"ok": False, "message": "오늘은 정지됨: " + s["halted_today"]}
+    halted = s.get("halted_today", "")   # 정지돼도 '새로 사기'만 막고, 들고 있는 종목의 손절·정리는 계속
     if not toss.enabled():
         return {"ok": False, "message": "토스 키가 없어요 (🧰 도구)"}
     live, dry = mode == "live", mode == "off"
@@ -562,15 +561,21 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         budget = invested + cash_local * fx
         per_pos = _cap(budget / c["pick_count"], c["max_position_krw"])   # 종목당 = 현금÷종목 수, 단 '종목당 최대'를 넘지 않게
         caps = {"total": budget, "position": per_pos, "order": _cap(per_pos, c["max_order_krw"])}
-        loss_limit = budget * c["max_daily_loss_pct"] / 100
+        with _lock:   # 하루 손실 한도는 '그날 처음 예산' 기준으로 고정 (돈이 줄어도 한도가 같이 줄지 않게)
+            s_b = state()
+            if not s_b.get("day_budget") and budget > 0 and not exits_only:
+                s_b["day_budget"] = budget; _save(s_b)
+            day_budget = float(s_b.get("day_budget") or budget)
+        loss_limit = day_budget * c["max_daily_loss_pct"] / 100
     else:
         caps = {"total": c["max_total_krw"], "position": _cap(c["max_total_krw"], c["max_position_krw"]),
                 "order": _cap(c["max_total_krw"], c["max_order_krw"], c["max_position_krw"])}
         loss_limit = c["max_daily_loss_krw"]
     unreal = sum((quotes.get(k, {}).get("price", v["avg"]) - v["avg"]) * v["qty"] * fx for k, v in pos.items() if v["avg"])
     day_pl = float(s.get("realized_today", 0)) + unreal
-    if live and not exits_only and day_pl <= -loss_limit and loss_limit > 0:
-        return _halt_today(f"자동매매 오늘 손익 {day_pl:,.0f}원 — 한도 -{loss_limit:,.0f}원 초과")
+    if live and not exits_only and not halted and day_pl <= -loss_limit and loss_limit > 0:
+        halted = f"자동매매 오늘 손익 {day_pl:,.0f}원 — 한도 -{loss_limit:,.0f}원 초과"
+        _halt_today(halted)   # 새로 사기만 멈추고, 이번 바퀴에도 들고 있는 종목 손절·정리는 계속
     month_key = datetime.now(KST).strftime("%Y-%m")
     with _lock:
         sm = state()
@@ -596,6 +601,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         if not picker.base_ready(market):
             prepare_now()
             results.append("🔎 급등주 기준값 준비 중 (처음엔 몇 분~10여 분)")
+        elif halted:
+            results.append("⛔ 오늘 정지 중 — 새로 사지 않고 들고 있는 종목만 관리 (" + halted + ")")
         elif minutes is not None and first + 5 <= minutes <= 360 and len(pos) < c["pick_count"]:
             scan_cfg = {**c, "max_order_krw": caps["order"], "usd_krw": fx}
             r = picker.surge_scan(scan_cfg, log=_log_fn, exclude=set(pos) | set(c["exclude"]))
@@ -676,6 +683,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             results.append(f"{sym}: 미체결 주문이 있어서 대기"); continue
         f = 1 if _mkt(sym) == "KR" else fx
         if side == "BUY":
+            if halted:
+                results.append(f"{sym}: ⛔ 오늘 정지 중이라 안 삼"); continue
             if target_hit and c["stop_at_target"]:
                 results.append(f"{sym}: 이번 달 목표 달성 → 새로 안 삼"); continue
             if stop_why:
@@ -828,7 +837,7 @@ def reset_paper() -> dict:
 def overview() -> dict:
     c, s = config(), state()
     return {"config": c, "toss": toss.enabled(), "day": s["day"], "orders_today": s["orders_today"],
-            "halted_today": s.get("halted_today", ""), "paper": s["paper"], "orders": s["orders"][-60:][::-1],
+            "halted_today": s.get("halted_today", ""), "halt_release": halt_release_kst() if s.get("halted_today") else "", "paper": s["paper"], "orders": s["orders"][-60:][::-1],
             "events": s["events"][-100:][::-1], "running": bool(_thread and _thread.is_alive()),
             "picks": s.get("picks") or {}, "scanning": _busy.is_set(), "bot_pos": s.get("bot_pos", {}),
             "realized_today": s.get("realized_today", 0), "base_ready": picker.base_ready(c["market"]), "month": s.get("month", {}),
@@ -1290,3 +1299,29 @@ def auto_adjust(rep: dict, mode_key: str) -> list[str]:
     if done:
         event("자동 조정", f"오늘 자동으로 바꾼 것: {', '.join(LABELS.get(x, x) for x in dict.fromkeys(done))}")
     return done
+
+
+def halt_release_kst() -> str:
+    """오늘 정지가 자동으로 풀리는 한국 시각 (그 시장의 날짜가 바뀌는 때)"""
+    c = config()
+    now = datetime.now(KST)
+    day = picker.session_date(c["market"])
+    for m in range(0, 60 * 48, 5):
+        t = now + timedelta(minutes=m)
+        if picker.session_date(c["market"], t) != day:
+            return ("오늘 " if t.date() == now.date() else "내일 ") + t.strftime("%H:%M")
+    return ""
+
+
+def unhalt() -> dict:
+    """사장님이 직접 오늘 정지 풀기 (화면 버튼 — 채팅으로는 불가)"""
+    with _lock:
+        s = state()
+        was = s.get("halted_today", "")
+        if not was:
+            return {"ok": False, "message": "지금 정지 상태가 아니에요"}
+        s["halted_today"] = ""
+        s["day_budget"] = 0.0
+        _save(s)
+    event("정지 해제", f"사장님이 직접 오늘 정지를 풀었어요 (이전 이유: {was})")
+    return {"ok": True, "message": "정지를 풀었어요. 하루 손실 한도는 지금 예산 기준으로 다시 계산돼요"}

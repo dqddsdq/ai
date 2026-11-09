@@ -1375,7 +1375,11 @@ async function renderTrade(fillForm = true) {
     `${mk} · ${c.strategy === "surge" ? "급등주" : "추세"} · ${c.budget_mode === "all_cash" ? "계좌 현금 전부" : "한도 " + Number(c.max_total_krw).toLocaleString() + "원"}${c.max_position_krw > 0 ? " · 종목당 최대 " + Number(c.max_position_krw).toLocaleString() + "원" : ""}`,
     `현지 ${esc(d.local_time)} (${d.session_minutes == null ? "장 닫힘" : d.session_minutes < 0 ? "프리장" : "정규장 " + d.session_minutes + "분째"})`,
     d.toss ? "토스 연결됨" : "⚠️ 토스 키 없음 (🧰 도구)", `오늘 매수 ${d.orders_today}/${c.max_orders_per_day}`,
-    d.halted_today ? `⛔ 오늘 정지: ${esc(d.halted_today)}` : ""].filter(Boolean).join(" · ");
+    d.halted_today ? `⛔ <b>오늘 정지</b>: ${esc(d.halted_today)} · ${d.halt_release ? esc(d.halt_release) + " 자동 해제" : ""} · 새로 사지 않고 보유 종목만 관리 <button class="btn" id="trade-unhalt" style="padding:2px 8px;font-size:12px">오늘 정지 풀기</button>` : ""].filter(Boolean).join(" · ");
+  $("#trade-unhalt")?.addEventListener("click", async () => {
+    if (!confirm("오늘 정지를 풀까요? 손실 한도를 넘어서 멈춘 상태예요. 풀면 다시 새로 사기 시작해요.")) return;
+    const r = await api("/api/autotrade/unhalt", {}); alert(r.message); renderTrade(false);
+  });
   const mo = d.month || {}, unrealNote = "";
   const pct = mo.start ? (Number(mo.realized || 0) / mo.start * 100) : null;
   $("#trade-goal").innerHTML = `🎯 한 달 목표 <b>${c.monthly_target_pct}%</b>` + (pct != null ? ` · 이번 달 실현 손익 ${Math.round(mo.realized || 0).toLocaleString()}원 (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%, 시작 예산 ${Math.round(mo.start).toLocaleString()}원 기준)` : " · 아직 기록 없음") + (c.stop_at_target ? " · 채우면 그달은 쉬어요" : "");
