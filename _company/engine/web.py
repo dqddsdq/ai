@@ -21,7 +21,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from hmac import compare_digest as secrets_eq
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qsl, unquote, urlparse
 
 from . import agents as ag
 from . import knowledge as kn
@@ -39,7 +39,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "web"
 UPLOAD_DIR = ag.COMPANY_DIR / "_cache" / "uploads"   # git 에 안 올라감
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-UPLOAD_RE = re.compile(r"^[\w\-]+\.(png|jpg|webp|gif)$")
+UPLOAD_RE = re.compile(r"^[\w\-.]+\.(png|jpg|webp|gif)$")
 CONV_FILE = "conversation.json"
 ID_RE = re.compile(r"^[\w\-]+$")
 MODEL_CHOICES = [
@@ -272,6 +272,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._static("index.html", "text/html; charset=utf-8")
         if path == "/api/autotrade":
             return self._json(at.overview())
+        if path == "/api/charts/auto":
+            return self._json({"items": at.auto_charts()})
+        if path == "/api/chart":   # 📊 차트 그리기 (자동매매가 가진 종목이면 산 가격·손절·나눠 팔기선 표시)
+            q = dict(parse_qsl(urlparse(self.path).query))
+            try:
+                return self._json(at.draw_chart(q.get("symbol", ""), q.get("interval", "1m")))
+            except Exception as e:
+                return self._json({"error": str(e)}, 400)
         if path == "/api/phone":
             if self.client_address[0] not in ("127.0.0.1", "::1"):
                 return self._json({"on": PHONE["on"], "remote": True})
@@ -294,7 +302,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(load_conv(m.group(1)))
             except (FileNotFoundError, ValueError):
                 return self._json({"error": "없는 대화"}, 404)
-        m = re.match(r"^/api/upload/([\w\-]+\.(?:png|jpg|webp|gif))$", path)
+        m = re.match(r"^/api/upload/([\w\-.]+\.(?:png|jpg|webp|gif))$", path)
         if m and (UPLOAD_DIR / m.group(1)).is_file():
             ext = m.group(1).rsplit(".", 1)[1]
             body = (UPLOAD_DIR / m.group(1)).read_bytes()
@@ -491,8 +499,23 @@ class Handler(BaseHTTPRequestHandler):
         self._send("market", {"items": [s.brief() for s in snaps]})
         if reports:
             self._send("dart", {"items": [dart.brief(r) for r in reports]})
+        # 📊 토스 데이터로 차트를 직접 그려서 AI 에게 보여줌 (사장님 화면에도 같은 그림)
+        if toss.enabled():
+            from . import chart
+            self._send("status", {"text": "📊 차트 그리는 중..."})
+            for s_ in [x for x in snaps if not x.error][:2]:
+                for iv in ("1d", "1m"):
+                    try:
+                        name = chart.draw(s_.ticker, iv, title=s_.name or s_.ticker)
+                        self._charts.append({"id": name, "label": f"{s_.name or s_.ticker} {'일봉' if iv == '1d' else '1분봉'}"})
+                    except Exception as e:
+                        log(f"  📊 차트 실패 {s_.ticker} {iv}: {e}")
+            if self._charts:
+                self._send("charts", {"items": self._charts})
         self._send("status", {"text": ""})
-        return "\n\n".join(x for x in (account, mk.format_for_prompt(snaps), dart.format_for_prompt(reports)) if x)
+        note = ("\n\n[첨부 차트] 시스템이 토스 데이터로 직접 그린 차트 그림이 함께 첨부돼 있어요 (" + ", ".join(c["label"] for c in self._charts)
+                + "). 캔들·이동평균·VWAP·거래량을 직접 보고 추세·지지/저항·거래량 변화를 분석에 쓰세요.") if self._charts else ""
+        return "\n\n".join(x for x in (account, mk.format_for_prompt(snaps), dart.format_for_prompt(reports)) if x) + note
 
     # 채팅
     def _chat(self, body: dict):
@@ -576,6 +599,7 @@ class Handler(BaseHTTPRequestHandler):
         effort = body.get("effort") or "medium"
         drafts, steps = [], []
         style = tm.settings().get("team_style", "review")
+        self._charts = []   # 이번 답에 쓸 차트 그림
         # 시세·공시 가져오기와 공용 자료수집(리서치 3명)을 '동시에' 시작 → 기다리는 시간 단축
         from concurrent.futures import ThreadPoolExecutor
         research_ids, header_note = [], ""
@@ -595,6 +619,8 @@ class Handler(BaseHTTPRequestHandler):
             pack, rsteps = f_research.result() if f_research else ("", [])
         if market:
             extra += "\n\n" + market
+        if self._charts:   # AI 가 그림으로 직접 보게
+            images = images + [str(UPLOAD_DIR / c["id"]) for c in self._charts]
         if agent_id == "trader":   # 🤖 자동매매 팀: 엔진 전체 상태 + [적용] 카드용 행동 태그 안내
             extra += "\n\n" + at.engine_context() + "\n\n" + at.TRADE_GUIDE
         elif at.ASK_WORDS.search(text) or (toss.ACCOUNT_WORDS.search(text) and at.config()["mode"] != "off"):
@@ -646,6 +672,8 @@ class Handler(BaseHTTPRequestHandler):
             conv["messages"][-1].setdefault("improvements", []).append(job["id"])
             log(f"  🛠️ 개선 제안: {what[:40]}")
             self._send("improve_request", job)
+        if self._charts:
+            conv["messages"][-1]["charts"] = self._charts
         acts = at.find_actions(reply) if agent_id == "trader" else []
         if acts:   # 바로 실행하지 않고 [적용] 카드로
             conv["messages"][-1]["trade_actions"] = acts

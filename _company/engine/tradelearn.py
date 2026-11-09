@@ -170,6 +170,15 @@ def watch(day: str, picks: list[dict], prices: dict[str, float]) -> None:
         _save(d)
 
 
+def flag_watch(day: str, sym: str, **kw) -> None:
+    """고른 종목에 표시 (예: AI 차트 판단 찬성/반대) — 복기에서 'AI 가 반대한 종목은 그 뒤 어땠나' 비교용"""
+    with _lock:
+        d = _load()
+        x = d["watch"].get(day, {}).get(sym)
+        if x is not None:
+            x.update(kw); _save(d)
+
+
 def watch_symbols(day: str) -> list[str]:
     with _lock:
         return list(_load()["watch"].get(day, {}))[:30]
@@ -242,6 +251,10 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
                                             ("정규장", _stats([t for t in recent if not t.get("features", {}).get("pre")]))) if v["n"]},
            "missed": {"n": len(missed), "avg_max_up": round(st.mean([m for _, m in missed]), 2) if missed else None,
                       "top": sorted(missed, key=lambda x: -x[1])[:3]},
+           "ai_chart": {"찬성해서 산 거래": _stats([t for t in recent if (t.get("features") or {}).get("ai_chart") == "찬성"]),
+                        "반대한 종목 그 뒤 최대 상승 평균": round(st.mean([(x["max"] / x["pick_px"] - 1) * 100 for x in w.values()
+                                                             if x.get("ai") == "반대" and x.get("pick_px")]), 2)
+                        if any(x.get("ai") == "반대" for x in w.values()) else None},
            "best": max(today, key=lambda t: t["pnl_pct"], default=None), "worst": min(today, key=lambda t: t["pnl_pct"], default=None)}
     for k in ("best", "worst"):
         if rep[k]:

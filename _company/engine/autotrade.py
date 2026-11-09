@@ -76,6 +76,7 @@ DEFAULTS = {
     "interval_min": 1,             # 급등 종목 찾기 간격 (보유 종목 손절 확인은 따로 20초마다)
     "exit_check_sec": 10,
     "ai_check": False,             # 주문 전 AI 검토 (급등주는 속도가 중요해서 기본 꺼짐)
+    "ai_chart_check": False,       # 사기 직전 AI 가 1분봉 차트 그림을 보고 찬성/반대 (10~20초 늦어짐, 기본 꺼짐)
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
 }
@@ -141,7 +142,7 @@ def save_config(new: dict) -> dict:
                 c[k] = int(v) if v.is_integer() and isinstance(DEFAULTS[k], int) else v
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
-    for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket"):
+    for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -601,11 +602,19 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             qty = int(budget // (buy_px * f))
             if qty < 1:
                 results.append(f"{sym}: 살 돈이 부족해요 (가능 {budget:,.0f}원, 1주 {buy_px * f:,.0f}원)"); continue
+            chart_id = ""
+            if c["ai_chart_check"]:   # 📊 AI 가 1분봉 차트 그림을 직접 보고 판단
+                ok, why, chart_id = _ai_chart_ok(sym, reason, price)
+                tl.flag_watch(s["day"], sym, ai="찬성" if ok else "반대", why=why)
+                if not ok:
+                    event("AI 차트 반대", f"{sym} 매수 보류 — {why}", symbol=sym, chart=chart_id)
+                    results.append(f"{sym}: 📊 AI 가 차트 보고 반대 — {why}"); continue
             if c["ai_check"]:
                 ok, why = _ai_ok(sym, side, reason, price)
                 if not ok:
                     event("AI 반대", f"{sym} 매수 보류 — {why}", symbol=sym); results.append(f"{sym}: AI 반대 — {why}"); continue
-            results.append(_execute(sym, "BUY", qty, buy_px, reason, live, fx))
+            results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · 📊 AI 차트 찬성: {why}" if chart_id else ""), live, fx,
+                                    chart=chart_id))
             invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
         else:
             part = side == "SELL_PART"
@@ -621,15 +630,18 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     return {"ok": True, "mode": mode, "results": results}
 
 
-def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float, partial: bool = False) -> str:
+def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float, partial: bool = False,
+             chart: str = "") -> str:
     coid = "cai-" + uuid.uuid4().hex[:20]
     px = toss.order_price(sym, price, side)
     label = f"{sym} {'매수' if side == 'BUY' else '매도'} {qty}주 @ {px}"
     rec = {"t": datetime.now(KST).strftime("%m-%d %H:%M:%S"), "symbol": sym, "side": side, "qty": qty, "price": float(px),
-           "reason": reason, "mode": "live" if live else "paper", "client_order_id": coid, "partial": partial}
+           "reason": reason, "mode": "live" if live else "paper", "client_order_id": coid, "partial": partial, "chart": chart}
     if side == "BUY":
         info = next((x for x in (state().get("picks") or {}).get("picks", []) if x["symbol"] == sym), {})
         rec["features"] = {k: info.get(k) for k in ("change", "ratio", "pre", "minute", "score")}
+        if chart:
+            rec["features"]["ai_chart"] = "찬성"
     if live:
         try:
             r = toss.place_limit_order(sym, side, qty, price, coid)
@@ -672,7 +684,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
         if side == "BUY":
             s["orders_today"] += 1
         _save(s)
-    event("실전 주문" if live else "가상 주문", f"{label} — {reason}", symbol=sym)
+    event("실전 주문" if live else "가상 주문", f"{label} — {reason}", symbol=sym, **({"chart": chart} if chart else {}))
     return f"{sym}: {'✅ 주문 보냄' if live else '📝 가상 체결'} {label} — {reason}"
 
 
@@ -971,3 +983,83 @@ def apply_action(a: dict) -> dict:
     if r.get("ok"):
         event("채팅 지시", f"{a.get('label', t)}" + (f" — {a['why']}" if a.get("why") else ""))
     return r
+
+
+# ── 📊 차트 ──
+def _ai_chart_ok(sym: str, reason: str, price: float) -> tuple[bool, str, str]:
+    """사기 직전: 오늘 1분봉 차트를 그려서 AI 가 그림을 보고 판단. 실패하면 안전하게 '반대'."""
+    from . import chart
+    from . import providers as pv
+    from . import team as tm
+    try:
+        name = chart.draw(sym, "1m", title=sym)
+    except Exception as e:
+        return False, f"차트를 못 그렸어요({type(e).__name__})", ""
+    prompt = (f"{sym} 급등주 매수 직전이에요. 규칙상 이유: {reason}. 현재가 {price}.\n첨부한 오늘 1분봉 차트(캔들·MA5/20·VWAP·거래량)를 보고 "
+              "지금 사도 되는지 판단하세요. 꼭대기에서 꺾이는 중·거래량이 줄며 밀리는 중·VWAP 아래로 이탈이면 반대, "
+              "눌림 후 재상승·거래량 늘며 고점 돌파·VWAP 위 지지면 찬성. 한 줄 이유 후 마지막 줄에 '판정: 찬성' 또는 '판정: 반대'.")
+    try:
+        reply = pv.chat(tm.fast_spec("claudecode:sonnet"), "너는 단타 차트 판독가다. 짧게.", [{"role": "user", "content": prompt}],
+                        effort="low", timeout=90, images=[str(chart.path(name))])
+    except Exception as e:
+        return False, f"AI 차트 확인 실패({type(e).__name__})", name
+    last = [l for l in reply.strip().splitlines() if "판정" in l][-1:] or [""]
+    ok = "찬성" in last[0] and "반대" not in last[0]
+    return ok, reply.strip().splitlines()[0][:160], name
+
+
+_live_cache: dict[str, dict] = {}
+
+
+def auto_charts(limit: int = 6) -> list[dict]:
+    """📊 실시간 차트: 자동매매가 가진 종목 + 방금 고른 종목 (최대 6개), 종목당 1분에 한 번만 다시 그림 (파일은 덮어씀)"""
+    c, s = config(), state()
+    if not toss.enabled():
+        return []
+    held = list((s["bot_pos"] if c["mode"] != "paper" else s["paper"]["positions"]).keys())
+    picks = [x["symbol"] for x in (s.get("picks") or {}).get("picks", [])]
+    out = []
+    for sym in list(dict.fromkeys(held + picks))[:limit]:
+        hit = _live_cache.get(sym)
+        if not hit or time.time() - hit["at"] > 55:
+            try:
+                r = draw_chart(sym, "1m", live=True)
+                hit = _live_cache[sym] = {**r, "at": time.time()}
+            except Exception as e:
+                hit = {"error": str(e), "at": time.time()}
+                _live_cache[sym] = hit
+        out.append({"sym": sym, "held": sym in held, **{k: v for k, v in hit.items() if k != "at"}, "v": int(hit["at"])})
+    return out
+
+
+def draw_chart(symbol: str, interval: str = "1m", live: bool = False) -> dict:
+    """화면용 차트: 자동매매가 가진 종목이면 산 가격·손절·나눠 팔기·익절·고점 대비 하락선과 매수/매도 표시"""
+    from . import chart
+    sym = toss.symbol(symbol or "")
+    if not re.fullmatch(r"\d{6}|[A-Z][A-Z.\-]{0,9}", sym):
+        raise ValueError("종목 코드를 넣어 주세요 (예: NVDA, 005930)")
+    if not toss.enabled():
+        raise ValueError("토스 키가 있어야 차트를 그려요 (🧰 도구)")
+    c, s = config(), state()
+    pos = (s["bot_pos"] if c["mode"] != "paper" else s["paper"]["positions"]).get(sym)
+    lines = {}
+    if pos and pos.get("avg"):
+        a = pos["avg"]
+        lines = {"산 가격": a, f"손절 -{c['stop_loss_pct']:g}%": a * (1 - c["stop_loss_pct"] / 100),
+                 f"익절 +{c['take_profit_pct']:g}%": a * (1 + c["take_profit_pct"] / 100)}
+        if c.get("partial_tp_pct") and not s["partial"].get(sym):
+            lines[f"나눠 팔기 +{c['partial_tp_pct']:g}%"] = a * (1 + c["partial_tp_pct"] / 100)
+        hi = s["highs"].get(sym)
+        if hi:
+            lines[f"고점 -{c['trail_pct']:g}%"] = hi * (1 - c["trail_pct"] / 100)
+    marks = []
+    for o in s["orders"][-80:]:
+        if o["symbol"] == sym and o.get("status") not in ("rejected",):
+            try:
+                t = datetime.strptime(f"{datetime.now(KST).year}-{o['t']}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST).isoformat()
+            except ValueError:
+                continue
+            marks.append({"t": t, "side": o["side"], "px": o["price"]})
+    name = chart.draw(sym, "1d" if interval == "1d" else "1m", lines=lines, marks=marks if interval == "1m" else None, title=sym,
+                      name=f"live-{sym}-{interval}.png" if live else "")
+    return {"id": name, "label": f"{sym} {'일봉' if interval == '1d' else '1분봉'}", "lines": {k: round(v, 4) for k, v in lines.items()}}

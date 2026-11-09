@@ -25,7 +25,7 @@ import urllib.request
 
 from .agents import COMPANY_DIR
 
-BASE = "https://openapi.tossinvest.com"
+BASE = os.getenv("TOSS_API_BASE", "https://openapi.tossinvest.com")   # 시험용으로만 바꿈 (평소엔 그대로)
 TOKEN_CACHE = COMPANY_DIR / "_cache" / "toss_token.json"   # _cache/ 는 git 에 안 올라감
 ALLOWED = re.compile(r"^/api/v1/(prices|candles|stocks|orderbook|trades|price-limits|accounts|holdings|buying-power|"
                      r"sellable-quantity|commissions|orders|orders/[A-Za-z0-9\-_]+|"

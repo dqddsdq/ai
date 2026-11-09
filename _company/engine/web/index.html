@@ -207,6 +207,12 @@ button { cursor: pointer; }
 .wb-screen .sh { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
 .wb-screen .sh b { font-size: 14.5px; } .wb-screen .sh .tag { margin-left: auto; }
 .wb-screen .md { font-size: 13.5px; }
+/* 차트 */
+.charts { margin: 8px 0; display: grid; gap: 8px; }
+.charts .lbl { font-size: 12.5px; color: var(--muted); }
+.charts img, .chart-view img { width: 100%; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; background: #fff; display: block; }
+.chart-chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12.5px; cursor: pointer; color: var(--text); }
+.tlog a.chart-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
 /* 자동매매 */
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .seg button { border: 0; background: transparent; padding: 8px 14px; font: inherit; color: var(--text); cursor: pointer; }
@@ -465,6 +471,17 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div class="row" style="display:flex;gap:8px;margin-top:6px"><input class="field" id="trade-ask" style="flex:1" placeholder="예: 오늘 왜 아무것도 안 샀어? / 익절 8%로 바꿔 / TSLA는 사지 마"><button class="btn primary" id="trade-ask-go">보내기</button></div>
         <div class="muted" style="font-size:12.5px;margin-top:4px">채팅의 🤖 자동매매 팀으로 이어져요. 설정을 바꾸는 말은 [적용] 카드로 떠요 (실전 켜기는 여기 위 버튼으로만).</div>
       </div>
+      <div class="card"><b>📊 실시간 차트</b> <span class="muted" style="font-size:12.5px">자동매매가 가진 종목 + 방금 고른 종목 · 1분마다 자동 갱신 · 누르면 크게</span>
+        <div id="live-charts" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;margin-top:8px"></div>
+      </div>
+      <div class="card"><b>📊 차트</b> <span class="muted" style="font-size:12.5px">토스 데이터로 그린 차트 = AI 가 보는 그림. 자동매매가 가진 종목은 산 가격·손절·나눠 팔기선까지</span>
+        <div class="row" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+          <input class="field" id="chart-sym" style="flex:1;min-width:120px" placeholder="종목 (예: NVDA, 005930)">
+          <button class="btn primary" data-iv="1m" id="chart-1m">1분봉</button><button class="btn" data-iv="1d" id="chart-1d">일봉</button>
+        </div>
+        <div id="chart-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
+        <div class="chart-view" id="chart-view" style="margin-top:8px"></div>
+      </div>
       <div class="card"><b>📚 학습·복기</b> <button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
         <div id="learn-today" style="margin-top:6px;font-size:13.5px"></div>
         <div id="learn-props" style="margin-top:8px"></div>
@@ -504,7 +521,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-auto_pick"> 종목은 알아서 고르기</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-us_premarket"> 미장 프리장(뉴욕 04:00, 한국 18:00 · 서머타임 17:00)부터 매매</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-stop_at_target"> 한 달 목표를 채우면 그달은 새로 안 사기 (번 돈 지키기)</label>
-        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (느려짐)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_chart_check"> 📊 사기 직전에 AI 가 1분봉 차트 그림을 보고 판단 (10~20초 늦어짐 · 판단한 차트는 주문 기록에 남음)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (글만, 느려짐)</label>
         <div class="row" style="margin-top:10px;display:flex"><div class="spacer"></div><button class="btn primary" id="trade-save">저장</button></div>
       </div>
       <div class="card"><b>가상 장부</b> <button class="btn" id="trade-reset" style="float:right;padding:3px 10px;font-size:12px">처음부터</button><div id="trade-paper" style="margin-top:6px;font-size:13.5px"></div></div>
@@ -662,7 +680,7 @@ function show(view) {
   if (view === "tools") renderToolsPage();
   if (view === "improve") renderImprovePage();
   clearInterval(tradeTimer);
-  if (view === "trade") { renderTrade(); tradeTimer = setInterval(() => renderTrade(false), 15000); }
+  if (view === "trade") { renderTrade(); renderLiveCharts(true); tradeTimer = setInterval(() => { renderTrade(false); renderLiveCharts(); }, 15000); }
   $("#top-title").textContent = view === "chat" ? (state.conv?.title || "") : "";
 }
 document.querySelectorAll(".side-btn.nav").forEach(b => b.onclick = () => show(b.dataset.view));
@@ -727,6 +745,7 @@ async function openConv(id) {
       if ((m.drafts || []).length > 1) a.team.judged();
       (m.steps || []).forEach(st => a.team.stepDone(st));
       (m.improvements || []).forEach(async id => { const j = await api("/api/improve/" + id); if (!j.error) improveCard(j, a.el); });
+      if ((m.charts || []).length) chartBlock(m.charts, a.el);
       (m.trade_actions || []).forEach(x => tradeActionCard(x, a.el));
       (m.tool_requests || []).forEach(id => { const r = (toolsCache?.requests || []).find(x => x.id === id); if (r) toolRequestCard(r, a.el); });
       if ((m.steps || []).length) a.team.judged();
@@ -1184,6 +1203,7 @@ async function send() {
       status: (d) => ai.status(d.text),
       replace: (d) => { raw = d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); },
       tool_request: (d) => { toolRequestCard(d, ai.el); loadTools(); scrollDown(); },
+      charts: (d) => { chartBlock(d.items || [], ai.el); scrollDown(); },
       trade_action: (d) => { tradeActionCard(d, ai.el); scrollDown(); },
       improve_request: (d) => { improveCard(d, ai.el); refreshImpBadge(); scrollDown(); },
       market: (d) => ai.market(d.items || []),
@@ -1277,7 +1297,7 @@ async function renderToolsPage() {
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
-const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "ai_check"];
+const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "ai_chart_check", "ai_check"];
 let tradeTimer = null;
 function tradeBadge(d) {
   const m = d.config.mode, b = $("#trade-badge");
@@ -1312,12 +1332,24 @@ async function renderTrade(fillForm = true) {
   if (bp.length) ph += `<div><b>자동매매가 가진 주식:</b> ${bp.map(([k, v]) => `${esc(k)} ${v.qty}주 (평단 ${Number(v.avg).toLocaleString()})`).join(" · ")}</div>`;
   $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
   renderLearn(d.learn || {});
+  const chipSyms = [...new Set([...Object.keys(d.bot_pos || {}), ...Object.keys((d.paper || {}).positions || {}), ...((d.picks || {}).picks || []).map(x => x.symbol)])];
+  $("#chart-chips").innerHTML = chipSyms.map(x => `<button class="chart-chip" data-sym="${esc(x)}">${esc(x)}</button>`).join("");
+  document.querySelectorAll("#chart-chips [data-sym]").forEach(b => b.onclick = () => { $("#chart-sym").value = b.dataset.sym; drawChart("1m"); });
   const p = d.paper, pos = Object.entries(p.positions || {});
   $("#trade-paper").innerHTML = `현금 ${Math.round(p.cash).toLocaleString()}원 · 실현 손익 ${Math.round(p.realized).toLocaleString()}원` +
     (pos.length ? "<br>" + pos.map(([k, v]) => `${esc(k)} ${v.qty}주 (평단 ${Number(v.avg).toLocaleString()})`).join(" · ") : "<br><span class='muted'>보유 없음</span>");
-  $("#trade-orders").innerHTML = d.orders.length ? d.orders.map(o => `<div><span class="k">${o.mode === "live" ? "🔴 실전" : "📝 가상"}</span>${esc(o.t)} · <b>${esc(o.symbol)} ${o.side === "BUY" ? "매수" : "매도"} ${o.qty}주</b> @ ${o.price} · ${esc(o.status)}${o.error ? " · " + esc(o.error) : ""}<br><span class="muted">${esc(o.reason)}</span></div>`).join("") : "<span class='muted'>아직 없어요</span>";
-  $("#trade-events").innerHTML = d.events.length ? d.events.map(e => `<div><span class="k">${esc(e.kind)}</span>${esc(e.t)} · ${esc(e.text)}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
+  $("#trade-orders").innerHTML = d.orders.length ? d.orders.map(o => `<div><span class="k">${o.mode === "live" ? "🔴 실전" : "📝 가상"}</span>${esc(o.t)} · <b>${esc(o.symbol)} ${o.side === "BUY" ? "매수" : "매도"} ${o.qty}주</b> @ ${o.price} · ${esc(o.status)}${o.error ? " · " + esc(o.error) : ""}<br><span class="muted">${esc(o.reason)}</span>${o.chart ? ` · <a class="chart-link" data-chart="${esc(o.chart)}">📊 AI 가 본 차트</a>` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
+  $("#trade-events").innerHTML = d.events.length ? d.events.map(e => `<div><span class="k">${esc(e.kind)}</span>${esc(e.t)} · ${esc(e.text)}${e.chart ? ` · <a class="chart-link" data-chart="${esc(e.chart)}">📊 AI 가 본 차트</a>` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
+  document.querySelectorAll("#view-trade [data-chart]").forEach(a => a.onclick = () => openChart(a.dataset.chart));
 }
+function chartBlock(items, container) {
+  const el = document.createElement("div"); el.className = "charts";
+  el.innerHTML = `<div class="lbl">📊 AI 가 보고 있는 차트 (토스 데이터로 직접 그림 · 누르면 크게)</div>` +
+    items.map(c => `<div><div class="lbl">${esc(c.label || "")}</div><img src="/api/upload/${esc(c.id)}" alt="${esc(c.label || "차트")}" loading="lazy"></div>`).join("");
+  el.querySelectorAll("img").forEach(img => img.onclick = () => window.open(img.src, "_blank"));
+  const md_ = container.querySelector(".md"); container.insertBefore(el, md_ || null);
+}
+function openChart(id) { window.open("/api/upload/" + encodeURIComponent(id), "_blank"); }
 function tradeActionCard(a, container) {
   const el = document.createElement("div"); el.className = "treq";
   el.innerHTML = `<div class="th">🤖 <b>자동매매에 지시</b><span class="tb wait">적용 대기</span></div>
@@ -1361,6 +1393,29 @@ function renderLearn(L) {
   const tr = L.trades || [];
   $("#learn-trades").innerHTML = tr.length ? tr.map(x => `<div>${esc(x.entry_time.slice(5, 16))} <b>${esc(x.sym)}</b> ${x.closed ? `${pctS(x.pnl_pct)} · ${esc(x.exit_kind || "")}` : "보유 중"} · 최대 ${pctS(x.mfe)} / 최저 ${pctS(x.mae)}${x.features && x.features.change != null ? ` · 살 때 ${pctS(x.features.change)}, 거래량 ${x.features.ratio}배${x.features.pre ? " (프리장)" : ""}` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
 }
+let liveChartAt = 0;
+async function renderLiveCharts(force = false) {
+  if (!force && Date.now() - liveChartAt < 55000) return;
+  liveChartAt = Date.now();
+  const r = await fetch("/api/charts/auto").then(x => x.json()).catch(() => ({ items: [] }));
+  const items = r.items || [];
+  $("#live-charts").innerHTML = items.length ? items.map(c => `<div>
+      <div style="font-size:13px;margin-bottom:3px"><b>${esc(c.sym)}</b> <span class="muted">${c.held ? "보유 중" : "방금 고름"}</span></div>
+      ${c.error ? `<div class="muted" style="font-size:12.5px">⚠️ ${esc(c.error)}</div>` : `<img src="/api/upload/${esc(c.id)}?v=${c.v}" alt="${esc(c.sym)}" style="width:100%;border:1px solid var(--line);border-radius:10px;cursor:zoom-in;background:#fff">`}
+    </div>`).join("") : `<span class="muted" style="font-size:13px">지금 보유하거나 고른 종목이 없어요 — 장중에 종목을 고르면 여기 자동으로 떠요</span>`;
+  document.querySelectorAll("#live-charts img").forEach(img => img.onclick = () => window.open(img.src, "_blank"));
+}
+async function drawChart(iv) {
+  const sym = $("#chart-sym").value.trim(); if (!sym) return $("#chart-sym").focus();
+  $("#chart-view").innerHTML = "<div class='muted'>그리는 중…</div>";
+  const r = await fetch(`/api/chart?symbol=${encodeURIComponent(sym)}&interval=${iv}`).then(x => x.json()).catch(e => ({ error: e.message }));
+  if (r.error) return $("#chart-view").innerHTML = `<div class="muted">⚠️ ${esc(r.error)}</div>`;
+  const ln = Object.entries(r.lines || {});
+  $("#chart-view").innerHTML = `<img src="/api/upload/${esc(r.id)}" alt="${esc(r.label)}">` + (ln.length ? `<div class="muted" style="font-size:12.5px;margin-top:4px">${ln.map(([k, v]) => `${esc(k)} ${v}`).join(" · ")}</div>` : "");
+  $("#chart-view img").onclick = () => openChart(r.id);
+}
+$("#chart-1m").onclick = () => drawChart("1m"); $("#chart-1d").onclick = () => drawChart("1d");
+$("#chart-sym").onkeydown = (e) => { if (e.key === "Enter") drawChart("1m"); };
 $("#trade-ask-go").onclick = () => {
   const q = $("#trade-ask").value.trim(); if (!q) return $("#trade-ask").focus();
   $("#trade-ask").value = ""; show("chat"); newChat();
