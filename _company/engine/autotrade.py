@@ -37,10 +37,11 @@ DEFAULTS = {
     "mode": "off",
     "symbols": [],                 # 허용 종목 (예: ["005930", "247540", "AAPL"])
     "interval_min": 5,
-    "max_order_krw": 200000,       # 한 번 주문 최대 금액
-    "max_position_krw": 300000,    # 종목당 최대 보유 금액
-    "max_orders_per_day": 6,
-    "max_daily_loss_krw": 50000,   # 오늘 손실이 이만큼 넘으면 그날 정지
+    "max_total_krw": 100000,       # 자동매매 전체 투자 한도 (허용 종목 보유 합계 + 새 주문이 이걸 못 넘음)
+    "max_order_krw": 50000,        # 한 번 주문 최대 금액
+    "max_position_krw": 50000,     # 종목당 최대 보유 금액
+    "max_orders_per_day": 4,
+    "max_daily_loss_krw": 5000,    # 오늘 손실이 이만큼 넘으면 그날 정지
     "stop_loss_pct": 5.0,          # 평단 대비 -5% 면 팔기
     "take_profit_pct": 10.0,       # 평단 대비 +10% 면 팔기
     "rsi_max_buy": 68,             # 과열이면 안 삼
@@ -80,7 +81,7 @@ def save_config(new: dict) -> dict:
             errors.append("종목 코드가 이상해요: " + ", ".join(bad))
         else:
             c["symbols"] = list(dict.fromkeys(toss.symbol(s) for s in syms))[:20]
-    nums = {"interval_min": (1, 120), "max_order_krw": (10000, 50000000), "max_position_krw": (10000, 100000000),
+    nums = {"max_total_krw": (10000, 1000000000), "interval_min": (1, 120), "max_order_krw": (10000, 50000000), "max_position_krw": (10000, 100000000),
             "max_orders_per_day": (1, 50), "max_daily_loss_krw": (1000, 50000000), "stop_loss_pct": (0.5, 50),
             "take_profit_pct": (0.5, 200), "rsi_max_buy": (30, 90), "paper_cash_krw": (10000, 1000000000), "usd_krw": (500, 3000)}
     for k, (lo, hi) in nums.items():
@@ -236,7 +237,10 @@ def run_once(force: bool = False) -> dict:
             p = s["paper"]
             pos = {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in p["positions"].items()}
             pending, cash = set(), {"KRW": p["cash"], "USD": p["cash"] / c["usd_krw"]}
-        quotes = toss.prices(c["symbols"])
+        quotes = toss.prices(c["symbols"] + [k for k in pos if not k.startswith("_") and k not in c["symbols"]])
+        def _fx(sym): return 1 if re.fullmatch(r"\d{6}", sym) else c["usd_krw"]
+        invested = sum(v["qty"] * quotes.get(k, {}).get("price", v["avg"]) * _fx(k)   # 허용 종목 보유 평가액 합계
+                       for k, v in pos.items() if not k.startswith("_") and k in c["symbols"])
     except toss.TossError as e:
         event("오류", str(e))
         return {"ok": False, "message": str(e)}
@@ -264,7 +268,8 @@ def run_once(force: bool = False) -> dict:
                 results.append(f"{sym}: 오늘 주문 수 한도({c['max_orders_per_day']}) 도달"); continue
         if side == "BUY":
             held_value = held["qty"] * price * fx
-            budget = min(c["max_order_krw"], c["max_position_krw"] - held_value, cash["USD" if us else "KRW"] * fx)
+            budget = min(c["max_order_krw"], c["max_position_krw"] - held_value, c["max_total_krw"] - invested,
+                         cash["USD" if us else "KRW"] * fx)
             qty = int(budget // (price * fx))
             if qty < 1:
                 results.append(f"{sym}: 매수 신호지만 한도·현금 안에서 1주도 못 사요 (가능 {budget:,.0f}원)"); continue
@@ -278,6 +283,8 @@ def run_once(force: bool = False) -> dict:
                 event("AI 반대", f"{sym} {side} {qty}주 보류 — {why}", symbol=sym)
                 results.append(f"{sym}: AI 가 반대해서 보류 — {why}"); continue
         results.append(_execute(sym, side, qty, price, reason, live, c))
+        if side == "BUY":
+            invested += qty * price * fx
     return {"ok": True, "mode": mode, "results": results}
 
 

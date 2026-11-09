@@ -464,6 +464,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <b>규칙·안전장치</b>
         <div class="trade-grid">
           <label style="grid-column:1/-1">허용 종목 (이 종목만 매매 · 쉼표로) <input id="t-symbols" placeholder="005930, 247540, AAPL"></label>
+          <label><b>총 투자 한도 (원)</b> — 전부 합쳐 이 이상 안 삼<input id="t-max_total_krw" type="number"></label>
           <label>한 번 주문 최대 (원)<input id="t-max_order_krw" type="number"></label>
           <label>종목당 최대 보유 (원)<input id="t-max_position_krw" type="number"></label>
           <label>하루 최대 주문 수<input id="t-max_orders_per_day" type="number"></label>
@@ -1243,7 +1244,7 @@ async function renderToolsPage() {
 }
 
 // ── 자동매매 ──
-const TRADE_FIELDS = ["max_order_krw", "max_position_krw", "max_orders_per_day", "max_daily_loss_krw", "stop_loss_pct", "take_profit_pct", "rsi_max_buy", "interval_min", "paper_cash_krw"];
+const TRADE_FIELDS = ["max_total_krw", "max_order_krw", "max_position_krw", "max_orders_per_day", "max_daily_loss_krw", "stop_loss_pct", "take_profit_pct", "rsi_max_buy", "interval_min", "paper_cash_krw"];
 let tradeTimer = null;
 function tradeBadge(d) {
   const m = d.config.mode, b = $("#trade-badge");
