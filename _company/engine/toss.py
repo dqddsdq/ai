@@ -43,19 +43,35 @@ def enabled() -> bool:
     return bool(os.getenv("TOSS_CLIENT_ID", "").strip() and os.getenv("TOSS_CLIENT_SECRET", "").strip())
 
 
+def _body(raw: bytes, headers) -> dict:
+    """토스는 응답을 gzip 으로 압축해서 보냄 → 풀어서 JSON 으로"""
+    if raw[:2] == b"\x1f\x8b" or "gzip" in (headers.get("Content-Encoding") or ""):
+        import gzip
+        try:
+            raw = gzip.decompress(raw)
+        except OSError:
+            pass
+    return json.loads(raw or b"{}")
+
+
 def _http(req: urllib.request.Request, timeout: int = 15) -> dict:
+    req.add_header("Accept-Encoding", "gzip")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read() or b"{}")
+            return _body(r.read(), r.headers)
     except urllib.error.HTTPError as e:
         try:
-            body = json.loads(e.read() or b"{}")
+            body = _body(e.read(), e.headers)
         except Exception:
             body = {}
         err = body.get("error")
         msg = (err.get("message") if isinstance(err, dict) else body.get("error_description") or err) or ""
         if e.code == 429:
             raise TossError(f"토스: 요청이 너무 잦아요 ({e.headers.get('Retry-After', '1')}초 뒤 다시)") from None
+        if e.code == 401 and "client_id" in str(msg):
+            raise TossError("토스 401: 클라이언트 ID 를 토스가 모른대요 (🧰 도구의 클라이언트 ID 확인 · 키를 새로 발급했다면 새 값으로)") from None
+        if e.code == 401 and "client_secret" in str(msg):
+            raise TossError("토스 401: 시크릿 키가 틀렸대요 (🧰 도구의 시크릿 키 확인)") from None
         raise TossError(f"토스 {e.code}: {msg or e.reason}") from None
     except Exception as e:  # 네트워크 오류 — 주소·키가 메시지에 섞이지 않게
         raise TossError(f"토스 접속 실패: {type(e).__name__}") from None
