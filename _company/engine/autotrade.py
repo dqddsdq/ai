@@ -40,7 +40,7 @@ CONFIG = SHARED_DIR / "autotrade.json"
 STATE = COMPANY_DIR / "_cache" / "autotrade_state.json"
 KST = timezone(timedelta(hours=9))
 DEFAULTS = {
-    "v": 2,                        # 설정 형식 버전 (예전 기본값 자동 갱신용)
+    "v": 3,                        # 설정 형식 버전 (예전 기본값 자동 갱신용)
     "mode": "off",
     "market": "US",
     "strategy": "surge",
@@ -61,9 +61,11 @@ DEFAULTS = {
     "max_daily_loss_krw": 5000,    # fixed: 하루 손실 한도 금액
     "stop_loss_pct": 3.0,
     "take_profit_pct": 10.0,       # 남은 물량 전부 익절
-    "partial_tp_pct": 6.0,         # 나눠 팔기: 평단 대비 이만큼 오르면 일부 먼저 팔기 (0 = 안 씀)
+    "partial_tp_pct": 4.0,         # 나눠 팔기: 평단 대비 이만큼 오르면 일부 먼저 팔기 (0 = 안 씀)
     "partial_tp_ratio": 0.5,       # 그때 파는 비율 (0.5 = 절반) — 나머지는 손절선을 산 가격으로 올림
-    "trail_pct": 4.0,              # 산 뒤 최고가 대비 이만큼 떨어지면 팔기 (급등주)
+    "trail_pct": 4.0,              # 산 뒤 최고가 대비 이만큼 떨어지면 팔기 (최고 수익이 이만큼 이상 났을 때부터 작동)
+    "trail_wide_after_pct": 10.0,  # 최고 수익이 이 % 이상이면 고점 대비 기준을 넓힘 (큰 상승은 더 길게)
+    "trail_wide_pct": 6.0,         # 그때 쓰는 고점 대비 하락 기준(%)
     "surge_min_change_pct": 5.0,   # 오늘 이만큼 이상 오른 종목
     "surge_max_change_pct": 40.0,  # 너무 많이 오른 건 제외 (국장은 상한가 30%)
     "surge_volume_ratio": 3.0,     # 평소 거래량의 몇 배 이상
@@ -85,7 +87,7 @@ DEFAULTS = {
 }
 NUMS = {"loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (0, 1e10), "max_position_krw": (0, 1e10),
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
-        "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
+        "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
         "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
 CHOICES = {"mode": ("off", "paper", "live"), "market": ("US", "KR"), "strategy": ("surge", "trend"), "budget_mode": ("all_cash", "fixed")}
@@ -105,7 +107,10 @@ def config() -> dict:
     if int(c.get("v", 1)) < 2:   # 예전 기본값(2분)을 그대로 쓰던 경우 → 새 기본값 1분
         if c.get("interval_min") == 2:
             out["interval_min"] = 1
-        out["v"] = 2
+    if int(c.get("v", 1)) < 3:   # 나눠 팔기 예전 기본값(+6%) → 새 기본값(+4%)
+        if c.get("partial_tp_pct") in (6, 6.0):
+            out["partial_tp_pct"] = 4.0
+    out["v"] = 3
     return out
 
 
@@ -170,7 +175,7 @@ def state() -> dict:
             s = json.loads(STATE.read_text(encoding="utf-8"))
         except Exception:
             s = {}
-        for k, v in (("events", []), ("orders", []), ("bot_pos", {}), ("picks", {}), ("highs", {}), ("realized_today", 0.0), ("month", {}), ("partial", {})):
+        for k, v in (("events", []), ("orders", []), ("bot_pos", {}), ("picks", {}), ("highs", {}), ("realized_today", 0.0), ("month", {}), ("partial", {}), ("trail_mode", {}), ("hold_log", {})):
             s.setdefault(k, v)
         s.setdefault("paper", {"cash": config()["paper_cash_krw"], "positions": {}, "realized": 0})
         for k, v in list(s["bot_pos"].items()):  # 예전 형식(수량만) 호환
@@ -270,30 +275,65 @@ def signal_trend(closes: list[float], price: float, qty: float, avg: float, c: d
     return "HOLD", f"조건 안 맞음 (RSI {rsi:.0f})"
 
 
+def trail_for(avg: float, high: float, c: dict) -> float:
+    """이 종목에 지금 적용할 고점 대비 하락 기준(%) — 최고 수익이 trail_wide_after_pct 이상이면 넓은 기준"""
+    peak = (high / avg - 1) * 100 if avg and high else 0
+    return c["trail_wide_pct"] if c.get("trail_wide_after_pct") and peak >= c["trail_wide_after_pct"] else c["trail_pct"]
+
+
 def signal_surge(price: float, qty: float, avg: float, high: float, minutes: int | None, picked: bool, c: dict,
                  partial_done: bool = False) -> tuple[str, str]:
-    """('BUY'|'SELL'|'SELL_PART'|'HOLD', 이유)"""
+    """('BUY'|'SELL'|'SELL_PART'|'HOLD', 이유)
+    매도 순서: 마감 정리 → 손절 → (나눠 판 뒤) 본전 정리 → 나눠 팔기 → 고점 대비 하락 → (나눠 팔기 안 쓸 때만) 전부 익절"""
     if qty > 0 and avg > 0:
         pnl = (price / avg - 1) * 100
-        drop = (price / high - 1) * 100 if high else 0
+        high = max(high or price, price)
+        peak = (high / avg - 1) * 100
+        drop = (price / high - 1) * 100
+        trail = trail_for(avg, high, c)
         if minutes is not None and minutes >= 375:
             return "SELL", f"장 마감 15분 전 정리 (평단 대비 {pnl:+.1f}%)"
         if pnl <= -c["stop_loss_pct"]:
             return "SELL", f"손절: 평단 대비 {pnl:.1f}% (기준 -{c['stop_loss_pct']}%)"
         if partial_done and pnl <= c["limit_slip_pct"] + 0.2:   # 일부 익절한 뒤엔 남은 물량을 손해 보고 팔지 않게 (파는 지정가 -0.5% 감안해 본전에서 정리)
             return "SELL", f"나눠 팔기 후 본전 도달 → 남은 물량 정리 (평단 대비 {pnl:+.1f}%)"
-        if pnl >= c["take_profit_pct"]:
-            return "SELL", f"익절: 평단 대비 +{pnl:.1f}%"
         if not partial_done and c.get("partial_tp_pct") and pnl >= c["partial_tp_pct"]:
             return "SELL_PART", f"나눠 팔기: 평단 대비 +{pnl:.1f}% → {int(c['partial_tp_ratio'] * 100)}% 먼저 익절"
-        if pnl > 0 and drop <= -c["trail_pct"]:
-            return "SELL", f"고점 대비 {drop:.1f}% 하락 → 수익 지키기 (평단 대비 {pnl:+.1f}%)"
-        return "HOLD", f"보유 유지 (평단 대비 {pnl:+.1f}% · 고점 대비 {drop:.1f}%)"
+        # 고점 대비 하락: 최고 수익이 기준(trail) 이상 났으면 '무장' → 그 뒤엔 평단 아래로 살짝 내려가도 팔기
+        # (예전엔 '지금 수익 중'일 때만 팔아서, +4.4% → 평단 아래로 빠르게 밀리면 손절(-3%)까지 기다리던 문제 수정)
+        if peak >= trail and drop <= -trail:
+            return "SELL", f"고점 대비 {drop:.1f}% 하락 (기준 -{trail:g}%, 최고 +{peak:.1f}%) → 수익 지키기 (평단 대비 {pnl:+.1f}%)"
+        if not c.get("partial_tp_pct") and c.get("take_profit_pct") and pnl >= c["take_profit_pct"]:
+            return "SELL", f"익절: 평단 대비 +{pnl:.1f}%"
+        armed = "작동 중" if peak >= trail else f"최고 +{peak:.1f}% < {trail:g}% 라 아직 대기"
+        return "HOLD", f"보유 유지 (평단 대비 {pnl:+.1f}% · 최고 +{peak:.1f}% · 고점 대비 {drop:.1f}% / 기준 -{trail:g}% {armed})"
     if not picked:
         return "HOLD", "선택 종목 아님"
     if minutes is None or minutes > 360:
         return "HOLD", "마감 30분 전부터는 새로 안 삼"
     return "BUY", "급등 + 거래량 폭증"
+
+
+def _note_hold(sym: str, avg: float, high: float, price: float, side: str, reason: str, c: dict) -> None:
+    """보유 종목 기록: ① 고점 대비 기준이 바뀌면 (종목·이전→이후·이유) 기록 ② 5분마다 '지금 판단' 기록 (나중에 원인 찾기용)"""
+    with _lock:
+        s = state()
+        new = trail_for(avg, high, c)
+        old = s["trail_mode"].get(sym)
+        changed = old is not None and abs(float(old) - new) > 1e-9
+        if old is None or changed:
+            s["trail_mode"][sym] = new
+        now = time.time()
+        log_due = side == "HOLD" and now - float(s["hold_log"].get(sym, 0)) >= 300
+        if log_due:
+            s["hold_log"][sym] = now
+        _save(s)
+    if changed:
+        peak = (high / avg - 1) * 100
+        event("기준 변경", f"{sym} 고점 대비 매도 기준 -{old:g}% → -{new:g}% (이유: 최고 수익 +{peak:.1f}% "
+              f"{'≥' if new == c['trail_wide_pct'] else '<'} {c['trail_wide_after_pct']:g}%)", symbol=sym)
+    if log_due:
+        event("보유 확인", f"{sym} {reason}", symbol=sym)
 
 
 def _ai_ok(sym: str, side: str, reason: str, price: float) -> tuple[bool, str]:
@@ -410,6 +450,7 @@ def _reconcile(fx: float) -> None:
                             s["partial"][rec["symbol"]] = True
                     else:
                         s["bot_pos"].pop(rec["symbol"], None); s["highs"].pop(rec["symbol"], None); s["partial"].pop(rec["symbol"], None)
+                        s["trail_mode"].pop(rec["symbol"], None); s["hold_log"].pop(rec["symbol"], None)
                 rec["counted"] = filled
             st = r.get("status") or ""
             if st:
@@ -583,6 +624,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         if c["strategy"] == "surge":
             side, reason = signal_surge(price, held["qty"], held["avg"], high, minutes, sym in picked, c,
                                         partial_done=bool(state()["partial"].get(sym)))
+            if held["qty"] > 0 and held["avg"]:
+                _note_hold(sym, held["avg"], max(high, price), price, side, reason, c)
             if side == "BUY":
                 info = next((x for x in (state().get("picks") or {}).get("picks", []) if x["symbol"] == sym), None)
                 reason = info["reason"] if info else reason
@@ -708,6 +751,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
                         s["partial"][sym] = True
                 else:
                     p["positions"].pop(sym, None); s["highs"].pop(sym, None); s["partial"].pop(sym, None)
+                    s["trail_mode"].pop(sym, None); s["hold_log"].pop(sym, None)
             _save(s)
         rec["status"] = "paper_filled"
     with _lock:
@@ -903,7 +947,7 @@ LABELS = {"monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보�
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
-          "trail_pct": "고점 대비 하락 매도(%)", "surge_min_change_pct": "급등 최소 상승률(%)", "surge_max_change_pct": "급등 최대 상승률(%)",
+          "trail_pct": "고점 대비 하락 매도(%)", "trail_wide_after_pct": "넓은 기준 쓰는 최고 수익(%)", "trail_wide_pct": "넓은 고점 대비 기준(%)", "surge_min_change_pct": "급등 최소 상승률(%)", "surge_max_change_pct": "급등 최대 상승률(%)",
           "surge_volume_ratio": "거래량 배수 기준", "pre_volume_ratio": "프리장 거래량 기준", "min_trading_value_krw": "최소 거래대금(원)",
           "us_min_price": "최소 주가($)", "limit_slip_pct": "지정가 여유(%)", "interval_min": "종목 찾기 간격(분)",
           "exit_check_sec": "손절 확인 간격(초)", "loss_streak_pause": "연속 손실 쉬기 기준", "pause_min": "쉬는 시간(분)",
@@ -1082,7 +1126,8 @@ def draw_chart(symbol: str, interval: str = "1m", live: bool = False) -> dict:
             lines[f"나눠 팔기 +{c['partial_tp_pct']:g}%"] = a * (1 + c["partial_tp_pct"] / 100)
         hi = s["highs"].get(sym)
         if hi:
-            lines[f"고점 -{c['trail_pct']:g}%"] = hi * (1 - c["trail_pct"] / 100)
+            tr = trail_for(a, hi, c)
+            lines[f"고점 -{tr:g}%"] = hi * (1 - tr / 100)
     marks = []
     for o in s["orders"][-80:]:
         if o["symbol"] == sym and o.get("status") not in ("rejected",):
