@@ -412,8 +412,19 @@ def _ai_text(rep: dict, proposals: list[dict]) -> str:
         return f"(AI 요약 실패: {type(e).__name__} — 숫자 표는 그대로 보세요)"
 
 
-def decide(pid: str, action: str) -> dict:
-    """제안 적용/거절/되돌리기"""
+def record_auto(param: str, label: str, frm, to, why: str, evidence: str) -> dict:
+    """자동 조정 기록 (이미 적용된 상태로 저장 → 화면에서 [되돌리기] 가능)"""
+    with _lock:
+        d = _load()
+        p = {"id": uuid.uuid4().hex[:8], "param": param, "label": label, "from": frm, "to": to, "why": why, "evidence": evidence,
+             "created": _now(), "status": "applied", "prev": frm, "applied": _now(), "auto": True}
+        d["proposals"].append(p)
+        _save(d)
+    return p
+
+
+def decide(pid: str, action: str, auto: bool = False, to=None) -> dict:
+    """제안 적용/거절/되돌리기 (auto=True 면 자동 조정으로 적용, to 로 범위 안 값으로 바꿔 적용 가능)"""
     from . import autotrade as at
     with _lock:
         d = _load()
@@ -421,8 +432,16 @@ def decide(pid: str, action: str) -> dict:
         if not p:
             return {"ok": False, "message": "없는 제안이에요"}
         if action == "apply" and p["status"] == "pending":
+            if to is not None:
+                p["to"] = to
             prev = at.config().get(p["param"])
-            r = at.save_config({p["param"]: p["to"]})
+            if prev == p["to"]:
+                p.update(status="rejected", why=p["why"] + " (이미 범위 끝이라 그대로)")
+                _save(d)
+                return {"ok": False, "message": "범위 끝이라 그대로"}
+            r = at.save_config({p["param"]: p["to"]}, _by_auto=auto)
+            if auto:
+                p["auto"] = True
             if not r.get("ok"):
                 return r
             p.update(status="applied", prev=prev, applied=_now())
@@ -430,13 +449,16 @@ def decide(pid: str, action: str) -> dict:
             p.update(status="rejected")
         elif action == "revert" and p["status"] == "applied":
             r = at.save_config({p["param"]: p["prev"]})
+            if p["param"] == "mode":
+                at.note_user_mode(p["prev"])
             if not r.get("ok"):
                 return r
             p.update(status="reverted")
         else:
             return {"ok": False, "message": "지금 상태에서는 할 수 없어요"}
         _save(d)
-    at.event("학습", f"제안 {dict(apply='적용', reject='거절', revert='되돌림')[action]}: {p['label']} {p['from']} → {p['to']}")
+    at.event("자동 조정" if auto else "학습", f"{'자동 적용' if auto else '제안 ' + dict(apply='적용', reject='거절', revert='되돌림')[action]}: {p['label']} {p['from']} → {p['to']}"
+             + (f" — {p['why']}" if auto else ""))
     return {"ok": True, "proposal": p}
 
 
@@ -447,6 +469,18 @@ def overview(day: str, mode: str) -> dict:
     return {"today": today_stats(day, mode), "review": revs[-1] if revs else None,
             "proposals": [p for p in d["proposals"] if p["status"] in ("pending", "applied")][-20:][::-1],
             "trades": [t for t in d["trades"] if t["mode"] == mode][-30:][::-1]}
+
+
+def day_sums(mode: str, n: int = 5) -> list[float]:
+    """최근 복기 n일의 하루 손익 합(%) — 오래된 것 → 최근"""
+    with _lock:
+        revs = [r for r in _load()["reviews"] if r["mode"] == mode and r["today"].get("n")]
+    return [r["today"]["sum"] for r in revs[-n:]]
+
+
+def trades_since(mode: str, since: str) -> list[dict]:
+    with _lock:
+        return [t for t in _load()["trades"] if t["mode"] == mode and t["closed"] and t["entry_time"] >= since]
 
 
 def last_review_text(mode: str) -> str:

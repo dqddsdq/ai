@@ -561,7 +561,27 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-auto_pick"> 종목은 알아서 고르기</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-us_premarket"> 미장 프리장(뉴욕 04:00, 한국 18:00 · 서머타임 17:00)부터 매매</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-stop_at_target"> 한 달 목표를 채우면 그달은 새로 안 사기 (번 돈 지키기)</label>
-        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-prob_sizing"> 🎲 학습 기록으로 승률을 추정해서 살 금액 조절 (낮으면 적게, 높으면 많이 · 한도는 안 넘음 · 기대 수익이 마이너스인 조건은 건너뜀)</label>
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><b>🔁 자동 조절</b> <span class="muted" style="font-size:12.5px">매일 장 끝나고 복기 직후 · 아래 범위 안에서만 · 바뀐 건 📚 학습 카드에 '자동' 표시와 [되돌리기]</span></div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_tune"> 자동 조절 켜기 (끄면 아래 전부 꺼짐)</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin:4px 0 0 22px;font-size:13px">
+          <label><input type="checkbox" id="t-auto_rules"> 학습 제안 자동 적용</label>
+          <label><input type="checkbox" id="t-auto_stop"> 손절 %</label>
+          <label><input type="checkbox" id="t-auto_limits"> 종목당·주문 한도</label>
+          <label><input type="checkbox" id="t-auto_loss"> 하루 손실 한도</label>
+          <label><input type="checkbox" id="t-auto_mode"> 실전↔가상 (끄기·긴급 정지는 자동으로 안 풀림)</label>
+        </div>
+        <div class="trade-grid">
+          <label>손절 자동 범위: 최소 (%)<input id="t-stop_min" type="number" step="0.5"></label>
+          <label>손절 자동 범위: 최대 (%)<input id="t-stop_max" type="number" step="0.5"></label>
+          <label>한도 자동 범위: 처음 값의 최소 배수<input id="t-limit_min_mult" type="number" step="0.1"></label>
+          <label>한도 자동 범위: 처음 값의 최대 배수<input id="t-limit_max_mult" type="number" step="0.5"></label>
+          <label>하루 손실 한도 자동 범위: 최소 (예산 %)<input id="t-loss_pct_min" type="number" step="0.5"></label>
+          <label>하루 손실 한도 자동 범위: 최대 (예산 %)<input id="t-loss_pct_max" type="number" step="0.5"></label>
+          <label>실전 → 가상: 연속 손실 날수<input id="t-mode_down_days" type="number"></label>
+          <label>실전 → 가상: 이번 달 손실 (%)<input id="t-mode_down_month_pct" type="number" step="0.5"></label>
+          <label>가상 → 실전 복귀: 최소 거래 수<input id="t-mode_up_trades" type="number"></label>
+        </div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-prob_sizing"> 🎲 학습 기록으로 승률을 추정해서 살 금액 조절 (낮으면 적게, 높으면 많이 · 한도는 안 넘음 · 기대 수익이 마이너스인 조건은 건너뜀)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_chart_check"> 📊 사기 직전에 AI 가 1분봉 차트 그림을 보고 판단 (10~20초 늦어짐 · 판단한 차트는 주문 기록에 남음)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (글만, 느려짐)</label>
         <div class="row" style="margin-top:10px;display:flex"><div class="spacer"></div><button class="btn primary" id="trade-save">저장</button></div>
@@ -1339,8 +1359,8 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "min_size_ratio", "min_win_prob", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
-const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
+const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 function tradeBadge(d) {
   const m = d.config.mode, b = $("#trade-badge");
@@ -1416,8 +1436,8 @@ function renderLearn(L) {
   if (g.no_premarket) h += `<div>⏸️ ${esc(g.no_premarket)}</div>`;
   $("#learn-today").innerHTML = h;
   const props = L.proposals || [];
-  $("#learn-props").innerHTML = props.length ? `<div style="font-size:13.5px"><b>규칙 조정 제안</b> <span class="muted">(적용을 눌러야 바뀌어요)</span></div>` + props.map(p => `
-    <div class="treq" style="margin:6px 0"><div class="th">🔧 <b>${esc(p.label)}</b>: ${esc(String(p.from))} → <b>${esc(String(p.to))}</b><span class="tb ${p.status === "applied" ? "ok" : "wait"}">${p.status === "applied" ? "적용됨" : "제안"}</span></div>
+  $("#learn-props").innerHTML = props.length ? `<div style="font-size:13.5px"><b>규칙 조정</b> <span class="muted">(🔁 자동 조절이 켜져 있으면 범위 안에서 자동 적용 · [되돌리기] 가능)</span></div>` + props.map(p => `
+    <div class="treq" style="margin:6px 0"><div class="th">🔧 <b>${esc(p.label)}</b>: ${esc(String(p.from))} → <b>${esc(String(p.to))}</b><span class="tb ${p.status === "applied" ? "ok" : "wait"}">${p.status === "applied" ? (p.auto ? "🔁 자동 적용" : "적용됨") : "제안"}</span></div>
       <div class="why">${esc(p.why)}<br><span class="muted">근거: ${esc(p.evidence)}</span></div>
       <div class="acts">${p.status === "pending" ? `<button class="btn primary" data-pid="${p.id}" data-act="apply">적용</button><button class="btn" data-pid="${p.id}" data-act="reject">거절</button>` : `<button class="btn" data-pid="${p.id}" data-act="revert">되돌리기</button>`}</div></div>`).join("")
     : `<div class="muted" style="font-size:13px">규칙 조정 제안 없음${L.review && L.review.note ? " — " + esc(L.review.note) : ""}</div>`;

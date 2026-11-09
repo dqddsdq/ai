@@ -78,6 +78,18 @@ DEFAULTS = {
     "interval_min": 1,             # 급등 종목 찾기 간격 (보유 종목 손절 확인은 따로 20초마다)
     "exit_check_sec": 10,
     "ai_check": False,             # 주문 전 AI 검토 (급등주는 속도가 중요해서 기본 꺼짐)
+    "auto_tune": True,             # 🔁 매일 장 끝나고 자동 조절 (아래 항목별로 켜고 끔, 모두 범위 안에서만)
+    "auto_rules": True,            #   학습 제안(거래량 기준·나눠 팔기 % 등) 자동 적용
+    "auto_stop": True,             #   손절 % 자동 (stop_min ~ stop_max)
+    "auto_limits": True,           #   종목당·주문 한도 자동 (처음 값의 limit_min_mult ~ limit_max_mult 배)
+    "auto_loss": True,             #   하루 손실 한도 자동 (loss_pct_min ~ loss_pct_max %)
+    "auto_mode": True,             #   실전↔가상 자동 (끄기·긴급 정지는 절대 자동으로 안 풀림)
+    "stop_min": 2.0, "stop_max": 6.0,
+    "limit_min_mult": 0.5, "limit_max_mult": 3.0,
+    "loss_pct_min": 2.0, "loss_pct_max": 8.0,
+    "mode_down_days": 3,           # 실전에서 이 날수 연속 손실이면 가상으로
+    "mode_down_month_pct": 8.0,    # 또는 이번 달 이 % 이상 손실이면 가상으로
+    "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
     "prob_sizing": True,           # 학습 기록으로 승률을 추정해 살 금액 조절 (25%~100%, 한도는 절대 안 넘음)
     "min_size_ratio": 0.25,        # 승률이 낮을 때 최소로 사는 비율
     "min_win_prob": 0,             # 추정 승률이 이보다 낮으면 안 삼 (0 = 안 씀)
@@ -85,7 +97,9 @@ DEFAULTS = {
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
 }
-NUMS = {"loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (0, 1e10), "max_position_krw": (0, 1e10),
+NUMS = {"stop_min": (0.5, 20), "stop_max": (1, 30), "limit_min_mult": (0.1, 1), "limit_max_mult": (1, 20), "loss_pct_min": (0.5, 20),
+        "loss_pct_max": (1, 50), "mode_down_days": (1, 20), "mode_down_month_pct": (1, 50), "mode_up_trades": (3, 100),
+        "loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (0, 1e10), "max_position_krw": (0, 1e10),
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
@@ -114,8 +128,20 @@ def config() -> dict:
     return out
 
 
-def save_config(new: dict) -> dict:
+def note_user_mode(mode: str) -> None:
+    """사장님이 직접 모드를 바꾼 기록 (실전을 직접 켠 적이 있어야 자동 복귀 허용, 직접 바꾸면 자동 전환 표시 해제)"""
+    with _lock:
+        s = state()
+        if mode == "live":
+            s["user_live_ok"] = True
+        s["auto_paper"] = False
+        _save(s)
+
+
+def save_config(new: dict, _by_auto: bool = False) -> dict:
     c, errors = config(), []
+    if "mode" in new and not _by_auto and new.get("mode") in CHOICES["mode"]:
+        note_user_mode(new["mode"])
     for k, opts in CHOICES.items():
         if k in new:
             if new[k] not in opts:
@@ -150,7 +176,8 @@ def save_config(new: dict) -> dict:
                 c[k] = int(v) if v.is_integer() and isinstance(DEFAULTS[k], int) else v
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
-    for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check", "prob_sizing"):
+    for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check", "prob_sizing",
+              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -824,6 +851,8 @@ def review_now(wait: bool = False) -> dict:
             t = r["today"]
             event("복기", f"{day} 거래 {t.get('n', 0)}건" + (f" · 승률 {t['win_rate']}% · 평균 {t['avg']:+.2f}%" if t.get("n") else "")
                   + (f" · 조정 제안 {len(r['proposals'])}개" if r.get("proposals") else ""))
+            if config()["auto_tune"]:
+                auto_adjust(r, mode_key)
         except Exception as e:
             event("오류", f"복기 실패: {type(e).__name__}: {e}")
     if wait:
@@ -952,7 +981,9 @@ LABELS = {"monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보�
           "us_min_price": "최소 주가($)", "limit_slip_pct": "지정가 여유(%)", "interval_min": "종목 찾기 간격(분)",
           "exit_check_sec": "손절 확인 간격(초)", "loss_streak_pause": "연속 손실 쉬기 기준", "pause_min": "쉬는 시간(분)",
           "us_premarket": "프리장 매매", "stop_at_target": "목표 달성 시 쉬기", "ai_check": "주문 전 AI 검토", "auto_pick": "종목 알아서 고르기",
-          "market": "시장", "strategy": "전략", "budget_mode": "예산 방식"}
+          "market": "시장", "strategy": "전략", "budget_mode": "예산 방식", "mode": "모드",
+          "stop_min": "손절 자동 최소(%)", "stop_max": "손절 자동 최대(%)", "limit_min_mult": "한도 자동 최소 배수", "limit_max_mult": "한도 자동 최대 배수",
+          "loss_pct_min": "손실 한도 자동 최소(%)", "loss_pct_max": "손실 한도 자동 최대(%)", "auto_tune": "자동 조절", "auto_mode": "실전↔가상 자동"}
 TRADE_GUIDE = """[자동매매 행동 태그 — 사장님이 원할 때만, 답 맨 아래에]
 - 설정 바꾸기: [[TRADE_SET: 키=값 | 이유]] (여러 개면 줄마다 하나). 키는 <engine> 의 '설정' 목록에 있는 영문 키만. 예: [[TRADE_SET: partial_tp_pct=5 | 나눠 팔기를 조금 일찍]]
 - 모드: [[TRADE_MODE: paper | 이유]] 또는 [[TRADE_MODE: off | 이유]] (live 는 채팅으로 불가)
@@ -1014,7 +1045,7 @@ def find_actions(reply: str) -> list[dict]:
             if "=" not in arg:
                 continue
             k, v = [x.strip() for x in arg.split("=", 1)]
-            if k not in LABELS:
+            if k not in LABELS or k == "mode":   # 모드는 TRADE_MODE 로만 (실전 켜기는 채팅 불가)
                 continue
             a.update(param=k, value=v, label=f"{LABELS[k]}: {c.get(k)} → {v}")
         elif kind == "MODE":
@@ -1039,7 +1070,7 @@ def apply_action(a: dict) -> dict:
     c = config()
     if t == "set":
         k, v = a.get("param"), a.get("value")
-        if k not in LABELS:
+        if k not in LABELS or k == "mode":
             return {"ok": False, "message": "바꿀 수 없는 설정이에요"}
         if isinstance(DEFAULTS.get(k), bool):
             v = str(v).strip().lower() in ("1", "true", "on", "켜기", "yes", "예")
@@ -1139,3 +1170,123 @@ def draw_chart(symbol: str, interval: str = "1m", live: bool = False) -> dict:
     name = chart.draw(sym, "1d" if interval == "1d" else "1m", lines=lines, marks=marks if interval == "1m" else None, title=sym,
                       name=f"live-{sym}-{interval}.png" if live else "")
     return {"id": name, "label": f"{sym} {'일봉' if interval == '1d' else '1분봉'}", "lines": {k: round(v, 4) for k, v in lines.items()}}
+
+
+
+# ── 🔁 자동 조절 (매일 복기 직후, 범위 안에서만) ──
+def _step(old, to, max_rel: float = 0.3):
+    """자동 적용은 하루에 최대 ±30% 만큼만 (한 번에 크게 바뀌지 않게, 숫자가 아니면 그대로)"""
+    if isinstance(old, bool) or isinstance(to, bool) or not isinstance(old, (int, float)) or not old:
+        return to
+    lim = abs(old) * max_rel
+    v = old + max(-lim, min(lim, float(to) - old))
+    return round(v, 2)
+
+
+def auto_adjust(rep: dict, mode_key: str) -> list[str]:
+    c = config()
+    done: list[str] = []
+    if c["mode"] == "off":   # 꺼져 있으면 아무것도 안 바꿈
+        return done
+    sums = tl.day_sums(mode_key, 5)
+    last_good = bool(sums) and sums[-1] > 0
+    two_bad = len(sums) >= 2 and sums[-2] < 0 and sums[-1] < 0
+
+    def change(param: str, new, why: str, evidence: str):
+        old = c.get(param)
+        if old == new:
+            return
+        r = save_config({param: new}, _by_auto=True)
+        if r.get("ok"):
+            tl.record_auto(param, LABELS.get(param, param), old, new, why, evidence)
+            event("자동 조정", f"{LABELS.get(param, param)} {old} → {new} — {why} ({evidence})")
+            c[param] = new
+            done.append(param)
+
+    # 1) 학습 제안 자동 적용 (손절은 stop_min~stop_max 로 자름)
+    if c["auto_rules"] or c["auto_stop"]:
+        pend = {x["id"]: x for x in tl.overview(state()["day"], mode_key)["proposals"] if x["status"] == "pending"}
+        for pid in rep.get("proposals") or []:
+            p = pend.get(pid)
+            if not p:
+                continue
+            if p["param"] == "stop_loss_pct":
+                if c["auto_stop"]:
+                    to = min(c["stop_max"], max(c["stop_min"], _step(c["stop_loss_pct"], float(p["to"]))))
+                    if tl.decide(pid, "apply", auto=True, to=to).get("ok"):
+                        done.append("stop_loss_pct")
+            elif c["auto_rules"] and tl.decide(pid, "apply", auto=True, to=_step(c.get(p["param"]), p["to"])).get("ok"):
+                done.append(p["param"])
+        c = config()
+
+    r30 = rep.get("recent") or {}
+    # 2) 종목당·주문 한도: 최근 성적 좋으면 +20%, 나쁘면 -20% (처음 값의 배수 범위 안)
+    if c["auto_limits"] and c["max_position_krw"] > 0 and r30.get("n", 0) >= 10:
+        with _lock:
+            s = state()
+            base = s.setdefault("limit_base", {"position": c["max_position_krw"], "order": c["max_order_krw"]})
+            _save(s)
+        lo, hi = base["position"] * c["limit_min_mult"], base["position"] * c["limit_max_mult"]
+        cur = c["max_position_krw"]
+        new, why = cur, ""
+        if r30["avg"] < 0 or two_bad:   # 줄이는 건 먼저 (최근 30건이 마이너스거나 2일 연속 손실)
+            new, why = round(max(lo, cur * 0.8) / 1000) * 1000, "최근 성적이 나빠서 줄임" if r30["avg"] < 0 else "2일 연속 손실이라 줄임"
+        elif r30["avg"] > 0 and r30["win_rate"] >= 45 and last_good:   # 늘리는 건 최근 30건 좋고 + 어제(마지막 날)도 수익일 때만
+            new, why = round(min(hi, cur * 1.2) / 1000) * 1000, "최근 성적이 좋고 마지막 날도 수익이라 늘림"
+        if new != cur:
+            ev = f"최근 {r30['n']}건 승률 {r30['win_rate']}% · 평균 {r30['avg']:+.2f}% · 범위 {lo:,.0f}~{hi:,.0f}원"
+            change("max_position_krw", new, why, ev)
+            if c["max_order_krw"] > 0:
+                o_lo = (base["order"] or base["position"]) * c["limit_min_mult"]
+                change("max_order_krw", round(min(new, max(o_lo, c["max_order_krw"] * new / cur)) / 1000) * 1000, why, ev)
+
+    # 3) 하루 손실 한도: 2일 연속 손실이면 조이고, 3일 연속 수익이면 늘림
+    if c["auto_loss"] and len(sums) >= 2:
+        three_good = len(sums) >= 3 and all(x > 0 for x in sums[-3:])
+        ev_bad = f"최근 하루 손익 {sums[-2]:+.1f}%, {sums[-1]:+.1f}%"
+        ev_good = "최근 하루 손익 " + ", ".join(f"{x:+.1f}%" for x in sums[-3:])
+        if c["budget_mode"] == "all_cash":
+            cur = c["max_daily_loss_pct"]
+            if two_bad:
+                change("max_daily_loss_pct", max(c["loss_pct_min"], round(cur - 1, 1)), "2일 연속 손실이라 하루 손실 한도를 조임", ev_bad)
+            elif three_good:
+                change("max_daily_loss_pct", min(c["loss_pct_max"], round(cur + 1, 1)), "3일 연속 수익이라 하루 손실 한도를 늘림", ev_good)
+        else:
+            with _lock:
+                s = state(); lb = s.setdefault("loss_base", c["max_daily_loss_krw"]); _save(s)
+            cur = c["max_daily_loss_krw"]
+            if two_bad:
+                change("max_daily_loss_krw", int(max(lb * 0.5, cur * 0.8)), "2일 연속 손실이라 하루 손실 한도를 조임", ev_bad)
+            elif three_good:
+                change("max_daily_loss_krw", int(min(lb * 2, cur * 1.2)), "3일 연속 수익이라 하루 손실 한도를 늘림", ev_good)
+
+    # 4) 실전 ↔ 가상 (끄기 상태는 건드리지 않음)
+    if c["auto_mode"]:
+        with _lock:
+            s = state()
+        mo = s.get("month") or {}
+        month_pct = float(mo.get("realized", 0)) / mo["start"] * 100 if mo.get("start") else 0
+        if c["mode"] == "live":
+            k = int(c["mode_down_days"])
+            bad_days = len(sums) >= k and all(x < 0 for x in sums[-k:])
+            if bad_days or month_pct <= -c["mode_down_month_pct"]:
+                why = f"{k}일 연속 손실" if bad_days else f"이번 달 {month_pct:+.1f}% (기준 -{c['mode_down_month_pct']:g}%)"
+                if save_config({"mode": "paper"}, _by_auto=True).get("ok"):
+                    with _lock:
+                        s = state(); s["auto_paper"] = True; s["auto_paper_since"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"); _save(s)
+                    tl.record_auto("mode", "모드", "live", "paper", "성적이 나빠 가상으로 내림", why)
+                    event("자동 조정", f"모드 실전 → 가상 — {why}. 가상 성적이 회복되면 실전으로 자동 복귀")
+                    done.append("mode")
+        elif c["mode"] == "paper" and s.get("auto_paper") and s.get("user_live_ok") and toss.enabled():
+            st_ = tl._stats(tl.trades_since("paper", s.get("auto_paper_since", "")))
+            if st_.get("n", 0) >= c["mode_up_trades"] and st_["win_rate"] >= 50 and st_["avg"] > 0:
+                if save_config({"mode": "live"}, _by_auto=True).get("ok"):
+                    with _lock:
+                        s = state(); s["auto_paper"] = False; _save(s)
+                    ev = f"가상 {st_['n']}건 승률 {st_['win_rate']}% · 평균 {st_['avg']:+.2f}%"
+                    tl.record_auto("mode", "모드", "paper", "live", "가상 성적이 회복돼 실전으로 복귀", ev)
+                    event("자동 조정", f"모드 가상 → 실전 — {ev}")
+                    done.append("mode")
+    if done:
+        event("자동 조정", f"오늘 자동으로 바꾼 것: {', '.join(LABELS.get(x, x) for x in dict.fromkeys(done))}")
+    return done
