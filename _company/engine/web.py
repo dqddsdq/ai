@@ -371,6 +371,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(at.run_once(force=True))
             except Exception as e:
                 return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
+        if path == "/api/autotrade/review":
+            return self._json(at.review_now())
+        if path == "/api/autotrade/proposal":
+            from . import tradelearn as tl
+            return self._json(tl.decide(str(body.get("id", "")), str(body.get("action", ""))))
         if path == "/api/autotrade/scan":
             return self._json(at.scan_now())
         if path == "/api/autotrade/reset-paper":

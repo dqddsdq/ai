@@ -33,6 +33,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import picker, toss
+from . import tradelearn as tl
 from .agents import COMPANY_DIR, SHARED_DIR
 
 CONFIG = SHARED_DIR / "autotrade.json"
@@ -51,6 +52,8 @@ DEFAULTS = {
     "max_order_krw": 50000,        # fixed 일 때 한 번 주문 최대
     "max_position_krw": 50000,     # fixed 일 때 종목당 최대
     "max_orders_per_day": 6,       # 하루 매수 횟수 (매도는 제한 없음)
+    "loss_streak_pause": 3,        # 장중 학습: 연속 손실 이만큼이면 잠시 매수 쉬기
+    "pause_min": 30,               # 그때 쉬는 시간(분)
     "monthly_target_pct": 10.0,    # 한 달 목표 수익률
     "stop_at_target": True,        # 목표 달성하면 그달은 새로 안 삼 (번 돈 지키기)
     "max_daily_loss_pct": 5.0,     # all_cash: 예산 대비 하루 손실 한도 %
@@ -75,7 +78,7 @@ DEFAULTS = {
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
 }
-NUMS = {"monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (10000, 1e10), "max_position_krw": (10000, 1e10),
+NUMS = {"loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (10000, 1e10), "max_position_krw": (10000, 1e10),
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
@@ -373,11 +376,13 @@ def _reconcile(fx: float) -> None:
                     tot = bp["qty"] + delta
                     s["bot_pos"][rec["symbol"]] = {"qty": tot, "avg": (bp["avg"] * bp["qty"] + fill_px * delta) / tot}
                     s["highs"][rec["symbol"]] = max(s["highs"].get(rec["symbol"], 0), fill_px)
+                    tl.open_trade(rec["symbol"], delta, fill_px, rec.get("features"), "live", s["day"])
                 else:
                     gain = (fill_px - bp["avg"]) * delta * f
                     s["realized_today"] = float(s.get("realized_today", 0)) + gain
                     s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                     left = bp["qty"] - delta
+                    tl.on_sell(rec["symbol"], delta, fill_px, rec.get("reason", ""), "live", left <= 1e-9, config())
                     if left > 1e-9:
                         s["bot_pos"][rec["symbol"]] = {"qty": left, "avg": bp["avg"]}
                         if rec.get("partial"):
@@ -524,6 +529,20 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     except toss.TossError as e:
         return {"ok": False, "message": str(e), "results": results}
 
+    # 📚 장중 학습: 보유 종목 최대 상승·하락 갱신, 고른 종목(산 것·못 산 것)의 이후 움직임 기록
+    mode_key = "live" if live else "paper"
+    try:
+        tl.mark({k: quotes[k]["price"] for k in pos if k in quotes}, mode_key)
+        if not exits_only and c["strategy"] == "surge":
+            wsyms = [x for x in tl.watch_symbols(s["day"]) if x not in quotes]
+            if wsyms:
+                quotes.update(toss.prices(wsyms))
+            tl.watch(s["day"], (state().get("picks") or {}).get("picks", []) if picked else [],
+                     {k: v["price"] for k, v in quotes.items()})
+    except (toss.TossError, OSError) as e:
+        results.append(f"📚 학습 기록 일부 실패: {e}")
+    stop_why = tl.guard(s["day"], bool(minutes is not None and minutes < 0))
+
     for sym in symbols:
         q = quotes.get(sym)
         if not q:
@@ -563,6 +582,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         if side == "BUY":
             if target_hit and c["stop_at_target"]:
                 results.append(f"{sym}: 이번 달 목표 달성 → 새로 안 삼"); continue
+            if stop_why:
+                results.append(f"{sym}: 📚 장중 학습 — {stop_why}"); continue
             if state()["orders_today"] >= c["max_orders_per_day"]:
                 results.append(f"{sym}: 오늘 매수 횟수 한도({c['max_orders_per_day']}) 도달"); continue
             if len(pos) >= c["pick_count"]:
@@ -598,6 +619,9 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
     label = f"{sym} {'매수' if side == 'BUY' else '매도'} {qty}주 @ {px}"
     rec = {"t": datetime.now(KST).strftime("%m-%d %H:%M:%S"), "symbol": sym, "side": side, "qty": qty, "price": float(px),
            "reason": reason, "mode": "live" if live else "paper", "client_order_id": coid, "partial": partial}
+    if side == "BUY":
+        info = next((x for x in (state().get("picks") or {}).get("picks", []) if x["symbol"] == sym), {})
+        rec["features"] = {k: info.get(k) for k in ("change", "ratio", "pre", "minute", "score")}
     if live:
         try:
             r = toss.place_limit_order(sym, side, qty, price, coid)
@@ -619,12 +643,14 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
                 tot = cur["qty"] + qty
                 p["positions"][sym] = {"qty": tot, "avg": (cur["avg"] * cur["qty"] + p_ * qty) / tot}
                 s["highs"][sym] = max(float(s["highs"].get(sym, 0)), p_)
+                tl.open_trade(sym, qty, p_, rec.get("features"), "paper", s["day"])
             else:
                 p["cash"] += qty * p_ * f
                 gain = (p_ - cur["avg"]) * qty * f
                 p["realized"] += gain; s["realized_today"] = float(s.get("realized_today", 0)) + gain
                 s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                 left = cur["qty"] - qty
+                tl.on_sell(sym, qty, p_, reason, "paper", left <= 1e-9, config())
                 if left > 1e-9:
                     p["positions"][sym] = {"qty": left, "avg": cur["avg"]}
                     if partial:
@@ -685,7 +711,30 @@ def overview() -> dict:
             "picks": s.get("picks") or {}, "scanning": _busy.is_set(), "bot_pos": s.get("bot_pos", {}),
             "realized_today": s.get("realized_today", 0), "base_ready": picker.base_ready(c["market"]), "month": s.get("month", {}),
             "session_minutes": minutes_now(c["market"], c),
-            "local_time": picker.mnow(c["market"]).strftime("%H:%M"), "progress": dict(picker.PROGRESS), "next_open": _next_open(c)}
+            "local_time": picker.mnow(c["market"]).strftime("%H:%M"), "progress": dict(picker.PROGRESS), "next_open": _next_open(c),
+            "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper")}
+
+
+def review_now(wait: bool = False) -> dict:
+    """장 마감 후 복기 (자동 또는 화면 버튼)"""
+    c = config()
+    mode_key = "live" if c["mode"] == "live" else "paper"
+    day = state()["day"]
+
+    def job():
+        try:
+            r = tl.daily_review(day, c, mode_key)
+            with _lock:
+                s = state(); s["reviewed_day"] = day; _save(s)
+            t = r["today"]
+            event("복기", f"{day} 거래 {t.get('n', 0)}건" + (f" · 승률 {t['win_rate']}% · 평균 {t['avg']:+.2f}%" if t.get("n") else "")
+                  + (f" · 조정 제안 {len(r['proposals'])}개" if r.get("proposals") else ""))
+        except Exception as e:
+            event("오류", f"복기 실패: {type(e).__name__}: {e}")
+    if wait:
+        job(); return {"ok": True}
+    threading.Thread(target=job, daemon=True, name="review").start()
+    return {"ok": True, "message": "복기 시작 (AI 요약까지 1분쯤)"}
 
 
 def _next_open(c: dict) -> str:
@@ -726,6 +775,13 @@ def start(log_fn=print) -> None:
                 if not ready and not _busy.is_set():
                     prepare_now()
             if mins is None:
+                # 📚 장 마감 후 하루 한 번 복기 (미장 뉴욕 16:05~, 국장 15:35~)
+                s0 = state()
+                after = t.strftime("%H:%M") >= ("16:05" if c["market"] == "US" else "15:35")
+                if after and t.weekday() < 5 and s0.get("reviewed_day") != s0["day"] and s0["day"] == picker.session_date(c["market"]):
+                    with _lock:
+                        s1 = state(); s1["reviewed_day"] = s1["day"]; _save(s1)
+                    review_now()
                 continue
             # 들고 있는 종목은 자주(기본 10초) 매도 조건만 확인 — 급등주는 몇 분이면 크게 움직임
             gap = c["interval_min"] * 60
@@ -783,5 +839,8 @@ def summary_for_prompt() -> str:
     pk = s.get("picks") or {}
     if pk.get("picks"):
         lines.append(f"최근 고른 종목({pk.get('time', '')}): " + ", ".join(f"{x['name']}({x['symbol']})" for x in pk["picks"]))
+    rv = tl.last_review_text("live" if c["mode"] == "live" else "paper")
+    if rv:
+        lines.append(rv)
     lines.append("</autotrade>")
     return "\n".join(lines)

@@ -461,6 +461,12 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="trade-goal" style="margin-top:8px;font-size:14px"></div>
         <div id="trade-run-out" class="tlog" style="margin-top:6px"></div>
       </div>
+      <div class="card"><b>📚 학습·복기</b> <button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
+        <div id="learn-today" style="margin-top:6px;font-size:13.5px"></div>
+        <div id="learn-props" style="margin-top:8px"></div>
+        <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13.5px">최근 복기 자세히</summary><div id="learn-review" class="tlog" style="margin-top:6px"></div></details>
+        <details style="margin-top:6px"><summary style="cursor:pointer;font-size:13.5px">거래 일지</summary><div id="learn-trades" class="tlog" style="margin-top:6px"></div></details>
+      </div>
       <div class="card"><b>지금 고른 종목</b> <button class="btn" id="trade-scan" style="float:right;padding:3px 10px;font-size:12px">기준값 다시 준비</button><div id="trade-picks" class="tlog" style="margin-top:6px"></div></div>
       <div class="card">
         <b>설정</b>
@@ -484,6 +490,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>하루 최대 매수 횟수 (매도는 제한 없음)<input id="t-max_orders_per_day" type="number"></label>
           <label>급등 종목 찾기 간격 (분)<input id="t-interval_min" type="number"></label>
           <label>보유 종목 손절 확인 간격 (초)<input id="t-exit_check_sec" type="number"></label>
+          <label>장중 학습: 연속 손실 몇 번이면 쉬기<input id="t-loss_streak_pause" type="number"></label>
+          <label>장중 학습: 쉬는 시간 (분)<input id="t-pause_min" type="number"></label>
           <label>[금액 한도] 총 투자 한도 (원)<input id="t-max_total_krw" type="number"></label>
           <label>[금액 한도] 하루 손실 한도 (원)<input id="t-max_daily_loss_krw" type="number"></label>
           <label>가상 매매 시작 금액 (원)<input id="t-paper_cash_krw" type="number"></label>
@@ -1262,7 +1270,7 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
 const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "ai_check"];
 let tradeTimer = null;
 function tradeBadge(d) {
@@ -1297,12 +1305,44 @@ async function renderTrade(fillForm = true) {
   const bp = Object.entries(d.bot_pos || {});
   if (bp.length) ph += `<div><b>자동매매가 가진 주식:</b> ${bp.map(([k, v]) => `${esc(k)} ${v.qty}주 (평단 ${Number(v.avg).toLocaleString()})`).join(" · ")}</div>`;
   $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
+  renderLearn(d.learn || {});
   const p = d.paper, pos = Object.entries(p.positions || {});
   $("#trade-paper").innerHTML = `현금 ${Math.round(p.cash).toLocaleString()}원 · 실현 손익 ${Math.round(p.realized).toLocaleString()}원` +
     (pos.length ? "<br>" + pos.map(([k, v]) => `${esc(k)} ${v.qty}주 (평단 ${Number(v.avg).toLocaleString()})`).join(" · ") : "<br><span class='muted'>보유 없음</span>");
   $("#trade-orders").innerHTML = d.orders.length ? d.orders.map(o => `<div><span class="k">${o.mode === "live" ? "🔴 실전" : "📝 가상"}</span>${esc(o.t)} · <b>${esc(o.symbol)} ${o.side === "BUY" ? "매수" : "매도"} ${o.qty}주</b> @ ${o.price} · ${esc(o.status)}${o.error ? " · " + esc(o.error) : ""}<br><span class="muted">${esc(o.reason)}</span></div>`).join("") : "<span class='muted'>아직 없어요</span>";
   $("#trade-events").innerHTML = d.events.length ? d.events.map(e => `<div><span class="k">${esc(e.kind)}</span>${esc(e.t)} · ${esc(e.text)}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
 }
+function pctS(x) { return x == null ? "-" : (x > 0 ? "+" : "") + Number(x).toFixed(1) + "%"; }
+function statLine(s) { return s && s.n ? `${s.n}건 · 승률 ${s.win_rate}% · 평균 ${pctS(s.avg)} (수익 평균 ${pctS(s.avg_win)} / 손실 평균 ${pctS(s.avg_loss)}) · 산 뒤 최대 상승 중간값 ${pctS(s.mfe_med)}` : "아직 없음"; }
+function renderLearn(L) {
+  const td = L.today || {}, g = td.guard || {};
+  let h = `<div><b>오늘(장중)</b> ${statLine(td)}</div>`;
+  if ((td.open || []).length) h += `<div class="muted">보유 중: ${td.open.map(o => `${esc(o.sym)} 최대 ${pctS(o.mfe)} / 최저 ${pctS(o.mae)}`).join(" · ")}</div>`;
+  if (g.pause_until) h += `<div>⏸️ ${esc(g.pause_why || "")} (~${esc(String(g.pause_until).slice(11, 16))})</div>`;
+  if (g.no_premarket) h += `<div>⏸️ ${esc(g.no_premarket)}</div>`;
+  $("#learn-today").innerHTML = h;
+  const props = L.proposals || [];
+  $("#learn-props").innerHTML = props.length ? `<div style="font-size:13.5px"><b>규칙 조정 제안</b> <span class="muted">(적용을 눌러야 바뀌어요)</span></div>` + props.map(p => `
+    <div class="treq" style="margin:6px 0"><div class="th">🔧 <b>${esc(p.label)}</b>: ${esc(String(p.from))} → <b>${esc(String(p.to))}</b><span class="tb ${p.status === "applied" ? "ok" : "wait"}">${p.status === "applied" ? "적용됨" : "제안"}</span></div>
+      <div class="why">${esc(p.why)}<br><span class="muted">근거: ${esc(p.evidence)}</span></div>
+      <div class="acts">${p.status === "pending" ? `<button class="btn primary" data-pid="${p.id}" data-act="apply">적용</button><button class="btn" data-pid="${p.id}" data-act="reject">거절</button>` : `<button class="btn" data-pid="${p.id}" data-act="revert">되돌리기</button>`}</div></div>`).join("")
+    : `<div class="muted" style="font-size:13px">규칙 조정 제안 없음${L.review && L.review.note ? " — " + esc(L.review.note) : ""}</div>`;
+  document.querySelectorAll("#learn-props [data-pid]").forEach(b => b.onclick = async () => {
+    b.disabled = true; const r = await api("/api/autotrade/proposal", { id: b.dataset.pid, action: b.dataset.act });
+    if (!r.ok) alert(r.message); renderTrade();
+  });
+  const rv = L.review;
+  if (rv) {
+    const tbl = (title, o) => Object.keys(o || {}).length ? `<div><b>${title}</b><br>${Object.entries(o).map(([k, v]) => `${esc(k)}: ${statLine(v)}`).join("<br>")}</div>` : "";
+    $("#learn-review").innerHTML = `<div class="muted">${esc(rv.day)} 복기 (${esc(rv.created || "")})</div>` + (rv.text ? `<div class="md" style="font-size:13.5px">${md(rv.text)}</div>` : "") +
+      `<div><b>그날</b> ${statLine(rv.today)}</div><div><b>최근 30건</b> ${statLine(rv.recent)}</div>` +
+      tbl("매도 이유별 (그날)", rv.by_exit) + tbl("살 때 상승률별 (최근)", rv.by_change) + tbl("살 때 거래량 배수별 (최근)", rv.by_ratio) + tbl("프리장/정규장 (최근)", rv.by_session) +
+      (rv.missed && rv.missed.n ? `<div><b>골랐지만 못 산 종목</b> ${rv.missed.n}개 · 그 뒤 최대 상승 평균 ${pctS(rv.missed.avg_max_up)}</div>` : "");
+  } else $("#learn-review").innerHTML = "<span class='muted'>아직 복기가 없어요 — 장이 끝나면 자동으로 해요</span>";
+  const tr = L.trades || [];
+  $("#learn-trades").innerHTML = tr.length ? tr.map(x => `<div>${esc(x.entry_time.slice(5, 16))} <b>${esc(x.sym)}</b> ${x.closed ? `${pctS(x.pnl_pct)} · ${esc(x.exit_kind || "")}` : "보유 중"} · 최대 ${pctS(x.mfe)} / 최저 ${pctS(x.mae)}${x.features && x.features.change != null ? ` · 살 때 ${pctS(x.features.change)}, 거래량 ${x.features.ratio}배${x.features.pre ? " (프리장)" : ""}` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
+}
+$("#trade-review").onclick = async () => { const r = await api("/api/autotrade/review", {}); alert(r.message || "시작했어요"); setTimeout(() => renderTrade(false), 1500); };
 document.querySelectorAll("#trade-mode button").forEach(btn => btn.onclick = async () => {
   const m = btn.dataset.m;
   if (m === "live") {

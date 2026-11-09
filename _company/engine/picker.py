@@ -305,6 +305,7 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
                 return None
         cur = "원" if market == "KR" else "$"
         return {"symbol": s, "name": rows[s]["name"], "price": p, "change": round(chg, 1), "score": round(chg * min(ratio, 10), 1),
+                "ratio": round(ratio, 2), "pre": pre, "minute": mins,
                 "reason": (f"[프리장] {chg:+.1f}% · 벌써 평소 하루 거래량의 {ratio * 100:.0f}%" if pre else f"오늘 {chg:+.1f}% · 거래량 평소의 {ratio:.1f}배")
                           + f" · 거래대금 {value_today / 1e8:,.0f}억원 · 현재가 {p:,.2f}{cur}"}
 
