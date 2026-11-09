@@ -112,6 +112,28 @@ def run() -> int:
         else:
             ok("사용 가능")
 
+    print("[7] 토스증권 (선택 — 자동매매·실시간 시세)")
+    from . import toss
+    if not toss.enabled():
+        ok("키 없음 — 🧰 도구 화면에서 클라이언트 ID·시크릿 키를 넣으면 연결돼요 (정상)")
+    else:
+        try:
+            toss._token(force=True)
+            ok("로그인 성공")
+            toss.account_seq()
+            ok("종합계좌 찾음")
+            p = toss.prices(["AAPL", "005930"])
+            ok("시세: " + ", ".join(f"{k} {v['price']:g}" for k, v in p.items()))
+            usd = (toss.buying_power("USD") or {}).get("cashBuyingPower")
+            krw = (toss.buying_power("KRW") or {}).get("cashBuyingPower")
+            ok(f"주문 가능 현금: 달러 {usd} · 원화 {krw}")
+            if not float(usd or 0):
+                print("     ℹ️ 주문 가능 달러가 0 이에요. 미장 자동매매를 하려면 토스에서 달러로 환전해 두세요")
+            ok(f"보유 종목 {len((toss.holdings() or {}).get('items') or [])}개 (조회만, 주문 안 함)")
+        except toss.TossError as e:
+            problems += 1
+            bad(str(e), "토스 개발자 화면의 클라이언트 ID·시크릿 키(같이 발급된 한 쌍)를 🧰 도구에 다시 넣어 보세요")
+
     print()
     if problems:
         print(f"⚠️  문제 {problems}개. 이 창을 캡처해서 보여주세요.")
