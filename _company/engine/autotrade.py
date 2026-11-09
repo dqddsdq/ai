@@ -8,7 +8,8 @@
 💰 돈은 계좌 밖으로 못 나가요: 토스 API 에 출금·이체 기능이 없고, toss.py 는 '주문 생성·취소'만 허용해요.
 
 안전장치 (live·paper 모두 적용, 코드에서 강제)
-- 허용 종목만 매매 · 한 번 주문 최대 금액 · 종목당 최대 보유 금액 · 하루 최대 주문 수
+- 종목: 매일 시장 전체에서 자동 선택 (picker.py) 또는 직접 고른 종목만 · 자동매매가 산 주식만 사고팖 (사장님 보유분·주문은 안 건드림)
+- 총 투자 한도 · 한 번 주문 최대 금액 · 종목당 최대 보유 금액 · 하루 최대 주문 수
 - 하루 손실 한도를 넘으면 그날은 자동 정지 · 미수/신용 안 씀 (주문 가능 현금 안에서만)
 - 장 시작 직후·마감 직전 매매 안 함 · 같은 종목 미체결 주문이 있으면 새 주문 안 함
 - 10분 넘게 안 채워진 주문은 자동 취소 · 긴급 정지 버튼 (미체결 전부 취소 + 꺼짐)
@@ -35,7 +36,10 @@ STATE = COMPANY_DIR / "_cache" / "autotrade_state.json"
 KST = timezone(timedelta(hours=9))
 DEFAULTS = {
     "mode": "off",
-    "symbols": [],                 # 허용 종목 (예: ["005930", "247540", "AAPL"])
+    "auto_pick": True,             # 종목을 AI(규칙)가 매일 시장 전체에서 골라 줌
+    "pick_count": 3,               # 하루에 고를 종목 수
+    "min_trading_value_krw": 1000000000,  # 하루 평균 거래대금 최소 (너무 안 팔리는 종목 제외)
+    "symbols": [],                 # 직접 고른 종목 (auto_pick 끄면 이것만 매매)
     "interval_min": 5,
     "max_total_krw": 100000,       # 자동매매 전체 투자 한도 (허용 종목 보유 합계 + 새 주문이 이걸 못 넘음)
     "max_order_krw": 50000,        # 한 번 주문 최대 금액
@@ -81,7 +85,7 @@ def save_config(new: dict) -> dict:
             errors.append("종목 코드가 이상해요: " + ", ".join(bad))
         else:
             c["symbols"] = list(dict.fromkeys(toss.symbol(s) for s in syms))[:20]
-    nums = {"max_total_krw": (10000, 1000000000), "interval_min": (1, 120), "max_order_krw": (10000, 50000000), "max_position_krw": (10000, 100000000),
+    nums = {"pick_count": (1, 10), "min_trading_value_krw": (0, 1e12), "max_total_krw": (10000, 1000000000), "interval_min": (1, 120), "max_order_krw": (10000, 50000000), "max_position_krw": (10000, 100000000),
             "max_orders_per_day": (1, 50), "max_daily_loss_krw": (1000, 50000000), "stop_loss_pct": (0.5, 50),
             "take_profit_pct": (0.5, 200), "rsi_max_buy": (30, 90), "paper_cash_krw": (10000, 1000000000), "usd_krw": (500, 3000)}
     for k, (lo, hi) in nums.items():
@@ -95,10 +99,12 @@ def save_config(new: dict) -> dict:
                 errors.append(f"{k} 는 {lo}~{hi}")
     if "ai_check" in new:
         c["ai_check"] = bool(new["ai_check"])
+    if "auto_pick" in new:
+        c["auto_pick"] = bool(new["auto_pick"])
     if errors:
         return {"ok": False, "message": " · ".join(errors)}
     CONFIG.write_text(json.dumps(c, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    event("설정", f"모드 {c['mode']} · 종목 {', '.join(c['symbols']) or '없음'}")
+    event("설정", f"모드 {c['mode']} · " + (f"종목 자동 선택 {c['pick_count']}개" if c["auto_pick"] else f"종목 {', '.join(c['symbols']) or '없음'}"))
     return {"ok": True, "config": c}
 
 
@@ -114,6 +120,8 @@ def state() -> dict:
         s.setdefault("events", [])
         s.setdefault("paper", {"cash": config()["paper_cash_krw"], "positions": {}, "realized": 0})
         s.setdefault("orders", [])
+        s.setdefault("bot_pos", {})      # 자동매매가 실제로 산 수량 (사장님이 직접 산 주식은 안 건드림)
+        s.setdefault("picks", {})
         return s
 
 
@@ -210,8 +218,75 @@ def _positions_live() -> dict[str, dict]:
     return out
 
 
+_scanning = threading.Event()
+
+
+def scan_now(wait: bool = False) -> dict:
+    """오늘의 종목 고르기 (몇 분 걸림 → 보통 백그라운드)."""
+    if _scanning.is_set():
+        return {"ok": True, "message": "이미 종목을 고르는 중이에요"}
+
+    def job():
+        _scanning.set()
+        try:
+            from . import picker
+            with _lock:
+                held = set(state()["bot_pos"])
+            r = picker.scan(config(), log=_log_fn)
+            with _lock:
+                s = state(); s["picks"] = r; _save(s)
+            event("종목 선택", r["note"] + (" — " + ", ".join(f"{p['name']}({p['symbol']})" for p in r["picks"]) if r["picks"] else ""))
+        except Exception as e:
+            event("오류", f"종목 고르기 실패: {type(e).__name__}: {e}")
+        finally:
+            _scanning.clear()
+
+    if wait:
+        job(); return {"ok": True, "picks": state()["picks"]}
+    threading.Thread(target=job, daemon=True, name="picker").start()
+    return {"ok": True, "message": "종목 고르기 시작 (몇 분 걸려요)"}
+
+
+def _reconcile() -> None:
+    """보낸 주문의 체결 수량을 확인해 '자동매매가 가진 수량'을 맞춤."""
+    with _lock:
+        s = state()
+        todo = [o for o in s["orders"] if o.get("mode") == "live" and o.get("order_id") and not o.get("final")]
+    for o in todo:
+        try:
+            r = toss.get_order(o["order_id"])
+        except toss.TossError:
+            continue
+        filled = float(((r.get("execution") or {}).get("filledQuantity")) or 0)
+        with _lock:
+            s = state()
+            rec = next((x for x in s["orders"] if x.get("order_id") == o["order_id"]), None)
+            if not rec:
+                continue
+            delta = filled - float(rec.get("counted", 0))
+            if delta:
+                cur = float(s["bot_pos"].get(rec["symbol"], 0)) + (delta if rec["side"] == "BUY" else -delta)
+                if cur > 1e-9:
+                    s["bot_pos"][rec["symbol"]] = cur
+                else:
+                    s["bot_pos"].pop(rec["symbol"], None)
+                rec["counted"] = filled
+            st = r.get("status") or ""
+            rec["status"] = st.lower() or rec["status"]
+            if st in ("FILLED", "CANCELED", "REJECTED", "REPLACED"):
+                rec["final"] = True
+            _save(s)
+        if delta:
+            event("체결", f"{o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {delta:g}주 체결", symbol=o["symbol"])
+
+
+def _bot_order_ids() -> set[str]:
+    with _lock:
+        return {o["order_id"] for o in state()["orders"] if o.get("order_id")}
+
+
 def run_once(force: bool = False) -> dict:
-    """규칙을 한 번 돌림. force=True 면 장 시간이 아니어도 신호만 계산 (주문은 장 시간에만)."""
+    """규칙을 한 번 돌림. force=True 면 꺼져 있어도 신호만 계산 (주문은 켜져 있고 장 시간일 때만)."""
     with _lock:
         c, s = config(), state()
     mode = c["mode"]
@@ -219,33 +294,47 @@ def run_once(force: bool = False) -> dict:
         return {"ok": True, "message": "꺼져 있어요"}
     if s.get("halted_today"):
         return {"ok": False, "message": "오늘은 정지됨: " + s["halted_today"]}
-    if not c["symbols"]:
-        return {"ok": False, "message": "허용 종목이 없어요"}
     if not toss.enabled():
         return {"ok": False, "message": "토스 키가 없어요 (시세가 필요해요)"}
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    picks = s.get("picks") or {}
+    if c["auto_pick"] and picks.get("day") != today:
+        scan_now()
+        if not picks.get("picks") and not s["bot_pos"] and not s["paper"]["positions"]:
+            return {"ok": True, "message": "오늘의 종목을 고르는 중이에요 (몇 분 뒤 다시)", "results": ["🔎 오늘의 종목 고르는 중… (처음엔 몇 분)"]}
     live = mode == "live"
+    dry = mode == "off"       # 꺼진 상태의 '한 번 돌려보기' = 신호만 보고 주문은 안 함
     results = []
     try:
         if live:
-            pos = _positions_live()
+            _reconcile()
             _cancel_stale()
-            if pos.get("_daily_pl_krw", 0) <= -c["max_daily_loss_krw"]:
-                return _halt_today(f"오늘 손실 {pos['_daily_pl_krw']:,.0f}원 — 한도 {c['max_daily_loss_krw']:,}원 초과")
+            raw = _positions_live()
+            if raw.get("_daily_pl_krw", 0) <= -c["max_daily_loss_krw"]:
+                return _halt_today(f"오늘 손실 {raw['_daily_pl_krw']:,.0f}원 — 한도 {c['max_daily_loss_krw']:,}원 초과")
+            bot = state()["bot_pos"]
+            if c["auto_pick"]:  # 자동매매가 산 수량만 관리 (사장님이 직접 산 건 그대로 둠)
+                pos = {k: {"qty": min(float(bot[k]), raw[k]["qty"]), "avg": raw[k]["avg"]} for k in bot if k in raw}
+            else:
+                pos = {k: v for k, v in raw.items() if not k.startswith("_") and k in c["symbols"]}
             pending = {o.get("symbol") for o in toss.open_orders()}
             cash = {cur: float((toss.buying_power(cur) or {}).get("cashBuyingPower") or 0) for cur in ("KRW", "USD")}
         else:
             p = s["paper"]
             pos = {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in p["positions"].items()}
             pending, cash = set(), {"KRW": p["cash"], "USD": p["cash"] / c["usd_krw"]}
-        quotes = toss.prices(c["symbols"] + [k for k in pos if not k.startswith("_") and k not in c["symbols"]])
+        universe = ([x["symbol"] for x in picks.get("picks", [])] if c["auto_pick"] else list(c["symbols"]))
+        symbols = list(dict.fromkeys(universe + list(pos)))
+        if not symbols:
+            return {"ok": False, "message": "매매할 종목이 없어요" + (" (오늘 조건에 맞는 종목 없음)" if c["auto_pick"] else " (허용 종목을 넣어 주세요)")}
+        quotes = toss.prices(symbols)
         def _fx(sym): return 1 if re.fullmatch(r"\d{6}", sym) else c["usd_krw"]
-        invested = sum(v["qty"] * quotes.get(k, {}).get("price", v["avg"]) * _fx(k)   # 허용 종목 보유 평가액 합계
-                       for k, v in pos.items() if not k.startswith("_") and k in c["symbols"])
+        invested = sum(v["qty"] * quotes.get(k, {}).get("price", v["avg"]) * _fx(k) for k, v in pos.items())
     except toss.TossError as e:
         event("오류", str(e))
         return {"ok": False, "message": str(e)}
 
-    for sym in c["symbols"]:
+    for sym in symbols:
         q = quotes.get(sym)
         if not q:
             results.append(f"{sym}: 시세 없음"); continue
@@ -257,15 +346,19 @@ def run_once(force: bool = False) -> dict:
             results.append(f"{sym}: 차트 실패 {e}"); continue
         held = pos.get(sym, {"qty": 0, "avg": 0})
         side, reason = signal(closes, price, held["qty"], held["avg"], c)
+        if side == "BUY" and sym not in universe:
+            side, reason = "HOLD", "오늘 선택 종목이 아니라 추가 매수 안 함 (보유분은 매도 규칙만 적용)"
         if side == "HOLD":
             results.append(f"{sym}: {reason}"); continue
+        if dry:
+            results.append(f"{sym}: {('매수' if side == 'BUY' else '매도')} 신호 (꺼져 있어서 주문 안 함) — {reason}"); continue
         if not market_open(sym):
             results.append(f"{sym}: {('매수' if side == 'BUY' else '매도')} 신호지만 장 시간이 아님 — {reason}"); continue
         if sym in pending:
             results.append(f"{sym}: 미체결 주문이 있어서 대기"); continue
-        with _lock:
-            if state()["orders_today"] >= c["max_orders_per_day"]:
-                results.append(f"{sym}: 오늘 주문 수 한도({c['max_orders_per_day']}) 도달"); continue
+        with _lock:  # 하루 주문 수 한도는 '매수'에만 (손절·익절 매도는 언제나 나가야 함)
+            if side == "BUY" and state()["orders_today"] >= c["max_orders_per_day"]:
+                results.append(f"{sym}: 오늘 매수 횟수 한도({c['max_orders_per_day']}) 도달"); continue
         if side == "BUY":
             held_value = held["qty"] * price * fx
             budget = min(c["max_order_krw"], c["max_position_krw"] - held_value, c["max_total_krw"] - invested,
@@ -320,14 +413,15 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
             _save(s)
         rec["status"] = "paper_filled"
     with _lock:
-        s = state(); s["orders"].append(rec); s["orders_today"] += 1; _save(s)
+        s = state(); s["orders"].append(rec); s["orders_today"] += 1 if side == "BUY" else 0; _save(s)
     event("실전 주문" if live else "가상 주문", f"{label} — {reason}", symbol=sym)
     return f"{sym}: {'✅ 주문 보냄' if live else '📝 가상 체결'} {label}"
 
 
 def _cancel_stale(minutes: int = 10) -> None:
     now = datetime.now(KST)
-    for o in toss.open_orders():
+    mine = _bot_order_ids()
+    for o in [o for o in toss.open_orders() if o.get("orderId") in mine]:   # 자동매매가 낸 주문만
         try:
             t = datetime.fromisoformat(str(o.get("orderedAt")).replace("Z", "+00:00"))
             if t.tzinfo is None:
@@ -357,7 +451,8 @@ def emergency_stop() -> dict:
     canceled, errors = 0, []
     if was == "live" and toss.enabled():
         try:
-            for o in toss.open_orders():
+            mine = _bot_order_ids()
+            for o in [o for o in toss.open_orders() if o.get("orderId") in mine]:   # 사장님이 직접 낸 주문은 그대로
                 try:
                     toss.cancel_order(o["orderId"]); canceled += 1
                 except toss.TossError as e:
@@ -380,7 +475,8 @@ def overview() -> dict:
     p = s["paper"]
     return {"config": c, "toss": toss.enabled(), "day": s["day"], "orders_today": s["orders_today"],
             "halted_today": s.get("halted_today", ""), "paper": p, "orders": s["orders"][-50:][::-1],
-            "events": s["events"][-80:][::-1], "running": bool(_thread and _thread.is_alive())}
+            "events": s["events"][-80:][::-1], "running": bool(_thread and _thread.is_alive()),
+            "picks": s.get("picks") or {}, "scanning": _scanning.is_set(), "bot_pos": s.get("bot_pos", {})}
 
 
 # ── 백그라운드 ──
@@ -396,7 +492,13 @@ def start(log_fn=print) -> None:
         while True:
             time.sleep(15)
             c = config()
-            if c["mode"] == "off" or time.time() - last < c["interval_min"] * 60:
+            if c["mode"] == "off":
+                continue
+            now = datetime.now(KST)
+            if c["auto_pick"] and now.weekday() < 5 and now.strftime("%H:%M") >= "08:20" and \
+                    (state().get("picks") or {}).get("day") != now.strftime("%Y-%m-%d"):
+                scan_now()   # 장 시작 전에 오늘의 종목 고르기
+            if time.time() - last < c["interval_min"] * 60:
                 continue
             last = time.time()
             try:

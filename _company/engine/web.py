@@ -371,6 +371,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(at.run_once(force=True))
             except Exception as e:
                 return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
+        if path == "/api/autotrade/scan":
+            return self._json(at.scan_now())
         if path == "/api/autotrade/reset-paper":
             return self._json(at.reset_paper())
         if path == "/api/improve/new":

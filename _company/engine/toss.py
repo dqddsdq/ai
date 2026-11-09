@@ -100,16 +100,34 @@ def _get(path: str, account: bool = False, **params) -> object:
         raise TossError(f"이 앱은 조회만 해요 — 막힌 주소: {path}")
     q = {k: v for k, v in params.items() if v is not None}
     url = BASE + path + ("?" + urllib.parse.urlencode(q) if q else "")
-    for attempt in (0, 1):
-        headers = {"Authorization": "Bearer " + _token(force=attempt == 1), "Accept": "application/json"}
+    renew = False
+    for attempt in range(4):
+        _throttle()
+        headers = {"Authorization": "Bearer " + _token(force=renew), "Accept": "application/json"}
+        renew = False
         if account:
             headers["X-Tossinvest-Account"] = str(account_seq())
         try:
             return _http(urllib.request.Request(url, headers=headers, method="GET")).get("result")
         except TossError as e:
             if "401" in str(e) and attempt == 0:  # 다른 곳에서 토큰을 새로 받아 무효가 됨 → 한 번만 재발급
+                renew = True
+                continue
+            if "너무 잦아요" in str(e) and attempt < 3:  # 429 → 잠깐 쉬고 다시
+                time.sleep(1.5 * (attempt + 1))
                 continue
             raise
+
+_last_call = [0.0]
+
+
+def _throttle(gap: float = 0.13) -> None:
+    """초당 7~8건 이하로 (종목 훑기처럼 많이 부를 때 한도 초과 방지)"""
+    with _lock:
+        wait = _last_call[0] + gap - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        _last_call[0] = time.time()
 
 
 def _post(path: str, body: dict) -> object:
@@ -262,11 +280,12 @@ def portfolio_for_prompt() -> str:
     h = holdings()
     lines = ["<my_account>", "토스증권에서 방금 조회한 사장님 실제 계좌예요. 채팅에서는 주문하지 않아요 (주문은 🤖 자동매매 화면의 규칙으로만). 계좌번호는 말하지 마세요."]
     if h:
-        pl, dpl = h.get("profitLoss") or {}, h.get("dailyProfitLoss") or {}
+        as_d = lambda v: v if isinstance(v, dict) else {"amount": v}
+        pl, dpl = as_d(h.get("profitLoss") or {}), as_d(h.get("dailyProfitLoss") or {})
         lines.append(f"총 매수금액 {_won(h.get('totalPurchaseAmount'))} · 평가금액 {_won(h.get('marketValue'))} · "
                      f"평가손익 {_won(pl)} ({_pct(pl.get('rate'))}) · 오늘 손익 {_won(dpl)} ({_pct(dpl.get('rate'))})")
         for it in h.get("items") or []:
-            ipl = it.get("profitLoss") or {}
+            ipl = as_d(it.get("profitLoss") or {})
             lines.append(f"- {it.get('name') or it.get('symbol')} ({it.get('symbol')}): {it.get('quantity')}주 · 평단 {it.get('averagePurchasePrice')} · "
                          f"현재가 {it.get('lastPrice')} {it.get('currency', '')} · 평가손익 {_won(ipl.get('amount') if isinstance(ipl, dict) else ipl)} {_pct(ipl.get('rate')) if isinstance(ipl, dict) else ''}")
         if not h.get("items"):
