@@ -47,6 +47,7 @@ DEFAULTS = {
     "auto_pick": True,             # 종목을 규칙이 알아서 고름
     "pick_count": 3,               # 동시에 들고 갈 최대 종목 수 (예산을 이 수로 나눔)
     "symbols": [],                 # 직접 고른 종목 (auto_pick 끄면 이것만)
+    "exclude": [],                 # 절대 사지 않을 종목
     "budget_mode": "all_cash",     # all_cash = 계좌의 그 통화 현금 전부 / fixed = max_total_krw
     "max_total_krw": 100000,       # fixed 일 때 총 투자 한도
     "max_order_krw": 50000,        # fixed 일 때 한 번 주문 최대
@@ -116,6 +117,13 @@ def save_config(new: dict) -> dict:
                 c[k] = new[k]
     if c["strategy"] == "trend" and c["market"] == "US":
         errors.append("추세 전략은 지금 국장만 돼요 (미장은 급등주)")
+    if "exclude" in new:
+        raw = new["exclude"] if isinstance(new["exclude"], list) else str(new["exclude"]).replace(",", " ").split()
+        ex = [toss.symbol(s) for s in raw if str(s).strip()]
+        if any(not re.fullmatch(r"\d{6}|[A-Z][A-Z.\-]{0,9}", x) for x in ex):
+            errors.append("제외 종목 코드가 이상해요")
+        else:
+            c["exclude"] = list(dict.fromkeys(ex))[:100]
     if "symbols" in new:
         raw = new["symbols"] if isinstance(new["symbols"], list) else str(new["symbols"]).replace(",", " ").split()
         syms = [toss.symbol(s) for s in raw if s.strip()]
@@ -501,14 +509,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     if exits_only:
         pass
     elif not c["auto_pick"]:
-        picked = list(c["symbols"])
+        picked = [x for x in c["symbols"] if x not in c["exclude"]]
     elif c["strategy"] == "surge":
         if not picker.base_ready(market):
             prepare_now()
             results.append("🔎 급등주 기준값 준비 중 (처음엔 몇 분~10여 분)")
         elif minutes is not None and first + 5 <= minutes <= 360 and len(pos) < c["pick_count"]:
             scan_cfg = {**c, "max_order_krw": caps["order"], "usd_krw": fx}
-            r = picker.surge_scan(scan_cfg, log=_log_fn, exclude=set(pos))
+            r = picker.surge_scan(scan_cfg, log=_log_fn, exclude=set(pos) | set(c["exclude"]))
             with _lock:
                 s2 = state(); s2["picks"] = r; _save(s2)
             picked = [x["symbol"] for x in r["picks"]]
@@ -519,7 +527,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         pk = s.get("picks") or {}
         if pk.get("day") != picker.session_date(market):
             prepare_now(); results.append("🔎 오늘의 추세 종목 고르는 중")
-        picked = [x["symbol"] for x in pk.get("picks", [])]
+        picked = [x["symbol"] for x in pk.get("picks", []) if x["symbol"] not in c["exclude"]]
 
     symbols = list(dict.fromkeys(held_syms + picked))
     if not symbols:
@@ -844,3 +852,122 @@ def summary_for_prompt() -> str:
         lines.append(rv)
     lines.append("</autotrade>")
     return "\n".join(lines)
+
+
+
+# ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
+LABELS = {"monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+          "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
+          "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
+          "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
+          "trail_pct": "고점 대비 하락 매도(%)", "surge_min_change_pct": "급등 최소 상승률(%)", "surge_max_change_pct": "급등 최대 상승률(%)",
+          "surge_volume_ratio": "거래량 배수 기준", "pre_volume_ratio": "프리장 거래량 기준", "min_trading_value_krw": "최소 거래대금(원)",
+          "us_min_price": "최소 주가($)", "limit_slip_pct": "지정가 여유(%)", "interval_min": "종목 찾기 간격(분)",
+          "exit_check_sec": "손절 확인 간격(초)", "loss_streak_pause": "연속 손실 쉬기 기준", "pause_min": "쉬는 시간(분)",
+          "us_premarket": "프리장 매매", "stop_at_target": "목표 달성 시 쉬기", "ai_check": "주문 전 AI 검토", "auto_pick": "종목 알아서 고르기",
+          "market": "시장", "strategy": "전략", "budget_mode": "예산 방식"}
+TRADE_GUIDE = """[자동매매 행동 태그 — 사장님이 원할 때만, 답 맨 아래에]
+- 설정 바꾸기: [[TRADE_SET: 키=값 | 이유]] (여러 개면 줄마다 하나). 키는 <engine> 의 '설정' 목록에 있는 영문 키만. 예: [[TRADE_SET: partial_tp_pct=5 | 나눠 팔기를 조금 일찍]]
+- 모드: [[TRADE_MODE: paper | 이유]] 또는 [[TRADE_MODE: off | 이유]] (live 는 채팅으로 불가)
+- 긴급 정지: [[TRADE_STOP: 이유]]
+- 종목 제외/해제: [[TRADE_EXCLUDE: TSLA | 이유]] · [[TRADE_INCLUDE: TSLA]]
+태그는 바로 실행되지 않고 채팅에 [적용] 카드로 떠요. 사장님이 원하지 않았는데 태그를 쓰지 마세요."""
+
+
+def engine_context() -> str:
+    """🤖 자동매매 팀이 볼 엔진 전체 상태"""
+    c, s = config(), state()
+    mode_key = "live" if c["mode"] == "live" else "paper"
+    m = minutes_now(c["market"], c)
+    lines = ["<engine>", summary_for_prompt().replace("<autotrade>", "").replace("</autotrade>", "").strip(),
+             "설정 (키 = 값 · 뜻): " + " / ".join(f"{k}={c[k]}({LABELS[k]})" for k in LABELS if k in c),
+             f"제외 종목: {', '.join(c['exclude']) or '없음'} · 직접 고른 종목: {', '.join(c['symbols']) or '없음'}",
+             f"시장 시각: 현지 {picker.mnow(c['market']).strftime('%H:%M')} · "
+             + ("장 닫힘" if m is None else ("프리장" if m < 0 else f"정규장 {m}분째"))
+             + f" · 다음 종목 찾기 {_next_open(c) or '-'} (한국 시간)"]
+    pk = s.get("picks") or {}
+    if pk.get("picks") or pk.get("note"):
+        lines.append(f"최근 종목 찾기 결과({pk.get('time', '')}): {pk.get('note', '')}")
+        lines += [f"- {x['name']}({x['symbol']}) 점수 {x['score']} · {x['reason']}" for x in pk.get("picks", [])]
+    ev = s["events"][-25:]
+    if ev:
+        lines.append("최근 활동 기록:")
+        lines += [f"- {e['t']} [{e['kind']}] {e['text']}" for e in ev]
+    L = tl.overview(s["day"], mode_key)
+    td, g = L["today"], L["today"].get("guard", {})
+    line = f"오늘 학습: 끝난 거래 {td.get('n', 0)}건"
+    if td.get("n"):
+        line += f" · 승률 {td['win_rate']}% · 평균 {td['avg']:+.2f}%"
+    if td.get("open"):
+        line += " · 보유 중 " + ", ".join(f"{o['sym']} 최대{o['mfe']:+.1f}%/최저{o['mae']:+.1f}%" for o in td["open"])
+    if g.get("pause_until") or g.get("no_premarket"):
+        line += f" · 조심 규칙: {g.get('pause_why') or ''} {g.get('no_premarket') or ''}"
+    lines.append(line)
+    for t in L["trades"][:10]:
+        f = t.get("features") or {}
+        lines.append(f"- 일지 {t['entry_time'][5:16]} {t['sym']} " + (f"{t.get('pnl_pct', 0):+.2f}% {t.get('exit_kind', '')}" if t["closed"] else "보유 중")
+                     + f" · 최대 {t['mfe']:+.1f}% 최저 {t['mae']:+.1f}% · 살 때 {f.get('change')}% 거래량 {f.get('ratio')}배{' 프리장' if f.get('pre') else ''}")
+    if L["proposals"]:
+        lines.append("학습 제안: " + " / ".join(f"{p['label']} {p['from']}→{p['to']}({'적용됨' if p['status'] == 'applied' else '대기'}: {p['why']})"
+                                              for p in L["proposals"][:6]))
+    lines.append("</engine>")
+    return "\n".join(lines)
+
+
+_ACT = re.compile(r"\[\[TRADE_(SET|MODE|STOP|EXCLUDE|INCLUDE):\s*([^\]|]*?)\s*(?:\|\s*([^\]]*?))?\s*\]\]")
+
+
+def find_actions(reply: str) -> list[dict]:
+    """AI 답의 행동 태그 → [적용] 카드용 (실행은 안 함)"""
+    c = config()
+    out = []
+    for kind, arg, why in _ACT.findall(reply or ""):
+        a = {"id": uuid.uuid4().hex[:8], "type": kind.lower(), "why": (why or "").strip()}
+        if kind == "SET":
+            if "=" not in arg:
+                continue
+            k, v = [x.strip() for x in arg.split("=", 1)]
+            if k not in LABELS:
+                continue
+            a.update(param=k, value=v, label=f"{LABELS[k]}: {c.get(k)} → {v}")
+        elif kind == "MODE":
+            v = arg.strip().lower()
+            if v not in ("paper", "off"):
+                continue
+            a.update(value=v, label=f"모드: {c['mode']} → {dict(paper='가상 매매', off='끄기')[v]}")
+        elif kind == "STOP":
+            a.update(label="⛔ 긴급 정지 (꺼짐 + 자동매매 미체결 주문 취소)", why=(arg or why or "").strip())
+        else:
+            sym = toss.symbol(arg.strip())
+            if not re.fullmatch(r"\d{6}|[A-Z][A-Z.\-]{0,9}", sym):
+                continue
+            a.update(value=sym, label=f"{'사지 않을 종목에 추가' if kind == 'EXCLUDE' else '제외 해제'}: {sym}")
+        out.append(a)
+    return out[:8]
+
+
+def apply_action(a: dict) -> dict:
+    """사장님이 [적용]을 누른 행동 실행 (설정 검사는 save_config 가 함)"""
+    t = a.get("type")
+    c = config()
+    if t == "set":
+        k, v = a.get("param"), a.get("value")
+        if k not in LABELS:
+            return {"ok": False, "message": "바꿀 수 없는 설정이에요"}
+        if isinstance(DEFAULTS.get(k), bool):
+            v = str(v).strip().lower() in ("1", "true", "on", "켜기", "yes", "예")
+        r = save_config({k: v})
+    elif t == "mode":
+        if a.get("value") not in ("paper", "off"):
+            return {"ok": False, "message": "채팅으로는 가상 매매·끄기만 돼요 (실전은 🤖 화면에서)"}
+        r = save_config({"mode": a["value"]})
+    elif t == "stop":
+        r = emergency_stop()
+    elif t in ("exclude", "include"):
+        ex = [x for x in c["exclude"] if x != a.get("value")] + ([a["value"]] if t == "exclude" else [])
+        r = save_config({"exclude": ex})
+    else:
+        return {"ok": False, "message": "모르는 행동이에요"}
+    if r.get("ok"):
+        event("채팅 지시", f"{a.get('label', t)}" + (f" — {a['why']}" if a.get("why") else ""))
+    return r

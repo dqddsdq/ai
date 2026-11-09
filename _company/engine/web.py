@@ -371,6 +371,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(at.run_once(force=True))
             except Exception as e:
                 return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
+        if path == "/api/autotrade/action":
+            return self._json(at.apply_action(body.get("action") or {}))
         if path == "/api/autotrade/review":
             return self._json(at.review_now())
         if path == "/api/autotrade/proposal":
@@ -593,7 +595,9 @@ class Handler(BaseHTTPRequestHandler):
             pack, rsteps = f_research.result() if f_research else ("", [])
         if market:
             extra += "\n\n" + market
-        if at.ASK_WORDS.search(text) or (toss.ACCOUNT_WORDS.search(text) and at.config()["mode"] != "off"):
+        if agent_id == "trader":   # 🤖 자동매매 팀: 엔진 전체 상태 + [적용] 카드용 행동 태그 안내
+            extra += "\n\n" + at.engine_context() + "\n\n" + at.TRADE_GUIDE
+        elif at.ASK_WORDS.search(text) or (toss.ACCOUNT_WORDS.search(text) and at.config()["mode"] != "off"):
             extra += "\n\n" + at.summary_for_prompt()   # 자동매매가 산 것·오늘 손익을 채팅 AI 도 알게
         if want_research:
             steps += rsteps
@@ -642,6 +646,12 @@ class Handler(BaseHTTPRequestHandler):
             conv["messages"][-1].setdefault("improvements", []).append(job["id"])
             log(f"  🛠️ 개선 제안: {what[:40]}")
             self._send("improve_request", job)
+        acts = at.find_actions(reply) if agent_id == "trader" else []
+        if acts:   # 바로 실행하지 않고 [적용] 카드로
+            conv["messages"][-1]["trade_actions"] = acts
+            for a in acts:
+                log(f"  🤖 자동매매 지시 카드: {a['label']}")
+                self._send("trade_action", a)
         reqs = [tl.add_request(tool, why, agent_id) for tool, why in tl.find_requests(reply)]
         if reqs:
             conv["messages"][-1]["tool_requests"] = [r["id"] for r in reqs]

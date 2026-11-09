@@ -461,6 +461,10 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="trade-goal" style="margin-top:8px;font-size:14px"></div>
         <div id="trade-run-out" class="tlog" style="margin-top:6px"></div>
       </div>
+      <div class="card"><b>💬 엔진에게 묻기·시키기</b>
+        <div class="row" style="display:flex;gap:8px;margin-top:6px"><input class="field" id="trade-ask" style="flex:1" placeholder="예: 오늘 왜 아무것도 안 샀어? / 익절 8%로 바꿔 / TSLA는 사지 마"><button class="btn primary" id="trade-ask-go">보내기</button></div>
+        <div class="muted" style="font-size:12.5px;margin-top:4px">채팅의 🤖 자동매매 팀으로 이어져요. 설정을 바꾸는 말은 [적용] 카드로 떠요 (실전 켜기는 여기 위 버튼으로만).</div>
+      </div>
       <div class="card"><b>📚 학습·복기</b> <button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
         <div id="learn-today" style="margin-top:6px;font-size:13.5px"></div>
         <div id="learn-props" style="margin-top:8px"></div>
@@ -583,7 +587,7 @@ function inline(t) {
     .replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
-const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN|TOOL_REQUEST|IMPROVE):[^\]]*\]\]/g;
+const ACTION_TAG = /\[\[(SIMULATE|STOCK|LEARN|TOOL_REQUEST|IMPROVE|TRADE_SET|TRADE_MODE|TRADE_STOP|TRADE_EXCLUDE|TRADE_INCLUDE):[^\]]*\]\]/g;
 function md(text) {
   const lines = esc((text || "").replace(ACTION_TAG, "").trimEnd()).split("\n"); const out = []; let i = 0;
   const isTableSep = (l) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
@@ -723,6 +727,7 @@ async function openConv(id) {
       if ((m.drafts || []).length > 1) a.team.judged();
       (m.steps || []).forEach(st => a.team.stepDone(st));
       (m.improvements || []).forEach(async id => { const j = await api("/api/improve/" + id); if (!j.error) improveCard(j, a.el); });
+      (m.trade_actions || []).forEach(x => tradeActionCard(x, a.el));
       (m.tool_requests || []).forEach(id => { const r = (toolsCache?.requests || []).find(x => x.id === id); if (r) toolRequestCard(r, a.el); });
       if ((m.steps || []).length) a.team.judged();
     }
@@ -1179,6 +1184,7 @@ async function send() {
       status: (d) => ai.status(d.text),
       replace: (d) => { raw = d.text; ai.el.dataset.raw = raw; ai.body.innerHTML = finalHTML(raw); },
       tool_request: (d) => { toolRequestCard(d, ai.el); loadTools(); scrollDown(); },
+      trade_action: (d) => { tradeActionCard(d, ai.el); scrollDown(); },
       improve_request: (d) => { improveCard(d, ai.el); refreshImpBadge(); scrollDown(); },
       market: (d) => ai.market(d.items || []),
       draft_start: (d) => { ai.status(""); ai.body.classList.remove("cursor"); ai.team.start(d); scrollDown(); },
@@ -1312,6 +1318,19 @@ async function renderTrade(fillForm = true) {
   $("#trade-orders").innerHTML = d.orders.length ? d.orders.map(o => `<div><span class="k">${o.mode === "live" ? "🔴 실전" : "📝 가상"}</span>${esc(o.t)} · <b>${esc(o.symbol)} ${o.side === "BUY" ? "매수" : "매도"} ${o.qty}주</b> @ ${o.price} · ${esc(o.status)}${o.error ? " · " + esc(o.error) : ""}<br><span class="muted">${esc(o.reason)}</span></div>`).join("") : "<span class='muted'>아직 없어요</span>";
   $("#trade-events").innerHTML = d.events.length ? d.events.map(e => `<div><span class="k">${esc(e.kind)}</span>${esc(e.t)} · ${esc(e.text)}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
 }
+function tradeActionCard(a, container) {
+  const el = document.createElement("div"); el.className = "treq";
+  el.innerHTML = `<div class="th">🤖 <b>자동매매에 지시</b><span class="tb wait">적용 대기</span></div>
+    <div class="why"><b>${esc(a.label || a.type)}</b>${a.why ? `<br>${esc(a.why)}` : ""}</div>
+    <div class="acts"><button class="btn ${a.type === "stop" ? "danger" : "primary"}" data-a="ok">${a.type === "stop" ? "⛔ 지금 정지" : "적용"}</button><button class="btn" data-a="no">무시</button></div>`;
+  el.querySelector('[data-a="ok"]').onclick = async (e) => {
+    e.target.disabled = true; const r = await api("/api/autotrade/action", { action: a });
+    el.querySelector(".tb").textContent = r.ok ? "적용됨" : "실패"; el.querySelector(".tb").className = "tb " + (r.ok ? "ok" : "");
+    el.querySelector(".acts").innerHTML = `<span class="muted">${esc(r.message || (r.ok ? "바꿨어요" : "실패"))}</span>`;
+  };
+  el.querySelector('[data-a="no"]').onclick = () => { el.querySelector(".acts").innerHTML = '<span class="muted">무시했어요</span>'; el.querySelector(".tb").textContent = "무시"; };
+  container.appendChild(el);
+}
 function pctS(x) { return x == null ? "-" : (x > 0 ? "+" : "") + Number(x).toFixed(1) + "%"; }
 function statLine(s) { return s && s.n ? `${s.n}건 · 승률 ${s.win_rate}% · 평균 ${pctS(s.avg)} (수익 평균 ${pctS(s.avg_win)} / 손실 평균 ${pctS(s.avg_loss)}) · 산 뒤 최대 상승 중간값 ${pctS(s.mfe_med)}` : "아직 없음"; }
 function renderLearn(L) {
@@ -1342,6 +1361,12 @@ function renderLearn(L) {
   const tr = L.trades || [];
   $("#learn-trades").innerHTML = tr.length ? tr.map(x => `<div>${esc(x.entry_time.slice(5, 16))} <b>${esc(x.sym)}</b> ${x.closed ? `${pctS(x.pnl_pct)} · ${esc(x.exit_kind || "")}` : "보유 중"} · 최대 ${pctS(x.mfe)} / 최저 ${pctS(x.mae)}${x.features && x.features.change != null ? ` · 살 때 ${pctS(x.features.change)}, 거래량 ${x.features.ratio}배${x.features.pre ? " (프리장)" : ""}` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
 }
+$("#trade-ask-go").onclick = () => {
+  const q = $("#trade-ask").value.trim(); if (!q) return $("#trade-ask").focus();
+  $("#trade-ask").value = ""; show("chat"); newChat();
+  $("#agent-select").value = "trader"; input.value = q; send();
+};
+$("#trade-ask").onkeydown = (e) => { if (e.key === "Enter") $("#trade-ask-go").click(); };
 $("#trade-review").onclick = async () => { const r = await api("/api/autotrade/review", {}); alert(r.message || "시작했어요"); setTimeout(() => renderTrade(false), 1500); };
 document.querySelectorAll("#trade-mode button").forEach(btn => btn.onclick = async () => {
   const m = btn.dataset.m;
