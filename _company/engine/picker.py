@@ -49,14 +49,16 @@ def mnow(market: str, now: datetime | None = None) -> datetime:
     return now.astimezone(timezone(timedelta(hours=-4 if _us_dst(est.date()) else -5)))
 
 
-def session_minutes(market: str, now: datetime | None = None) -> int | None:
-    """정규장 시작 후 지난 분 (주말·장 전·장 후면 None). KR 09:00~15:30, US 09:30~16:00 (현지)"""
+def session_minutes(market: str, now: datetime | None = None, extended: bool = False) -> int | None:
+    """정규장 시작 후 지난 분 (주말·장 밖이면 None). KR 09:00~15:30, US 09:30~16:00 (현지).
+    extended=True(미장 프리장 포함)면 뉴욕 04:00 부터 → 프리장은 음수 (-330 ~ -1)"""
     t = mnow(market, now)
     if t.weekday() >= 5:
         return None
     start = 9 * 60 + (0 if market == "KR" else 30)
     m = t.hour * 60 + t.minute - start
-    return m if 0 <= m <= 390 else None
+    low = -330 if (extended and market == "US") else 0
+    return m if low <= m <= 390 else None
 
 
 def session_date(market: str, now: datetime | None = None) -> str:
@@ -221,8 +223,10 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
         if lo <= chg <= hi and min_price <= p <= max_price and r["value20_krw"] >= cfg["min_trading_value_krw"] * 0.3:
             movers.append((chg, s, p))
     movers.sort(reverse=True)
-    elapsed = max(10, session_minutes(market) or 390)
-    frac = min(1.0, elapsed / 390)          # 하루 중 지금까지 비율 → 거래량 비교 보정
+    mins = session_minutes(market, extended=True)
+    pre = mins is not None and mins < 0      # 프리장: 거래가 원래 적음 → '평소 하루 거래량의 몇 %가 벌써 거래됐나'로 판단
+    elapsed = max(10, mins if mins is not None and mins > 0 else 390)
+    frac = min(1.0, elapsed / 390)          # 정규장: 하루 중 지금까지 비율 → 거래량 비교 보정
     found = []
     for chg, s, p in movers[:40]:
         try:
@@ -230,13 +234,19 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
         except toss.TossError:
             continue
         today_vol = float(cs[0].get("volume") or 0) if cs and cs[0]["timestamp"][:10] == session_date(market) else 0
-        ratio = today_vol / max(rows[s]["vol20"] * frac, 1)
         value_today = today_vol * p * fx
-        if ratio < cfg["surge_volume_ratio"] or value_today < cfg["min_trading_value_krw"] * frac:
-            continue
+        if pre:
+            ratio = today_vol / max(rows[s]["vol20"], 1)
+            if ratio < cfg.get("pre_volume_ratio", 0.2) or value_today < cfg["min_trading_value_krw"] * 0.1:
+                continue
+        else:
+            ratio = today_vol / max(rows[s]["vol20"] * frac, 1)
+            if ratio < cfg["surge_volume_ratio"] or value_today < cfg["min_trading_value_krw"] * frac:
+                continue
         cur = "원" if market == "KR" else "$"
         found.append({"symbol": s, "name": rows[s]["name"], "price": p, "change": round(chg, 1), "score": round(chg * min(ratio, 10), 1),
-                      "reason": f"오늘 {chg:+.1f}% · 거래량 평소의 {ratio:.1f}배 · 오늘 거래대금 {value_today / 1e8:,.0f}억원 · 현재가 {p:,.2f}{cur}"})
+                      "reason": (f"[프리장] {chg:+.1f}% · 벌써 평소 하루 거래량의 {ratio * 100:.0f}%" if pre else f"오늘 {chg:+.1f}% · 거래량 평소의 {ratio:.1f}배")
+                                + f" · 거래대금 {value_today / 1e8:,.0f}억원 · 현재가 {p:,.2f}{cur}"})
     found.sort(key=lambda x: -x["score"])
     out = []
     for c in found:
@@ -248,7 +258,7 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
         except toss.TossError:
             pass
         out.append(c)
-    note = f"{t:%H:%M}({'뉴욕' if market == 'US' else '서울'}) 급등 {len(movers)}개 중 거래량 동반 {len(found)}개 → {len(out)}개"
+    note = f"{t:%H:%M}({'뉴욕' if market == 'US' else '서울'}){' 프리장' if pre else ''} 급등 {len(movers)}개 중 거래량 동반 {len(found)}개 → {len(out)}개"
     return {"day": session_date(market), "time": t.strftime("%H:%M"), "picks": out, "note": note, "strategy": "surge", "market": market}
 
 

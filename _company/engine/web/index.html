@@ -477,6 +477,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>급등 기준: 오늘 상승 최소 (%)<input id="t-surge_min_change_pct" type="number" step="0.5"></label>
           <label>급등 기준: 오늘 상승 최대 (%)<input id="t-surge_max_change_pct" type="number" step="1"></label>
           <label>급등 기준: 평소 거래량의 몇 배<input id="t-surge_volume_ratio" type="number" step="0.5"></label>
+          <label>프리장 기준: 평소 하루 거래량의 몇 배가 벌써 (0.2 = 20%)<input id="t-pre_volume_ratio" type="number" step="0.05"></label>
           <label>최소 거래대금 (원/일)<input id="t-min_trading_value_krw" type="number"></label>
           <label>하루 최대 매수 횟수 (매도는 제한 없음)<input id="t-max_orders_per_day" type="number"></label>
           <label>확인 간격 (분)<input id="t-interval_min" type="number"></label>
@@ -486,6 +487,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label style="grid-column:1/-1">직접 고른 종목 (아래 '알아서 고르기'를 끄면 이것만 · 쉼표로)<input id="t-symbols" placeholder="AAPL, NVDA 또는 005930"></label>
         </div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-auto_pick"> 종목은 알아서 고르기</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-us_premarket"> 미장 프리장(뉴욕 04:00, 한국 18:00 · 서머타임 17:00)부터 매매</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-stop_at_target"> 한 달 목표를 채우면 그달은 새로 안 사기 (번 돈 지키기)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (느려짐)</label>
         <div class="row" style="margin-top:10px;display:flex"><div class="spacer"></div><button class="btn primary" id="trade-save">저장</button></div>
@@ -1257,8 +1259,8 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
-const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "stop_at_target", "ai_check"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
+const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "ai_check"];
 let tradeTimer = null;
 function tradeBadge(d) {
   const m = d.config.mode, b = $("#trade-badge");
@@ -1271,7 +1273,7 @@ async function renderTrade(fillForm = true) {
   $("#trade-status").innerHTML = [
     { off: "⏸️ 꺼짐", paper: "📝 가상 매매 중 (돈 안 씀)", live: "🔴 <b>실전 자동매매 중</b>" }[c.mode],
     `${mk} · ${c.strategy === "surge" ? "급등주" : "추세"} · ${c.budget_mode === "all_cash" ? "계좌 현금 전부" : "한도 " + Number(c.max_total_krw).toLocaleString() + "원"}`,
-    `현지 ${esc(d.local_time)} (${d.session_minutes == null ? "장 닫힘" : "장 " + d.session_minutes + "분째"})`,
+    `현지 ${esc(d.local_time)} (${d.session_minutes == null ? "장 닫힘" : d.session_minutes < 0 ? "프리장" : "정규장 " + d.session_minutes + "분째"})`,
     d.toss ? "토스 연결됨" : "⚠️ 토스 키 없음 (🧰 도구)", `오늘 매수 ${d.orders_today}/${c.max_orders_per_day}`,
     d.halted_today ? `⛔ 오늘 정지: ${esc(d.halted_today)}` : ""].filter(Boolean).join(" · ");
   const mo = d.month || {}, unrealNote = "";

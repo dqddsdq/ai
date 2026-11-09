@@ -60,6 +60,8 @@ DEFAULTS = {
     "surge_min_change_pct": 5.0,   # 오늘 이만큼 이상 오른 종목
     "surge_max_change_pct": 40.0,  # 너무 많이 오른 건 제외 (국장은 상한가 30%)
     "surge_volume_ratio": 3.0,     # 평소 거래량의 몇 배 이상
+    "us_premarket": True,          # 미장 프리장(뉴욕 04:00~)부터 매매
+    "pre_volume_ratio": 0.2,       # 프리장: 평소 하루 거래량의 이만큼(20%)이 벌써 거래된 종목
     "min_trading_value_krw": 3000000000,  # 하루 거래대금 최소 (원 환산)
     "us_min_price": 1.0,           # 1달러 미만 동전주 제외
     "limit_slip_pct": 0.5,         # 급등주: 사는 지정가는 현재가 +0.5%, 파는 건 -0.5% (체결 잘 되게)
@@ -72,7 +74,7 @@ DEFAULTS = {
 NUMS = {"monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (10000, 1e10), "max_position_krw": (10000, 1e10),
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
-        "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
+        "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
         "limit_slip_pct": (0, 3), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
 CHOICES = {"mode": ("off", "paper", "live"), "market": ("US", "KR"), "strategy": ("surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
@@ -119,7 +121,7 @@ def save_config(new: dict) -> dict:
                 c[k] = int(v) if v.is_integer() and isinstance(DEFAULTS[k], int) else v
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
-    for k in ("ai_check", "auto_pick", "stop_at_target"):
+    for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -172,10 +174,23 @@ def _mkt(sym: str) -> str:
     return "KR" if re.fullmatch(r"\d{6}", sym) else "US"
 
 
+def _ext(market: str, c: dict | None = None) -> bool:
+    return market == "US" and bool((c or config()).get("us_premarket"))
+
+
+def minutes_now(market: str, c: dict | None = None) -> int | None:
+    return picker.session_minutes(market, extended=_ext(market, c))
+
+
 def market_open(sym: str, side: str = "BUY", now: datetime | None = None) -> bool:
-    """매수: 정규장 시작 10분 뒤 ~ 마감 30분 전 / 매도: 시작 1분 뒤 ~ 마감 2분 전 (휴장일은 토스가 거절 → 건너뜀)"""
-    m = picker.session_minutes(_mkt(sym), now)
-    return m is not None and ((10 <= m <= 360) if side == "BUY" else (1 <= m <= 388))
+    """매수: (프리장 켜면 뉴욕 04:10~ / 아니면 정규장 시작 10분 뒤~) ~ 마감 30분 전
+    매도: 장(프리장 포함) 시작 1분 뒤 ~ 마감 2분 전 (휴장일은 토스가 거절 → 건너뜀)"""
+    mk = _mkt(sym)
+    m = picker.session_minutes(mk, now, extended=_ext(mk))
+    if m is None:
+        return False
+    first = -330 if _ext(mk) else 0
+    return (first + 10 <= m <= 360) if side == "BUY" else (first + 1 <= m <= 388)
 
 
 # ── 환율 ──
@@ -440,7 +455,8 @@ def run_once(force: bool = False) -> dict:
     results.append(f"🎯 이번 달 {month_pct:+.1f}% / 목표 {c['monthly_target_pct']:g}%" + (" — 달성! 이번 달은 새로 안 사요" if target_hit and c["stop_at_target"] else ""))
 
     # 종목
-    minutes = picker.session_minutes(market)
+    minutes = minutes_now(market, c)
+    first = -330 if _ext(market, c) else 0
     picked: list[str] = []
     if not c["auto_pick"]:
         picked = list(c["symbols"])
@@ -448,7 +464,7 @@ def run_once(force: bool = False) -> dict:
         if not picker.base_ready(market):
             prepare_now()
             results.append("🔎 급등주 기준값 준비 중 (처음엔 몇 분~10여 분)")
-        elif minutes is not None and 5 <= minutes <= 360 and len(pos) < c["pick_count"]:
+        elif minutes is not None and first + 5 <= minutes <= 360 and len(pos) < c["pick_count"]:
             scan_cfg = {**c, "max_order_krw": caps["order"], "usd_krw": fx}
             r = picker.surge_scan(scan_cfg, log=_log_fn, exclude=set(pos))
             with _lock:
@@ -617,7 +633,7 @@ def overview() -> dict:
             "events": s["events"][-100:][::-1], "running": bool(_thread and _thread.is_alive()),
             "picks": s.get("picks") or {}, "scanning": _busy.is_set(), "bot_pos": s.get("bot_pos", {}),
             "realized_today": s.get("realized_today", 0), "base_ready": picker.base_ready(c["market"]), "month": s.get("month", {}),
-            "session_minutes": picker.session_minutes(c["market"]),
+            "session_minutes": minutes_now(c["market"], c),
             "local_time": picker.mnow(c["market"]).strftime("%H:%M")}
 
 
@@ -636,9 +652,10 @@ def start(log_fn=print) -> None:
             if c["mode"] == "off":
                 continue
             t = picker.mnow(c["market"])
-            # 장 전 준비: 미장은 뉴욕 07:00~, 국장은 07:30~ (평일)
-            mins = picker.session_minutes(c["market"])
-            if c["auto_pick"] and t.weekday() < 5 and t.strftime("%H:%M") >= ("07:00" if c["market"] == "US" else "07:30"):
+            # 장 전 준비: 미장은 뉴욕 07:00~ (프리장 켜면 00:30~), 국장은 07:30~ (평일)
+            mins = minutes_now(c["market"], c)
+            prep_at = ("00:30" if _ext(c["market"], c) else "07:00") if c["market"] == "US" else "07:30"
+            if c["auto_pick"] and t.weekday() < 5 and t.strftime("%H:%M") >= prep_at:
                 ready = picker.base_ready(c["market"]) if c["strategy"] == "surge" else \
                     (state().get("picks") or {}).get("day") == picker.session_date(c["market"])
                 if not ready and not _busy.is_set():
