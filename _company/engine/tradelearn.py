@@ -126,7 +126,7 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
 
 
 def _kind(reason: str) -> str:
-    for key, name in (("손절", "손절"), ("본전", "본전 정리"), ("익절", "익절"), ("고점 대비", "수익 지키기"), ("마감", "마감 정리")):
+    for key, name in (("AI 판단", "AI 판단"), ("손절", "손절"), ("본전", "본전 정리"), ("익절", "익절"), ("고점 대비", "수익 지키기"), ("마감", "마감 정리")):
         if key in reason:
             return name
     return "기타"
@@ -175,7 +175,7 @@ def watch(day: str, picks: list[dict], prices: dict[str, float]) -> None:
         w = d["watch"].setdefault(day, {})
         for p in picks:
             w.setdefault(p["symbol"], {"pick_px": p["price"], "t": _now(), "max": p["price"], "min": p["price"], "bought": False,
-                                      "change": p.get("change"), "pre": p.get("pre")})
+                                      "change": p.get("change"), "pre": p.get("pre"), "ratio": p.get("ratio")})
         for sym, x in w.items():
             if sym in prices:
                 x["max"], x["min"] = max(x["max"], prices[sym]), min(x["min"], prices[sym])

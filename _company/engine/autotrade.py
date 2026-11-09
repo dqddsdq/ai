@@ -33,7 +33,8 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from . import picker, toss
+from . import backtest as bt
+from . import picker, shadow, toss
 from . import tradelearn as tl
 from .agents import COMPANY_DIR, SHARED_DIR
 
@@ -95,6 +96,15 @@ DEFAULTS = {
     "mode_down_days": 3,           # 실전에서 이 날수 연속 손실이면 가상으로
     "mode_down_month_pct": 8.0,    # 또는 이번 달 이 % 이상 손실이면 가상으로
     "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
+    "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
+    "auto_promote": True,          #   확실히 나은 조합을 실전 규칙으로 자동 교체 (매일 복기 뒤)
+    "promote_min_trades": 15,      #   교체하려면 그 조합 거래가 최소 이만큼
+    "promote_margin_pct": 1.0,     #   '현재'보다 총수익률이 이만큼(%p) 이상 높아야
+    "promote_window_days": 14,     #   비교 기간(일)
+    "backtest_on": True,           # 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로
+    "ai_decide": True,             # 🤖 거래마다 AI 판단: 사기 전 살지·얼마나, 보유 중 일찍 팔지 (손절·마감 정리·한도는 못 바꿈)
+    "ai_max_per_hour": 30,         #   AI 판단 시간당 최대 횟수 (넘으면 규칙대로)
+    "ai_hold_check_min": 5,        #   보유 종목을 AI 가 다시 보는 간격(분)
     "prob_sizing": True,           # 학습 기록으로 승률을 추정해 살 금액 조절 (25%~100%, 한도는 절대 안 넘음)
     "min_size_ratio": 0.25,        # 승률이 낮을 때 최소로 사는 비율
     "min_win_prob": 0,             # 추정 승률이 이보다 낮으면 안 삼 (0 = 안 씀)
@@ -102,7 +112,8 @@ DEFAULTS = {
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
 }
-NUMS = {"stop_min": (0.5, 20), "stop_max": (1, 30), "limit_min_mult": (0.1, 1), "limit_max_mult": (1, 20), "loss_pct_min": (0.5, 20),
+NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_window_days": (1, 90), "ai_max_per_hour": (0, 600),
+        "ai_hold_check_min": (1, 120), "stop_min": (0.5, 20), "stop_max": (1, 30), "limit_min_mult": (0.1, 1), "limit_max_mult": (1, 20), "loss_pct_min": (0.5, 20),
         "loss_pct_max": (1, 50), "mode_down_days": (1, 20), "mode_down_month_pct": (1, 50), "mode_up_trades": (3, 100),
         "loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (0, 1e10), "max_position_krw": (0, 1e10),
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
@@ -224,7 +235,7 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
     for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check", "prob_sizing",
-              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"):
+              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode", "shadow_on", "auto_promote", "backtest_on", "ai_decide"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -517,7 +528,10 @@ def prepare_now() -> dict:
             r = picker.scan({**c, "max_order_krw": pc["max_order_krw"], "usd_krw": pc.get("usd_krw", c["usd_krw"])}, log=_log_fn,
                             exclude=set(c["exclude"]))
             with _lock:
-                s = state(); s["swing"] = r; _save(s)
+                s = state(); s["swing"] = r
+                s.setdefault("swing_hist", []).append({"day": r["day"], "picks": [{"symbol": x["symbol"], "price": x["price"]} for x in r["picks"]]})
+                s["swing_hist"] = [h for i, h in enumerate(s["swing_hist"]) if h["day"] not in [z["day"] for z in s["swing_hist"][i + 1:]]][-30:]
+                _save(s)
             event("종목 선택", f"{mk} 스윙 " + r["note"] + (" — " + ", ".join(f"{p['name']}({p['symbol']})" for p in r["picks"][:6]) if r["picks"] else ""))
     return _bg("장 전 준비", go)
 
@@ -732,6 +746,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
 
     symbols = list(dict.fromkeys(held_syms + picked))
     if not symbols:
+        if c["shadow_on"] and not dry:   # 실전에 살 게 없어도 그림자 조합들의 매도는 계속
+            try:
+                shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
+                            lambda x: toss.daily(x, 60)[0], s["day"])
+            except Exception as e:
+                results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
         return {"ok": True, "mode": mode, "results": results + ["지금 살 종목이 없어요"]}
     try:
         quotes.update(toss.prices([x for x in symbols if x not in quotes]) if [x for x in symbols if x not in quotes] else {})
@@ -785,6 +805,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             side, reason = "HOLD", "선택 종목 아님"
         if exits_only and side == "BUY":
             side = "HOLD"
+        if side == "HOLD" and held["qty"] > 0 and c["ai_decide"] and not dry:   # 🤖 보유 중 AI 가 일찍 팔지 (따로 생각, 결과는 10초 확인 때도 반영)
+            dec = _ai_peek(("hold", market, sym))
+            if dec and dec != "PENDING" and dec[0]:
+                side, reason = "SELL", f"🤖 AI 판단: {dec[1]}"
+                event("AI 판단", f"{sym} 일찍 팔기 — {dec[1]}", symbol=sym, chart=dec[2])
+                _ai_jobs.pop(("hold", market, sym), None)
+            elif not exits_only and dec is None and _ai_hold_due(sym, c):
+                _ai_async(("hold", market, sym), _ai_decide_hold, sym, dict(held), price, high, style, reason, c)
         if side == "HOLD":
             results.append(f"{sym}: {reason}"); continue
         if dry:
@@ -821,7 +849,22 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if qty < 1:
                 results.append(f"{sym}: 살 돈이 부족해요 (가능 {budget:,.0f}원, 1주 {buy_px * f:,.0f}원)"); continue
             chart_id, why = "", ""
-            if c["ai_chart_check"] and style == "surge":   # 📊 AI 가 1분봉 차트 그림을 직접 보고 판단
+            if c["ai_decide"]:   # 🤖 AI 판단: 차트·조건·기대 수익률 보고 살지·얼마나 (따로 생각 → 손절 확인은 안 멈춤)
+                dec = _ai_async(("buy", market, sym), _ai_decide_buy, sym, cands[sym], price, c)
+                if dec == "PENDING":
+                    results.append(f"{sym}: 🤖 AI 가 판단 중 (끝나면 바로 다시 확인)"); continue
+                if dec:
+                    ok, mult, why, chart_id = dec
+                    tl.flag_watch(wday, sym, ai="찬성" if ok else "반대", why=why)
+                    if not ok:
+                        event("AI 판단", f"{sym} 안 삼 — {why}", symbol=sym, chart=chart_id)
+                        results.append(f"{sym}: 🤖 AI 판단으로 안 삼 — {why}"); continue
+                    qty2 = int(budget * mult // (buy_px * f))
+                    qty = max(1, qty2) if qty2 < 1 and full_budget >= buy_px * f else qty2
+                    if qty < 1:
+                        results.append(f"{sym}: AI 가 줄인 금액으론 1주도 못 사요"); continue
+                    size_note += f" · 🤖 AI 금액 {mult * 100:.0f}%"
+            elif c["ai_chart_check"] and style == "surge":   # 📊 AI 가 1분봉 차트 그림을 직접 보고 판단
                 ok, why, chart_id = _ai_chart_ok(sym, reason, price)
                 tl.flag_watch(wday, sym, ai="찬성" if ok else "반대", why=why)
                 if not ok:
@@ -832,8 +875,10 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 if not ok:
                     event("AI 반대", f"{sym} 매수 보류 — {why2}", symbol=sym); results.append(f"{sym}: AI 반대 — {why2}"); continue
             feat = dict(cands[sym]["features"])
+            if c["ai_decide"] and why:
+                feat["ai_decide"] = "산다"
             results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · 🎲 {size_note}" if size_note else "")
-                                    + (f" · 📊 AI 차트 찬성: {why}" if chart_id else ""), live, fx, chart=chart_id, est=est, feat=feat))
+                                    + (f" · 🤖 AI: {why}" if why else ""), live, fx, chart=chart_id, est=est, feat=feat))
             invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
         else:
             part = side == "SELL_PART"
@@ -846,6 +891,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if style == "surge" else price
             results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part))
+    if c["shadow_on"] and not dry:   # 🧪 같은 후보·시세로 규칙 조합들을 가상으로
+        try:
+            shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
+                        lambda x: toss.daily(x, 60)[0], s["day"])
+        except Exception as e:
+            results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
     return {"ok": True, "mode": mode, "results": results}
 
 
@@ -961,7 +1012,7 @@ def overview() -> dict:
             "local_time": picker.mnow(c["market"]).strftime("%H:%M"), "progress": dict(picker.PROGRESS), "next_open": _next_open(c),
             "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper", c["market"]),
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
-            "brief": {m: _brief(m) for m in c["markets"]}}
+            "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview()}
 
 
 def _brief(m: str) -> dict:
@@ -986,6 +1037,16 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
             auto_adjust(r, mode_key)
     except Exception as e:
         event("오류", f"복기 실패: {type(e).__name__}: {e}")
+    c2 = config()
+    try:
+        if c2["shadow_on"] and c2["auto_promote"] and c2["mode"] != "off":
+            msg = shadow.maybe_promote(c2, c2["market"], _apply_params)
+            if msg:
+                event("규칙 교체", msg)
+    except Exception as e:
+        event("오류", f"규칙 교체 실패: {type(e).__name__}: {e}")
+    if c2["backtest_on"] and toss.enabled():
+        backtest_now(wait=True)
 
 
 def review_now(wait: bool = False) -> dict:
@@ -1057,8 +1118,9 @@ def start(log_fn=print) -> None:
                 for line in r.get("results", []):
                     if "✅" in line or "📝" in line or "거절" in line or "정지" in line:
                         _log_fn(("🇺🇸 " if m == "US" else "🇰🇷 ") + line)
-        if time.time() - timers["last"] < gap:
+        if time.time() - timers["last"] < gap and not _ai_wake[m].is_set():
             return
+        _ai_wake[m].clear()
         timers["last"] = time.time()
         r = run_once()
         for line in r.get("results", []):
@@ -1135,6 +1197,8 @@ LABELS = {"monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보�
           "us_premarket": "프리장 매매", "stop_at_target": "목표 달성 시 쉬기", "ai_check": "주문 전 AI 검토", "auto_pick": "종목 알아서 고르기",
           "market": "시장", "strategy": "전략", "budget_mode": "예산 방식", "mode": "모드",
           "stop_min": "손절 자동 최소(%)", "stop_max": "손절 자동 최대(%)", "limit_min_mult": "한도 자동 최소 배수", "limit_max_mult": "한도 자동 최대 배수",
+          "swing_stop_pct": "스윙 손절(%)", "swing_trail_pct": "스윙 고점 대비(%)", "swing_max_days": "스윙 최대 보유일",
+          "ai_decide": "거래마다 AI 판단", "shadow_on": "그림자 가상 매매", "auto_promote": "규칙 자동 교체", "backtest_on": "백테스트",
           "loss_pct_min": "손실 한도 자동 최소(%)", "loss_pct_max": "손실 한도 자동 최대(%)", "auto_tune": "자동 조절", "auto_mode": "실전↔가상 자동"}
 TRADE_GUIDE = """[자동매매 행동 태그 — 사장님이 원할 때만, 답 맨 아래에]
 - 설정 바꾸기: [[TRADE_SET: 키=값 | 이유]] (여러 개면 줄마다 하나). 키는 <engine> 의 '설정' 목록에 있는 영문 키만. 예: [[TRADE_SET: partial_tp_pct=5 | 나눠 팔기를 조금 일찍]]
@@ -1484,3 +1548,170 @@ def unhalt() -> dict:
         _save(s)
     event("정지 해제", f"사장님이 직접 오늘 정지를 풀었어요 (이전 이유: {was})")
     return {"ok": True, "message": "정지를 풀었어요. 하루 손실 한도는 지금 예산 기준으로 다시 계산돼요"}
+
+
+# ── 🤖 거래마다 AI 판단 ──
+def _ai_budget_ok(c: dict) -> bool:
+    """시간당 AI 판단 횟수 제한 (넘으면 규칙대로)"""
+    now = time.time()
+    with _lock:
+        s = state()
+        calls = [t for t in s.get("ai_calls", []) if now - t < 3600]
+        if len(calls) >= c["ai_max_per_hour"]:
+            return False
+        calls.append(now)
+        s["ai_calls"] = calls; _save(s)
+    return True
+
+
+def _ai_json(prompt: str, image: str | None) -> dict | None:
+    from . import providers as pv
+    from . import team as tm
+    try:
+        reply = pv.chat(tm.fast_spec("claudecode:sonnet"), "너는 신중한 트레이더다. JSON 한 줄로만 답한다.",
+                        [{"role": "user", "content": prompt}], effort="low", timeout=90, images=[image] if image else [])
+    except Exception:
+        return None
+    m = re.search(r"\{.*\}", reply, re.S)
+    try:
+        return json.loads(m.group(0)) if m else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _ai_decide_buy(sym: str, cd: dict, price: float, c: dict):
+    """사기 전: 차트·조건·추정 승률을 보고 (살지, 금액 배수 0.25~1, 이유, 차트). 실패·한도 초과면 None → 규칙대로"""
+    if not _ai_budget_ok(c):
+        return None
+    from . import chart
+    iv = "1d" if cd["style"] == "swing" else "1m"
+    try:
+        name = chart.draw(sym, iv, title=sym)
+        img = str(chart.path(name))
+    except Exception:
+        name, img = "", None
+    e = cd["est"]
+    prompt = (f"{'스윙(며칠 보유)' if cd['style'] == 'swing' else '단타(그날 정리)'} 매수 후보 {sym}, 현재가 {price}.\n"
+              f"고른 이유: {cd['reason']}\n학습 기록 추정: 승률 {e['p'] * 100:.0f}% ({e['basis']}), 기대 수익 {e['ev']:+.2f}%\n"
+              f"규칙: 손절 -{c['swing_stop_pct' if cd['style'] == 'swing' else 'stop_loss_pct']}%. "
+              f"첨부 {'일봉' if iv == '1d' else '1분봉'} 차트(이동평균·VWAP·거래량)를 보고 지금 살지, 산다면 금액을 얼마나(0.25~1) 할지 정하세요. "
+              "꼭대기 추격·거래량 감소 하락·지지선 이탈이면 안 사요. 수익률을 최대화하는 쪽으로.\n"
+              '형식: {"buy": true/false, "size": 0.25~1, "reason": "한 줄"}')
+    r = _ai_json(prompt, img)
+    if not r or "buy" not in r:
+        return None
+    size = max(0.25, min(1.0, float(r.get("size") or 1)))
+    return bool(r["buy"]), size, str(r.get("reason", ""))[:140], name
+
+
+_ai_jobs: dict[tuple, dict] = {}
+_ai_wake = {"US": threading.Event(), "KR": threading.Event()}
+
+
+def _ai_async(key: tuple, fn, *args):
+    """AI 판단을 따로(백그라운드) 돌림 → 끝났으면 결과, 아직이면 'PENDING', 실패면 None (규칙대로)"""
+    job = _ai_jobs.get(key)
+    if job:
+        if job["status"] == "pending":
+            return "PENDING"
+        if time.time() - job["t"] < 180:   # 3분 안의 판단만 씀
+            _ai_jobs.pop(key, None)
+            return job["result"]
+        _ai_jobs.pop(key, None)
+    m = cur_market()
+    _ai_jobs[key] = {"status": "pending", "t": time.time(), "result": None}
+
+    def run():
+        with in_market(m):
+            try:
+                res = fn(*args)
+            except Exception:
+                res = None
+            _ai_jobs[key] = {"status": "done", "t": time.time(), "result": res}
+            _ai_wake[m].set()   # 결과 나오면 바로 한 바퀴 더
+    threading.Thread(target=run, daemon=True, name="ai-decide").start()
+    return "PENDING"
+
+
+def _ai_peek(key: tuple):
+    job = _ai_jobs.get(key)
+    if not job:
+        return None
+    if job["status"] == "pending":
+        return "PENDING"
+    if time.time() - job["t"] >= 180:
+        _ai_jobs.pop(key, None)
+        return None
+    return job["result"]
+
+
+def _ai_hold_due(sym: str, c: dict) -> bool:
+    with _lock:
+        s = state()
+        last = s.setdefault("ai_hold_at", {}).get(sym, 0)
+        if time.time() - last < c["ai_hold_check_min"] * 60:
+            return False
+        s["ai_hold_at"][sym] = time.time(); _save(s)
+    return True
+
+
+def _ai_decide_hold(sym: str, held: dict, price: float, high: float, style: str, rule_note: str, c: dict):
+    """보유 중: AI 가 차트 보고 일찍 팔지 (팔기, 이유, 차트). 손절·마감 정리는 규칙이 따로 처리"""
+    if not _ai_budget_ok(c):
+        return None
+    from . import chart
+    try:
+        name = chart.draw(sym, "1d" if style == "swing" else "1m", title=sym, lines={"산 가격": held["avg"]})
+        img = str(chart.path(name))
+    except Exception:
+        name, img = "", None
+    pnl = (price / held["avg"] - 1) * 100 if held["avg"] else 0
+    prompt = (f"{'스윙' if style == 'swing' else '단타'} 보유 종목 {sym}: 평단 {held['avg']:g}, 현재가 {price:g} ({pnl:+.1f}%), 산 뒤 최고가 {high:g}.\n"
+              f"지금 규칙 판단: {rule_note}\n첨부 차트를 보고 지금 일찍 파는 게 수익률에 나은지 판단하세요. "
+              "추세가 살아 있으면 들고 가고, 꺾이는 게 뚜렷하면 팔아요. 애매하면 들고 가요.\n"
+              '형식: {"sell": true/false, "reason": "한 줄"}')
+    r = _ai_json(prompt, img)
+    if not r or "sell" not in r:
+        return None
+    return bool(r["sell"]), str(r.get("reason", ""))[:140], name
+
+
+# ── 🧪📼 실험실 ──
+def _apply_params(params: dict, why: str, evidence: str) -> bool:
+    """그림자 매매에서 나은 조합 → 실전 설정 (손절은 자동 범위 안으로)"""
+    c = config()
+    new = {k: v for k, v in params.items() if k in shadow.TUNE_KEYS and c.get(k) != v}
+    if "stop_loss_pct" in new:
+        new["stop_loss_pct"] = min(c["stop_max"], max(c["stop_min"], float(new["stop_loss_pct"])))
+    new = {k: v for k, v in new.items() if c.get(k) != v}
+    if not new:
+        return False
+    r = save_config(new, _by_auto=True)
+    if not r.get("ok"):
+        return False
+    for k, v in new.items():
+        tl.record_auto(k, LABELS.get(k, k), c.get(k), v, why, evidence)
+    return True
+
+
+def backtest_now(wait: bool = False) -> dict:
+    c = config()
+    m = cur_market()
+
+    def job():
+        with in_market(m):
+            try:
+                r = bt.run(c, m, signal_surge, signal_swing, state().get("swing_hist", []), log=_log_fn)
+                n = shadow.add_seeds(config(), m, bt.seeds(m)) if c["shadow_on"] else 0
+                event("백테스트", r["note"] + (f" · 상위 조합 {n}개를 그림자 매매에 추가" if n else ""))
+            except Exception as e:
+                event("오류", f"백테스트 실패: {type(e).__name__}: {e}")
+    if wait:
+        job(); return {"ok": True}
+    threading.Thread(target=job, daemon=True, name="backtest").start()
+    return {"ok": True, "message": "백테스트 시작 (몇 분)"}
+
+
+def lab_overview() -> dict:
+    c = config()
+    return {"shadow": shadow.overview(c, c["market"]) if c["shadow_on"] else {}, "backtest": bt.load(c["market"])}

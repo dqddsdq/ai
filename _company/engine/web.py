@@ -284,6 +284,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(tlearn.decide(str(body.get("id", "")), str(body.get("action", ""))))
         if path == "/api/autotrade/scan":
             return self._json(at.scan_now())
+        if path == "/api/autotrade/backtest":
+            return self._json(at.backtest_now())
+        if path == "/api/autotrade/lab-reset":
+            from . import shadow
+            shadow.ensure(at.config(), at.cur_market(), force=True)
+            return self._json({"ok": True, "message": "실험 조합을 새로 만들었어요"})
         if path == "/api/autotrade/reset-paper":
             return self._json(at.reset_paper())
         return self._json({"error": "없는 주소"}, 404)

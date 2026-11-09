@@ -518,6 +518,11 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="chart-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
         <div class="chart-view" id="chart-view" style="margin-top:8px"></div>
       </div>
+      <div class="card"><b>🧪 규칙 실험실</b> <span class="muted" style="font-size:12.5px">규칙 조합 여러 개를 실전과 동시에 가상으로 · 확실히 나은 조합은 실전 규칙으로 자동 교체</span>
+        <span style="float:right"><button class="btn" id="lab-bt" style="padding:3px 10px;font-size:12px">지금 백테스트</button> <button class="btn" id="lab-reset" style="padding:3px 10px;font-size:12px">조합 새로 만들기</button></span>
+        <div id="lab-shadow" class="tlog" style="margin-top:8px"></div>
+        <div id="lab-bt-out" class="tlog" style="margin-top:8px"></div>
+      </div>
       <div class="card"><b>📚 학습·복기</b> <button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
         <div id="learn-today" style="margin-top:6px;font-size:13.5px"></div>
         <div id="learn-props" style="margin-top:8px"></div>
@@ -566,6 +571,18 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-auto_pick"> 종목은 알아서 고르기</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-us_premarket"> 미장 프리장(뉴욕 04:00, 한국 18:00 · 서머타임 17:00)부터 매매</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-stop_at_target"> 한 달 목표를 채우면 그달은 새로 안 사기 (번 돈 지키기)</label>
+        <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><b>🤖 AI 스스로 판단</b></div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_decide"> 거래마다 AI 판단 — 사기 전 살지·얼마나, 보유 중 일찍 팔지 (손절·마감 정리·한도는 못 바꿈, 판단 중에도 손절 확인은 계속)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-shadow_on"> 🧪 그림자 가상 매매 (규칙 조합 여러 개 동시에 가상으로)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-backtest_on"> 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로</label>
+        <div class="trade-grid">
+          <label>AI 판단 시간당 최대 횟수<input id="t-ai_max_per_hour" type="number"></label>
+          <label>보유 종목 AI 재확인 간격 (분)<input id="t-ai_hold_check_min" type="number"></label>
+          <label>교체 조건: 그 조합 최소 거래 수<input id="t-promote_min_trades" type="number"></label>
+          <label>교체 조건: '현재'보다 총수익률 (%p) 이상<input id="t-promote_margin_pct" type="number" step="0.5"></label>
+          <label>비교 기간 (일)<input id="t-promote_window_days" type="number"></label>
+        </div>
         <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><b>🔁 자동 조절</b> <span class="muted" style="font-size:12.5px">매일 장 끝나고 복기 직후 · 아래 범위 안에서만 · 바뀐 건 📚 학습 카드에 '자동' 표시와 [되돌리기]</span></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_tune"> 자동 조절 켜기 (끄면 아래 전부 꺼짐)</label>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin:4px 0 0 22px;font-size:13px">
@@ -1364,8 +1381,8 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
-const TRADE_SEL = ["strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
+const TRADE_SEL = ["strategy", "budget_mode"], TRADE_CHK = ["ai_decide", "shadow_on", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 function tradeMk() { try { return localStorage.getItem("tradeMk") || "US"; } catch { return "US"; } }
 document.querySelectorAll("#trade-mk button").forEach(b => b.onclick = () => { try { localStorage.setItem("tradeMk", b.dataset.mk); } catch {} renderTrade(); renderLiveCharts(true); });
@@ -1414,6 +1431,7 @@ async function renderTrade(fillForm = true) {
   if (bp.length) ph += `<div><b>자동매매가 가진 주식:</b> ${bp.map(([k, v]) => `${(d.style || {})[k] === "swing" ? "📈" : "⚡"} ${esc(k)} ${v.qty}주 (평단 ${Number(v.avg).toLocaleString()})`).join(" · ")}</div>`;
   $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
   renderLearn(d.learn || {});
+  renderLab(d.lab || {});
   const chipSyms = [...new Set([...Object.keys(d.bot_pos || {}), ...Object.keys((d.paper || {}).positions || {}), ...Object.keys(d.cands || {}), ...((d.picks || {}).picks || []).map(x => x.symbol)])];
   $("#chart-chips").innerHTML = chipSyms.map(x => `<button class="chart-chip" data-sym="${esc(x)}">${esc(x)}</button>`).join("");
   document.querySelectorAll("#chart-chips [data-sym]").forEach(b => b.onclick = () => { $("#chart-sym").value = b.dataset.sym; drawChart("1m"); });
@@ -1445,6 +1463,22 @@ function tradeActionCard(a, container) {
   el.querySelector('[data-a="no"]').onclick = () => { el.querySelector(".acts").innerHTML = '<span class="muted">무시했어요</span>'; el.querySelector(".tb").textContent = "무시"; };
   container.appendChild(el);
 }
+function renderLab(L) {
+  const sh = L.shadow || {}, b = L.backtest || {};
+  const vs = sh.variants || [];
+  $("#lab-shadow").innerHTML = vs.length ? `<div><b>그림자 가상 매매 (최근 기간 총수익률 순)</b></div>` + vs.map((v, i) =>
+    `<div>${i === 0 ? "🥇" : ""} <b>${esc(v.name)}</b> <span class="muted">(${esc(v.origin)})</span> · 총 ${v.ret_pct > 0 ? "+" : ""}${v.ret_pct}% · ${v.n}건 · 승률 ${v.win_rate}% · 보유 ${v.holding}<br><span class="muted">${esc(v.diff)}</span></div>`).join("")
+    + ((sh.promotions || []).length ? `<div style="margin-top:6px"><b>자동 교체 기록</b>${sh.promotions.map(p => `<div class="muted">${esc(p.t)} · ${esc(p.name)}: ${esc(p.diff)} — ${esc(p.evidence)}</div>`).join("")}</div>` : "")
+    : `<span class="muted">그림자 매매 조합이 아직 없어요 — 자동매매가 켜져 있으면 장중에 자동으로 시작해요</span>`;
+  const top = b.top || [];
+  $("#lab-bt-out").innerHTML = b.day ? `<div><b>📼 백테스트</b> <span class="muted">${esc(b.day)} · ${esc(b.note || "")}</span></div>`
+    + (b.baseline && b.baseline.n ? `<div class="muted">지금 규칙: 평균 ${b.baseline.avg > 0 ? "+" : ""}${b.baseline.avg}% · 승률 ${b.baseline.win}% (${b.baseline.n}건)</div>` : "")
+    + top.map((r, i) => `<div>${i + 1}. 평균 ${r.avg > 0 ? "+" : ""}${r.avg}% · 승률 ${r.win}% · ${r.n}건 <span class="muted">— 손절 ${r.params.stop_loss_pct}% · 나눠팔기 ${r.params.partial_tp_pct}% · 고점대비 ${r.params.trail_pct}% · 급등최소 ${r.params.surge_min_change_pct}% · 거래량 ${r.params.surge_volume_ratio}배</span></div>`).join("")
+    + (b.swing_top || []).map(r => `<div>📈 스윙: 평균 ${r.avg > 0 ? "+" : ""}${r.avg}% · 승률 ${r.win}% · ${r.n}건 <span class="muted">— 손절 ${r.params.swing_stop_pct}% · 고점대비 ${r.params.swing_trail_pct}%</span></div>`).join("")
+    : `<span class="muted">아직 백테스트 전이에요 — 장 끝나고 자동으로, 또는 '지금 백테스트'</span>`;
+}
+$("#lab-bt").onclick = async () => { const r = await api("/api/autotrade/backtest", { market: tradeMk() }); alert(r.message || "시작했어요"); };
+$("#lab-reset").onclick = async () => { if (confirm("그림자 매매 조합을 새로 만들까요? (지금까지 가상 성적은 지워져요)")) { const r = await api("/api/autotrade/lab-reset", { market: tradeMk() }); alert(r.message); renderTrade(false); } };
 function pctS(x) { return x == null ? "-" : (x > 0 ? "+" : "") + Number(x).toFixed(1) + "%"; }
 function statLine(s) { return s && s.n ? `${s.n}건 · 승률 ${s.win_rate}% · 평균 ${pctS(s.avg)} (수익 평균 ${pctS(s.avg_win)} / 손실 평균 ${pctS(s.avg_loss)}) · 산 뒤 최대 상승 중간값 ${pctS(s.mfe_med)}` : "아직 없음"; }
 function renderLearn(L) {
