@@ -32,6 +32,7 @@ from . import tools as tl
 from . import research as rs
 from . import dart
 from . import toss
+from . import autotrade as at
 from . import improve as im
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
@@ -269,6 +270,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/" or path == "/index.html":
             return self._static("index.html", "text/html; charset=utf-8")
+        if path == "/api/autotrade":
+            return self._json(at.overview())
         if path == "/api/phone":
             if self.client_address[0] not in ("127.0.0.1", "::1"):
                 return self._json({"on": PHONE["on"], "remote": True})
@@ -359,6 +362,17 @@ class Handler(BaseHTTPRequestHandler):
                 with contextlib.suppress(Exception):
                     self._send("error", {"message": str(e)})
             return
+        if path == "/api/autotrade/config":
+            return self._json(at.save_config(body if isinstance(body, dict) else {}))
+        if path == "/api/autotrade/stop":
+            return self._json(at.emergency_stop())
+        if path == "/api/autotrade/run":
+            try:
+                return self._json(at.run_once(force=True))
+            except Exception as e:
+                return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
+        if path == "/api/autotrade/reset-paper":
+            return self._json(at.reset_paper())
         if path == "/api/improve/new":
             req = str(body.get("request", "")).strip()
             return self._json(im.create(req, "", "사장님") if req else {"error": "무엇을 바꿀지 적어 주세요"})
@@ -790,6 +804,9 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
         print("📱 와이파이 주소를 못 찾아서 폰 접속은 꺼 두었어요 (PC 에서만 사용 가능)")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    at.start(log)
+    if at.config()["mode"] != "off":
+        print(f"🤖 자동매매 켜져 있음: {at.config()['mode']} (끄려면 화면의 🤖 자동매매 → 긴급 정지)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
