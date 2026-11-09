@@ -449,7 +449,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
   <section class="view" id="view-trade">
     <div class="scroll"><div class="column">
       <div class="page-head">자동매매</div>
-      <p class="page-sub">매일 시장 전체에서 상승 추세가 강한 종목을 골라, 정해진 규칙(추세에 사고 · 손절/익절/추세 이탈에 팔기)으로 토스 계좌에서 사고팔아요. 사장님이 직접 산 주식은 안 건드려요. <b>돈을 계좌 밖으로 옮기는 기능은 없어요</b> — 토스 API 에 출금·이체가 없고, 앱은 지정가 주문과 취소만 보내요. 처음엔 <b>가상 매매</b>로 성적을 보고 실전을 켜세요.</p>
+      <p class="page-sub">규칙이 종목을 골라 토스 계좌에서 사고팔아요. 사장님이 직접 산 주식·직접 낸 주문은 안 건드려요. <b>돈을 계좌 밖으로 옮기는 기능은 없어요</b> (토스 API 에 출금·이체가 없고, 앱은 지정가 주문·취소만 보내요).</p>
       <div class="card">
         <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <div class="seg" id="trade-mode"><button data-m="off">끄기</button><button data-m="paper">가상 매매</button><button data-m="live">실전</button></div>
@@ -458,30 +458,38 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <button class="btn danger" id="trade-stop">⛔ 긴급 정지</button>
         </div>
         <div id="trade-status" class="muted" style="margin-top:8px;font-size:13px"></div>
+        <div id="trade-goal" style="margin-top:8px;font-size:14px"></div>
         <div id="trade-run-out" class="tlog" style="margin-top:6px"></div>
       </div>
+      <div class="card"><b>지금 고른 종목</b> <button class="btn" id="trade-scan" style="float:right;padding:3px 10px;font-size:12px">기준값 다시 준비</button><div id="trade-picks" class="tlog" style="margin-top:6px"></div></div>
       <div class="card">
-        <b>규칙·안전장치</b>
+        <b>설정</b>
         <div class="trade-grid">
-          <label style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px;color:var(--text);font-size:13.5px"><input type="checkbox" id="t-auto_pick"> <b>종목은 알아서 고르기</b> — 매일 장 전에 국내 시장 전체에서 상승 추세가 강한 종목을 골라요 (DART 키 필요)</label>
-          <label>하루에 고를 종목 수<input id="t-pick_count" type="number"></label>
-          <label>최소 거래대금 (원/일)<input id="t-min_trading_value_krw" type="number"></label>
-          <label style="grid-column:1/-1">직접 고른 종목 (알아서 고르기를 끄면 이것만 · 쉼표로) <input id="t-symbols" placeholder="005930, 247540, AAPL"></label>
-          <label><b>총 투자 한도 (원)</b> — 전부 합쳐 이 이상 안 삼<input id="t-max_total_krw" type="number"></label>
-          <label>한 번 주문 최대 (원)<input id="t-max_order_krw" type="number"></label>
-          <label>종목당 최대 보유 (원)<input id="t-max_position_krw" type="number"></label>
-          <label>하루 최대 매수 횟수 (매도는 제한 없음)<input id="t-max_orders_per_day" type="number"></label>
-          <label>하루 손실 한도 (원) — 넘으면 그날 정지<input id="t-max_daily_loss_krw" type="number"></label>
+          <label>시장<select id="t-market" class="field"><option value="US">🇺🇸 미장</option><option value="KR">🇰🇷 국장</option></select></label>
+          <label>전략<select id="t-strategy" class="field"><option value="surge">급등주</option><option value="trend">꾸준한 추세 (국장)</option></select></label>
+          <label>예산<select id="t-budget_mode" class="field"><option value="all_cash">계좌 현금 전부 (미장=달러)</option><option value="fixed">금액 한도</option></select></label>
+          <label>동시 보유 종목 수 (예산을 나눔)<input id="t-pick_count" type="number"></label>
+          <label><b>한 달 목표 수익률 (%)</b><input id="t-monthly_target_pct" type="number" step="0.5"></label>
+          <label>하루 손실 한도 (예산의 %)<input id="t-max_daily_loss_pct" type="number" step="0.5"></label>
           <label>손절 (%)<input id="t-stop_loss_pct" type="number" step="0.5"></label>
+          <label>고점 대비 하락 시 팔기 (%)<input id="t-trail_pct" type="number" step="0.5"></label>
           <label>익절 (%)<input id="t-take_profit_pct" type="number" step="0.5"></label>
-          <label>과열 기준 RSI (넘으면 안 삼)<input id="t-rsi_max_buy" type="number"></label>
+          <label>급등 기준: 오늘 상승 최소 (%)<input id="t-surge_min_change_pct" type="number" step="0.5"></label>
+          <label>급등 기준: 오늘 상승 최대 (%)<input id="t-surge_max_change_pct" type="number" step="1"></label>
+          <label>급등 기준: 평소 거래량의 몇 배<input id="t-surge_volume_ratio" type="number" step="0.5"></label>
+          <label>최소 거래대금 (원/일)<input id="t-min_trading_value_krw" type="number"></label>
+          <label>하루 최대 매수 횟수 (매도는 제한 없음)<input id="t-max_orders_per_day" type="number"></label>
           <label>확인 간격 (분)<input id="t-interval_min" type="number"></label>
+          <label>[금액 한도] 총 투자 한도 (원)<input id="t-max_total_krw" type="number"></label>
+          <label>[금액 한도] 하루 손실 한도 (원)<input id="t-max_daily_loss_krw" type="number"></label>
           <label>가상 매매 시작 금액 (원)<input id="t-paper_cash_krw" type="number"></label>
+          <label style="grid-column:1/-1">직접 고른 종목 (아래 '알아서 고르기'를 끄면 이것만 · 쉼표로)<input id="t-symbols" placeholder="AAPL, NVDA 또는 005930"></label>
         </div>
-        <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (반대하면 안 냄)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-auto_pick"> 종목은 알아서 고르기</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-stop_at_target"> 한 달 목표를 채우면 그달은 새로 안 사기 (번 돈 지키기)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (느려짐)</label>
         <div class="row" style="margin-top:10px;display:flex"><div class="spacer"></div><button class="btn primary" id="trade-save">저장</button></div>
       </div>
-      <div class="card"><b>오늘의 종목</b> <button class="btn" id="trade-scan" style="float:right;padding:3px 10px;font-size:12px">지금 다시 고르기</button><div id="trade-picks" class="tlog" style="margin-top:6px"></div></div>
       <div class="card"><b>가상 장부</b> <button class="btn" id="trade-reset" style="float:right;padding:3px 10px;font-size:12px">처음부터</button><div id="trade-paper" style="margin-top:6px;font-size:13.5px"></div></div>
       <div class="card"><b>주문 기록</b><div id="trade-orders" class="tlog" style="margin-top:6px"></div></div>
       <div class="card"><b>활동 기록</b><div id="trade-events" class="tlog" style="margin-top:6px"></div></div>
@@ -1248,7 +1256,9 @@ async function renderToolsPage() {
 }
 
 // ── 자동매매 ──
-const TRADE_FIELDS = ["pick_count", "min_trading_value_krw", "max_total_krw", "max_order_krw", "max_position_krw", "max_orders_per_day", "max_daily_loss_krw", "stop_loss_pct", "take_profit_pct", "rsi_max_buy", "interval_min", "paper_cash_krw"];
+const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "take_profit_pct", "surge_min_change_pct",
+  "surge_max_change_pct", "surge_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
+const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "stop_at_target", "ai_check"];
 let tradeTimer = null;
 function tradeBadge(d) {
   const m = d.config.mode, b = $("#trade-badge");
@@ -1257,20 +1267,28 @@ function tradeBadge(d) {
 async function renderTrade(fillForm = true) {
   const d = await api("/api/autotrade"); const c = d.config; tradeBadge(d);
   document.querySelectorAll("#trade-mode button").forEach(x => x.classList.toggle("on", x.dataset.m === c.mode));
+  const mk = c.market === "US" ? "🇺🇸 미장" : "🇰🇷 국장";
   $("#trade-status").innerHTML = [
     { off: "⏸️ 꺼짐", paper: "📝 가상 매매 중 (돈 안 씀)", live: "🔴 <b>실전 자동매매 중</b>" }[c.mode],
+    `${mk} · ${c.strategy === "surge" ? "급등주" : "추세"} · ${c.budget_mode === "all_cash" ? "계좌 현금 전부" : "한도 " + Number(c.max_total_krw).toLocaleString() + "원"}`,
+    `현지 ${esc(d.local_time)} (${d.session_minutes == null ? "장 닫힘" : "장 " + d.session_minutes + "분째"})`,
     d.toss ? "토스 연결됨" : "⚠️ 토스 키 없음 (🧰 도구)", `오늘 매수 ${d.orders_today}/${c.max_orders_per_day}`,
-    d.halted_today ? `⛔ 오늘 정지: ${esc(d.halted_today)}` : "", c.auto_pick ? "종목 자동 선택" : (c.symbols.length ? "종목 " + esc(c.symbols.join(", ")) : "⚠️ 종목 없음"),
-    `총 한도 ${Number(c.max_total_krw).toLocaleString()}원`].filter(Boolean).join(" · ");
+    d.halted_today ? `⛔ 오늘 정지: ${esc(d.halted_today)}` : ""].filter(Boolean).join(" · ");
+  const mo = d.month || {}, unrealNote = "";
+  const pct = mo.start ? (Number(mo.realized || 0) / mo.start * 100) : null;
+  $("#trade-goal").innerHTML = `🎯 한 달 목표 <b>${c.monthly_target_pct}%</b>` + (pct != null ? ` · 이번 달 실현 손익 ${Math.round(mo.realized || 0).toLocaleString()}원 (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%, 시작 예산 ${Math.round(mo.start).toLocaleString()}원 기준)` : " · 아직 기록 없음") + (c.stop_at_target ? " · 채우면 그달은 쉬어요" : "");
   if (fillForm) {
-    $("#t-symbols").value = c.symbols.join(", "); TRADE_FIELDS.forEach(k => $("#t-" + k).value = c[k]); $("#t-ai_check").checked = !!c.ai_check; $("#t-auto_pick").checked = !!c.auto_pick;
+    $("#t-symbols").value = c.symbols.join(", ");
+    TRADE_NUM.forEach(k => $("#t-" + k).value = c[k]); TRADE_SEL.forEach(k => $("#t-" + k).value = c[k]); TRADE_CHK.forEach(k => $("#t-" + k).checked = !!c[k]);
   }
   const pk = d.picks || {};
-  $("#trade-picks").innerHTML = d.scanning ? "<div>🔎 시장 전체를 훑는 중… (몇 분)</div>" :
-    (pk.picks && pk.picks.length ? `<div class="muted">${esc(pk.day)} · ${esc(pk.note || "")}</div>` + pk.picks.map(x => `<div><b>${esc(x.name)}</b> (${esc(x.symbol)}) ${Number(x.price).toLocaleString()}원 · 점수 ${x.score}<br><span class="muted">${esc(x.reason)}</span></div>`).join("")
-      : `<span class="muted">${pk.note ? esc(pk.note) : (c.auto_pick ? "아직 안 골랐어요 — 켜 두면 장 전에 자동으로, 또는 '지금 다시 고르기'" : "알아서 고르기가 꺼져 있어요")}</span>`);
+  let ph = d.scanning ? "<div>🔎 준비 중… (처음엔 몇 분~10여 분)</div>" : "";
+  if (!d.base_ready && c.strategy === "surge" && !d.scanning) ph += `<div class="muted">급등주 기준값이 아직 없어요 — 켜 두면 장 전에 자동 준비, 또는 '기준값 다시 준비'</div>`;
+  ph += pk.picks && pk.picks.length ? `<div class="muted">${esc(pk.day || "")} ${esc(pk.time || "")} · ${esc(pk.note || "")}</div>` + pk.picks.map(x => `<div><b>${esc(x.name)}</b> (${esc(x.symbol)}) · 점수 ${x.score}<br><span class="muted">${esc(x.reason)}</span></div>`).join("")
+    : (pk.note ? `<div class="muted">${esc(pk.note)}</div>` : "");
   const bp = Object.entries(d.bot_pos || {});
-  if (bp.length) $("#trade-picks").innerHTML += `<div><b>자동매매가 가진 주식:</b> ${bp.map(([k, v]) => esc(k) + " " + v + "주").join(" · ")}</div>`;
+  if (bp.length) ph += `<div><b>자동매매가 가진 주식:</b> ${bp.map(([k, v]) => `${esc(k)} ${v.qty}주 (평단 ${Number(v.avg).toLocaleString()})`).join(" · ")}</div>`;
+  $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
   const p = d.paper, pos = Object.entries(p.positions || {});
   $("#trade-paper").innerHTML = `현금 ${Math.round(p.cash).toLocaleString()}원 · 실현 손익 ${Math.round(p.realized).toLocaleString()}원` +
     (pos.length ? "<br>" + pos.map(([k, v]) => `${esc(k)} ${v.qty}주 (평단 ${Number(v.avg).toLocaleString()})`).join(" · ") : "<br><span class='muted'>보유 없음</span>");
@@ -1280,24 +1298,24 @@ async function renderTrade(fillForm = true) {
 document.querySelectorAll("#trade-mode button").forEach(btn => btn.onclick = async () => {
   const m = btn.dataset.m;
   if (m === "live") {
-    const ok = prompt("실전 자동매매를 켜면 규칙에 따라 실제 돈으로 주문이 나가요.\n(출금·이체는 불가능, 안전장치 한도 안에서만)\n\n켜려면 '실전' 이라고 입력하세요.");
+    const ok = prompt("실전 자동매매를 켜면 규칙에 따라 실제 돈으로 주문이 나가요.\n(출금·이체는 불가능, 설정한 예산·안전장치 안에서만)\n\n켜려면 '실전' 이라고 입력하세요.");
     if ((ok || "").trim() !== "실전") return;
   }
   const r = await api("/api/autotrade/config", { mode: m });
   if (!r.ok) alert(r.message); renderTrade(false);
 });
 $("#trade-save").onclick = async () => {
-  const body = { symbols: $("#t-symbols").value, ai_check: $("#t-ai_check").checked, auto_pick: $("#t-auto_pick").checked };
-  TRADE_FIELDS.forEach(k => body[k] = $("#t-" + k).value);
+  const body = { symbols: $("#t-symbols").value };
+  TRADE_NUM.forEach(k => body[k] = $("#t-" + k).value); TRADE_SEL.forEach(k => body[k] = $("#t-" + k).value); TRADE_CHK.forEach(k => body[k] = $("#t-" + k).checked);
   const r = await api("/api/autotrade/config", body); alert(r.ok ? "저장했어요" : r.message); renderTrade();
 };
 $("#trade-stop").onclick = async () => { const r = await api("/api/autotrade/stop", {}); alert(r.message); renderTrade(false); };
 $("#trade-scan").onclick = async () => { const r = await api("/api/autotrade/scan", {}); alert(r.message || "시작했어요"); renderTrade(false); };
 $("#trade-reset").onclick = async () => { if (confirm("가상 장부를 처음부터 다시 할까요?")) { await api("/api/autotrade/reset-paper", {}); renderTrade(false); } };
 $("#trade-run").onclick = async (e) => {
-  e.target.disabled = true; $("#trade-run-out").innerHTML = "<div class='muted'>규칙 확인 중… (AI 검토가 켜져 있으면 1~2분)</div>";
+  e.target.disabled = true; $("#trade-run-out").innerHTML = "<div class='muted'>확인 중… (시장 전체 시세를 보느라 10~30초)</div>";
   const r = await api("/api/autotrade/run", {}); e.target.disabled = false;
-  $("#trade-run-out").innerHTML = r.results ? r.results.map(x => `<div>${esc(x)}</div>`).join("") : `<div>${esc(r.message || "")}</div>`;
+  $("#trade-run-out").innerHTML = (r.results || []).map(x => `<div>${esc(x)}</div>`).join("") + (r.message ? `<div>${esc(r.message)}</div>` : "");
   renderTrade(false);
 };
 
