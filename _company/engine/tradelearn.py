@@ -197,6 +197,65 @@ def _stats(ts: list[dict]) -> dict:
             "mae_med": round(st.median([t["mae"] for t in ts]), 2)}
 
 
+# ── 확률 추정 (비슷한 조건의 지난 거래로 승률·기대 수익) ──
+CHANGE_EDGES = [0, 8, 12, 20, 1e9]
+RATIO_EDGES = [0, 3, 5, 10, 1e9]
+PRE_RATIO_EDGES = [0, 0.3, 0.6, 1.5, 1e9]
+
+
+def _bin(v, edges) -> int:
+    if v is None:
+        return -1
+    for i, (lo, hi) in enumerate(zip(edges[:-1], edges[1:])):
+        if lo <= v < hi:
+            return i
+    return -1
+
+
+def _key(f: dict) -> tuple:
+    pre = bool(f.get("pre"))
+    return (pre, _bin(f.get("change"), CHANGE_EDGES), _bin(f.get("ratio"), PRE_RATIO_EDGES if pre else RATIO_EDGES))
+
+
+def estimate(features: dict, cfg: dict) -> dict:
+    """살 후보의 승률·기대 수익 추정. 기록이 적으면 전체 승률(없으면 40%) 쪽으로 보수적으로 당김.
+    반환: {p, n, ev, avg_win, avg_loss, basis}"""
+    with _lock:
+        ts = [t for t in _load()["trades"] if t["closed"]][-200:]
+    wins_all = [t["pnl_pct"] for t in ts if t["pnl_pct"] > 0]
+    loss_all = [t["pnl_pct"] for t in ts if t["pnl_pct"] <= 0]
+    base_p = len(wins_all) / len(ts) if len(ts) >= 10 else 0.4
+    avg_win = st.mean(wins_all) if len(wins_all) >= 3 else float(cfg.get("partial_tp_pct") or 5) * 0.8
+    avg_loss = st.mean(loss_all) if len(loss_all) >= 3 else -float(cfg.get("stop_loss_pct", 3))
+    k = _key(features)
+    exact = [t for t in ts if _key(t.get("features") or {}) == k]
+    part = [t for t in ts if (t.get("features") or {}).get("pre", False) == k[0] and _key(t.get("features") or {})[2] == k[2]]  # 같은 장·같은 거래량 구간
+    sample = exact if len(exact) >= 5 else (part if len(part) >= 5 else exact)
+    n = len(sample)
+    w = sum(1 for t in sample if t["pnl_pct"] > 0)
+    prior = 4.0
+    p = (w + base_p * prior) / (n + prior)
+    if n >= 3:
+        sw = [t["pnl_pct"] for t in sample if t["pnl_pct"] > 0]
+        sl = [t["pnl_pct"] for t in sample if t["pnl_pct"] <= 0]
+        avg_win = st.mean(sw) if sw else avg_win
+        avg_loss = st.mean(sl) if sl else avg_loss
+    ev = p * avg_win + (1 - p) * avg_loss
+    basis = ("같은 조건" if sample is exact else "비슷한 조건") + f" {n}건" if n else f"기록 없음 → 기본 {base_p * 100:.0f}%"
+    return {"p": round(p, 3), "n": n, "ev": round(ev, 2), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "basis": basis}
+
+
+def size_ratio(est: dict, cfg: dict) -> tuple[float, str]:
+    """승률 → 살 금액 비율 (min_size_ratio ~ 1.0). 기록이 충분한데 기대 수익이 마이너스면 0 (건너뛰기)"""
+    lo = float(cfg.get("min_size_ratio", 0.25))
+    if est["n"] >= 5 and est["ev"] < 0:
+        return 0.0, f"비슷한 거래 {est['n']}건 기대 수익 {est['ev']:+.2f}% → 건너뜀"
+    if cfg.get("min_win_prob") and est["p"] < cfg["min_win_prob"] / 100:
+        return 0.0, f"추정 승률 {est['p'] * 100:.0f}% < 기준 {cfg['min_win_prob']}% → 건너뜀"
+    r = lo + (1 - lo) * min(1.0, max(0.0, (est["p"] - 0.35) / 0.30))
+    return round(r, 2), f"추정 승률 {est['p'] * 100:.0f}% ({est['basis']}) · 기대 {est['ev']:+.2f}% → 금액 {r * 100:.0f}%"
+
+
 def _bucket(ts: list[dict], key, edges: list[float], unit: str) -> dict:
     out = {}
     for lo, hi in zip(edges[:-1], edges[1:]):
@@ -251,6 +310,7 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
                                             ("정규장", _stats([t for t in recent if not t.get("features", {}).get("pre")]))) if v["n"]},
            "missed": {"n": len(missed), "avg_max_up": round(st.mean([m for _, m in missed]), 2) if missed else None,
                       "top": sorted(missed, key=lambda x: -x[1])[:3]},
+           "by_prob": _bucket(recent, "p", [0, 0.4, 0.5, 0.6, 1.01], ""),   # 추정 승률 구간별 실제 성적 (추정이 맞는지)
            "ai_chart": {"찬성해서 산 거래": _stats([t for t in recent if (t.get("features") or {}).get("ai_chart") == "찬성"]),
                         "반대한 종목 그 뒤 최대 상승 평균": round(st.mean([(x["max"] / x["pick_px"] - 1) * 100 for x in w.values()
                                                              if x.get("ai") == "반대" and x.get("pick_px")]), 2)

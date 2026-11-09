@@ -76,6 +76,9 @@ DEFAULTS = {
     "interval_min": 1,             # 급등 종목 찾기 간격 (보유 종목 손절 확인은 따로 20초마다)
     "exit_check_sec": 10,
     "ai_check": False,             # 주문 전 AI 검토 (급등주는 속도가 중요해서 기본 꺼짐)
+    "prob_sizing": True,           # 학습 기록으로 승률을 추정해 살 금액 조절 (25%~100%, 한도는 절대 안 넘음)
+    "min_size_ratio": 0.25,        # 승률이 낮을 때 최소로 사는 비율
+    "min_win_prob": 0,             # 추정 승률이 이보다 낮으면 안 삼 (0 = 안 씀)
     "ai_chart_check": False,       # 사기 직전 AI 가 1분봉 차트 그림을 보고 찬성/반대 (10~20초 늦어짐, 기본 꺼짐)
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
@@ -84,7 +87,7 @@ NUMS = {"loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
 CHOICES = {"mode": ("off", "paper", "live"), "market": ("US", "KR"), "strategy": ("surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -142,7 +145,7 @@ def save_config(new: dict) -> dict:
                 c[k] = int(v) if v.is_integer() and isinstance(DEFAULTS[k], int) else v
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
-    for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check"):
+    for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check", "prob_sizing"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -528,6 +531,10 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         elif minutes is not None and first + 5 <= minutes <= 360 and len(pos) < c["pick_count"]:
             scan_cfg = {**c, "max_order_krw": caps["order"], "usd_krw": fx}
             r = picker.surge_scan(scan_cfg, log=_log_fn, exclude=set(pos) | set(c["exclude"]))
+            for x in r["picks"]:   # 화면·대화용: 후보마다 추정 승률
+                e_ = tl.estimate({k: x.get(k) for k in ("change", "ratio", "pre")}, c)
+                x["est"] = {"p": e_["p"], "ev": e_["ev"], "n": e_["n"]}
+                x["reason"] += f" · 추정 승률 {e_['p'] * 100:.0f}%({e_['n']}건)"
             with _lock:
                 s2 = state(); s2["picks"] = r; _save(s2)
             picked = [x["symbol"] for x in r["picks"]]
@@ -609,6 +616,15 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 이미 {c['pick_count']}종목 보유 중"); continue
             buy_px = price * (1 + c["limit_slip_pct"] / 100) if c["strategy"] == "surge" else price
             budget = min(caps["order"], caps["position"] - held["qty"] * price * f, caps["total"] - invested, cash_local * fx)
+            est, size_note = None, ""
+            if c["prob_sizing"]:   # 🎲 비슷한 조건의 지난 거래로 승률 추정 → 금액 조절
+                info = next((x for x in (state().get("picks") or {}).get("picks", []) if x["symbol"] == sym), {})
+                est = tl.estimate({k: info.get(k) for k in ("change", "ratio", "pre")}, c)
+                ratio_, size_note = tl.size_ratio(est, c)
+                if ratio_ <= 0:
+                    event("확률 판단", f"{sym} 안 삼 — {size_note}", symbol=sym)
+                    results.append(f"{sym}: 🎲 {size_note}"); continue
+                budget *= ratio_
             qty = int(budget // (buy_px * f))
             if qty < 1:
                 results.append(f"{sym}: 살 돈이 부족해요 (가능 {budget:,.0f}원, 1주 {buy_px * f:,.0f}원)"); continue
@@ -623,8 +639,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 ok, why = _ai_ok(sym, side, reason, price)
                 if not ok:
                     event("AI 반대", f"{sym} 매수 보류 — {why}", symbol=sym); results.append(f"{sym}: AI 반대 — {why}"); continue
-            results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · 📊 AI 차트 찬성: {why}" if chart_id else ""), live, fx,
-                                    chart=chart_id))
+            results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · 🎲 {size_note}" if size_note else "")
+                                    + (f" · 📊 AI 차트 찬성: {why}" if chart_id else ""), live, fx, chart=chart_id, est=est))
             invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
         else:
             part = side == "SELL_PART"
@@ -641,7 +657,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
 
 
 def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float, partial: bool = False,
-             chart: str = "") -> str:
+             chart: str = "", est: dict | None = None) -> str:
     coid = "cai-" + uuid.uuid4().hex[:20]
     px = toss.order_price(sym, price, side)
     label = f"{sym} {'매수' if side == 'BUY' else '매도'} {qty}주 @ {px}"
@@ -652,6 +668,8 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
         rec["features"] = {k: info.get(k) for k in ("change", "ratio", "pre", "minute", "score")}
         if chart:
             rec["features"]["ai_chart"] = "찬성"
+        if est:
+            rec["features"].update(p=est["p"], ev=est["ev"])
     if live:
         try:
             r = toss.place_limit_order(sym, side, qty, price, coid)
