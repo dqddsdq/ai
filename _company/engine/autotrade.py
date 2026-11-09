@@ -616,7 +616,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 이미 {c['pick_count']}종목 보유 중"); continue
             buy_px = price * (1 + c["limit_slip_pct"] / 100) if c["strategy"] == "surge" else price
             budget = min(caps["order"], caps["position"] - held["qty"] * price * f, caps["total"] - invested, cash_local * fx)
-            est, size_note = None, ""
+            est, size_note, full_budget = None, "", budget
             if c["prob_sizing"]:   # 🎲 비슷한 조건의 지난 거래로 승률 추정 → 금액 조절
                 info = next((x for x in (state().get("picks") or {}).get("picks", []) if x["symbol"] == sym), {})
                 est = tl.estimate({k: info.get(k) for k in ("change", "ratio", "pre")}, c)
@@ -624,8 +624,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 if ratio_ <= 0:
                     event("확률 판단", f"{sym} 안 삼 — {size_note}", symbol=sym)
                     results.append(f"{sym}: 🎲 {size_note}"); continue
-                budget *= ratio_
+                full_budget, budget = budget, budget * ratio_
             qty = int(budget // (buy_px * f))
+            if qty < 1 and est is not None and full_budget >= buy_px * f:   # 줄인 금액으론 1주가 안 되지만 한도 안에서 1주는 살 수 있으면 1주만
+                qty = 1
+                size_note += " (1주 미만이라 최소 1주)"
             if qty < 1:
                 results.append(f"{sym}: 살 돈이 부족해요 (가능 {budget:,.0f}원, 1주 {buy_px * f:,.0f}원)"); continue
             chart_id = ""
