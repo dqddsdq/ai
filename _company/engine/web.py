@@ -570,6 +570,8 @@ class Handler(BaseHTTPRequestHandler):
         market = self._market_context(agent_id, text, history, spec)
         if market:
             extra += "\n\n" + market
+        if at.ASK_WORDS.search(text) or (toss.ACCOUNT_WORDS.search(text) and at.config()["mode"] != "off"):
+            extra += "\n\n" + at.summary_for_prompt()   # 자동매매가 산 것·오늘 손익을 채팅 AI 도 알게
         drafts, steps = [], []
         style = tm.settings().get("team_style", "review")
         # 공용 자료수집: 리서치 팀 3명이 먼저 홈페이지·공식 자료를 찾아 모든 팀원에게 넘겨줌

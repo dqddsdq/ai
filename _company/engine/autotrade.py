@@ -735,3 +735,31 @@ def start(log_fn=print) -> None:
 
     _thread = threading.Thread(target=loop, daemon=True, name="autotrade")
     _thread.start()
+
+
+ASK_WORDS = re.compile(r"자동\s*매매|봇|자동으로\s*(산|판|사|팔)|알아서\s*(산|판)|오늘\s*(매매|거래|수익|손익)|이번\s*달\s*(수익|목표)")
+
+
+def summary_for_prompt() -> str:
+    """채팅 AI 에게 붙여줄 '자동매매가 한 일' 요약 (자동매매가 산 것만 구분해서)."""
+    c, s = config(), state()
+    mk = "미장" if c["market"] == "US" else "국장"
+    lines = ["<autotrade>", "이 앱의 자동매매 기록이에요. '자동매매가 산 주식'은 사장님이 직접 산 주식과 별개예요. 숫자는 여기 값만 쓰고 지어내지 마세요.",
+             f"상태: {dict(off='꺼짐', paper='가상 매매', live='실전')[c['mode']]} · {mk} · {'급등주' if c['strategy'] == 'surge' else '추세'} · "
+             f"{'계좌 현금 전부' if c['budget_mode'] == 'all_cash' else '한도 ' + format(c['max_total_krw'], ',') + '원'} · 한 달 목표 {c['monthly_target_pct']}%"
+             + (f" · 오늘 정지됨({s['halted_today']})" if s.get("halted_today") else "")]
+    pos = s["bot_pos"] if c["mode"] != "paper" else s["paper"]["positions"]
+    lines.append("자동매매가 지금 가진 주식: " + (", ".join(f"{k} {v['qty']:g}주(평단 {v['avg']:g})" for k, v in pos.items()) or "없음"))
+    lines.append(f"오늘({s['day']}) 실현 손익: {float(s.get('realized_today', 0)):+,.0f}원 · 오늘 매수 {s['orders_today']}번")
+    mo = s.get("month") or {}
+    if mo.get("start"):
+        lines.append(f"이번 달 실현 손익: {float(mo.get('realized', 0)):+,.0f}원 ({float(mo.get('realized', 0)) / mo['start'] * 100:+.1f}%, 시작 예산 {mo['start']:,.0f}원)")
+    recent = s["orders"][-12:]
+    if recent:
+        lines.append("최근 주문:")
+        lines += [f"- {o['t']} {o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {o['qty']}주 @ {o['price']:g} · {o.get('status', '')} · {o.get('reason', '')}" for o in recent]
+    pk = s.get("picks") or {}
+    if pk.get("picks"):
+        lines.append(f"최근 고른 종목({pk.get('time', '')}): " + ", ".join(f"{x['name']}({x['symbol']})" for x in pk["picks"]))
+    lines.append("</autotrade>")
+    return "\n".join(lines)
