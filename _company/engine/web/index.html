@@ -547,6 +547,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>보유 종목 손절 확인 간격 (초)<input id="t-exit_check_sec" type="number"></label>
           <label>장중 학습: 연속 손실 몇 번이면 쉬기<input id="t-loss_streak_pause" type="number"></label>
           <label>장중 학습: 쉬는 시간 (분)<input id="t-pause_min" type="number"></label>
+          <label><b>종목당 최대 (원)</b> — 두 방식 모두 적용 · 0 = 제한 없음<input id="t-max_position_krw" type="number"></label>
+          <label>한 번 주문 최대 (원) — 0 = 제한 없음<input id="t-max_order_krw" type="number"></label>
           <label>[금액 한도] 총 투자 한도 (원)<input id="t-max_total_krw" type="number"></label>
           <label>[금액 한도] 하루 손실 한도 (원)<input id="t-max_daily_loss_krw" type="number"></label>
           <label>가상 매매 시작 금액 (원)<input id="t-paper_cash_krw" type="number"></label>
@@ -1332,7 +1334,7 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw"];
 const TRADE_SEL = ["market", "strategy", "budget_mode"], TRADE_CHK = ["auto_pick", "us_premarket", "stop_at_target", "ai_chart_check", "ai_check"];
 let tradeTimer = null;
 function tradeBadge(d) {
@@ -1345,7 +1347,7 @@ async function renderTrade(fillForm = true) {
   const mk = c.market === "US" ? "🇺🇸 미장" : "🇰🇷 국장";
   $("#trade-status").innerHTML = [
     { off: "⏸️ 꺼짐", paper: "📝 가상 매매 중 (돈 안 씀)", live: "🔴 <b>실전 자동매매 중</b>" }[c.mode],
-    `${mk} · ${c.strategy === "surge" ? "급등주" : "추세"} · ${c.budget_mode === "all_cash" ? "계좌 현금 전부" : "한도 " + Number(c.max_total_krw).toLocaleString() + "원"}`,
+    `${mk} · ${c.strategy === "surge" ? "급등주" : "추세"} · ${c.budget_mode === "all_cash" ? "계좌 현금 전부" : "한도 " + Number(c.max_total_krw).toLocaleString() + "원"}${c.max_position_krw > 0 ? " · 종목당 최대 " + Number(c.max_position_krw).toLocaleString() + "원" : ""}`,
     `현지 ${esc(d.local_time)} (${d.session_minutes == null ? "장 닫힘" : d.session_minutes < 0 ? "프리장" : "정규장 " + d.session_minutes + "분째"})`,
     d.toss ? "토스 연결됨" : "⚠️ 토스 키 없음 (🧰 도구)", `오늘 매수 ${d.orders_today}/${c.max_orders_per_day}`,
     d.halted_today ? `⛔ 오늘 정지: ${esc(d.halted_today)}` : ""].filter(Boolean).join(" · ");

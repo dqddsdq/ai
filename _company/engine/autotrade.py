@@ -50,8 +50,8 @@ DEFAULTS = {
     "exclude": [],                 # 절대 사지 않을 종목
     "budget_mode": "all_cash",     # all_cash = 계좌의 그 통화 현금 전부 / fixed = max_total_krw
     "max_total_krw": 100000,       # fixed 일 때 총 투자 한도
-    "max_order_krw": 50000,        # fixed 일 때 한 번 주문 최대
-    "max_position_krw": 50000,     # fixed 일 때 종목당 최대
+    "max_order_krw": 50000,        # 한 번 주문 최대 (두 방식 모두 상한, 0 = 제한 없음)
+    "max_position_krw": 50000,     # 종목당 최대 (두 방식 모두 상한, 0 = 제한 없음)
     "max_orders_per_day": 6,       # 하루 매수 횟수 (매도는 제한 없음)
     "loss_streak_pause": 3,        # 장중 학습: 연속 손실 이만큼이면 잠시 매수 쉬기
     "pause_min": 30,               # 그때 쉬는 시간(분)
@@ -80,7 +80,7 @@ DEFAULTS = {
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
 }
-NUMS = {"loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (10000, 1e10), "max_position_krw": (10000, 1e10),
+NUMS = {"loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 10), "max_total_krw": (10000, 1e10), "max_order_krw": (0, 1e10), "max_position_krw": (0, 1e10),
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
@@ -323,6 +323,14 @@ def _bg(name: str, fn) -> dict:
     return {"ok": True, "message": f"{name} 시작 (몇 분 걸려요)"}
 
 
+def _cap(v: float, *limits: float) -> float:
+    """상한 적용 (0 이하 한도는 '제한 없음')"""
+    for lim in limits:
+        if lim and lim > 0:
+            v = min(v, lim)
+    return v
+
+
 def _prep_cfg(c: dict) -> dict:
     """준비용: 종목당 예산(원)을 대략 계산해서 '1주도 못 사는 비싼 종목'을 미리 빼게 함"""
     c = dict(c)
@@ -333,10 +341,11 @@ def _prep_cfg(c: dict) -> dict:
             cash = float((toss.buying_power(cur) or {}).get("cashBuyingPower") or 0)
             with _lock:
                 held = sum(v["qty"] * v["avg"] for k, v in state()["bot_pos"].items() if _mkt(k) == c["market"])
-            c["max_order_krw"] = (cash + held) * fx / c["pick_count"]
+            c["max_order_krw"] = _cap((cash + held) * fx / c["pick_count"], c["max_order_krw"], c["max_position_krw"])
             c["usd_krw"] = fx
         except toss.TossError:
-            c["max_order_krw"] = 0          # 모르면 가격 상한 없이
+            lim = _cap(1e12, c["max_order_krw"], c["max_position_krw"])
+            c["max_order_krw"] = 0 if lim >= 1e12 else lim   # 현금을 모르면 한도만으로 (한도도 없으면 가격 상한 없이)
     return c
 
 
@@ -480,11 +489,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     # 예산
     if c["budget_mode"] == "all_cash":
         budget = invested + cash_local * fx
-        per_pos = budget / c["pick_count"]
-        caps = {"total": budget, "position": per_pos, "order": per_pos}
+        per_pos = _cap(budget / c["pick_count"], c["max_position_krw"])   # 종목당 = 현금÷종목 수, 단 '종목당 최대'를 넘지 않게
+        caps = {"total": budget, "position": per_pos, "order": _cap(per_pos, c["max_order_krw"])}
         loss_limit = budget * c["max_daily_loss_pct"] / 100
     else:
-        caps = {"total": c["max_total_krw"], "position": c["max_position_krw"], "order": c["max_order_krw"]}
+        caps = {"total": c["max_total_krw"], "position": _cap(c["max_total_krw"], c["max_position_krw"]),
+                "order": _cap(c["max_total_krw"], c["max_order_krw"], c["max_position_krw"])}
         loss_limit = c["max_daily_loss_krw"]
     unreal = sum((quotes.get(k, {}).get("price", v["avg"]) - v["avg"]) * v["qty"] * fx for k, v in pos.items() if v["avg"])
     day_pl = float(s.get("realized_today", 0)) + unreal
