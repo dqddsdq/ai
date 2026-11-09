@@ -31,6 +31,7 @@ from . import team as tm
 from . import tools as tl
 from . import research as rs
 from . import dart
+from . import toss
 from . import improve as im
 
 STATIC_DIR = Path(__file__).resolve().parent / "web"
@@ -428,6 +429,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if not tm.team_config(agent_id).get("market_data"):
             return ""
+        account = ""
+        if toss.enabled() and toss.ACCOUNT_WORDS.search(text):  # "내 잔고/보유 종목" 질문이면 토스 계좌 조회 (조회 전용)
+            self._send("status", {"text": "💼 토스 계좌 조회 중..."})
+            try:
+                account = toss.portfolio_for_prompt()
+                self._send("account", {"ok": True, "text": account.replace("<my_account>", "").replace("</my_account>", "").strip()})
+            except toss.TossError as e:
+                self._send("account", {"ok": False, "text": str(e)})
         self._send("status", {"text": "📈 종목 찾는 중..."})
         recent = "\n".join(re.sub(r"\[화면 캡처 \d+장 첨부\]", "", m["content"])[:500] for m in history[-3:])
         try:
@@ -448,7 +457,7 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"DART 회사 목록 실패: {e}")
         if not tickers:
             self._send("status", {"text": ""})
-            return ""
+            return account
         kr = [t.split(".")[0] for t in tickers if re.fullmatch(r"\d{6}(\.(KS|KQ))?", t)] if use_dart else []
         self._send("status", {"text": "📈 " + ", ".join(tickers) + " 시세·차트 지표" + (" · DART 공시" if kr else "") + " 가져오는 중..."})
         with ThreadPoolExecutor(max_workers=len(tickers) + len(kr)) as pool:
@@ -460,7 +469,7 @@ class Handler(BaseHTTPRequestHandler):
         if reports:
             self._send("dart", {"items": [dart.brief(r) for r in reports]})
         self._send("status", {"text": ""})
-        return "\n\n".join(x for x in (mk.format_for_prompt(snaps), dart.format_for_prompt(reports)) if x)
+        return "\n\n".join(x for x in (account, mk.format_for_prompt(snaps), dart.format_for_prompt(reports)) if x)
 
     # 채팅
     def _chat(self, body: dict):

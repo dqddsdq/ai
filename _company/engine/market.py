@@ -206,6 +206,24 @@ def snapshot(ticker: str) -> Snapshot:
     if code and "." not in ticker:
         ticker = snap.ticker = f"{code}.KS"
     errors = []
+    from . import toss
+    if toss.enabled():  # 토스증권: 실시간 현재가 + 일봉 (국내·미국 모두)
+        try:
+            c, v, dates = toss.daily(ticker)
+            p = toss.prices([ticker]).get(toss.symbol(ticker), {})
+            info = toss.stock_info(ticker)
+            if len(c) >= 2:
+                close, volume = np.array(c), np.array(v)
+                snap.name = info.get("name") or snap.name
+                if p.get("price"):
+                    snap.quote = {"price": p["price"], "change_pct": round((p["price"] / c[-2] - 1) * 100, 2) if dates and dates[-1][:10] == (p.get("time") or "")[:10] else round((p["price"] / c[-1] - 1) * 100, 2)}
+                snap.source = "토스증권 실시간"
+                snap.asof = (p.get("time") or dates[-1])[:19].replace("T", " ")
+                if code and info.get("market") == "KOSDAQ":
+                    ticker = snap.ticker = f"{code}.KQ"
+                return _finish(snap, close, volume, [])
+        except Exception as e:
+            errors.append(f"토스: {e}")
     try:
         close, volume, snap.name, snap.asof = yf_history(ticker)
         snap.source = "야후 파이낸스 (국내 약 15~20분 지연)" if code else "야후 파이낸스 (지연 가능)"
@@ -229,6 +247,10 @@ def snapshot(ticker: str) -> Snapshot:
             errors.clear()
         except Exception as e:
             errors.append(f"KIS: {e}")
+    return _finish(snap, close, volume, errors)
+
+
+def _finish(snap: Snapshot, close, volume, errors: list[str]) -> Snapshot:
     if close is None or len(close) < 2:
         snap.error = " / ".join(errors) or "데이터 없음"
         return snap

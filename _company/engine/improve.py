@@ -29,7 +29,7 @@ WORK_ROOT = COMPANY_DIR / "_cache" / "improve"
 BACKUP_ROOT = COMPANY_DIR / "_cache" / "backups"
 HISTORY = SHARED_DIR / "improvements.json"
 EDITABLE_DIRS = ("engine", "_agents", "_shared")
-PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py",
+PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py", "engine/toss.py",
              "_shared/improvements.json", "_shared/tool_requests.json"}
 SKIP = {"__pycache__", "archive"}
 RUNTIME = {"_shared/improvements.json", "_shared/tool_requests.json"}   # 실행 중 계속 바뀌는 기록 파일 (복사·비교 안 함)

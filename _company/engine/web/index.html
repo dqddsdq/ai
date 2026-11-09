@@ -890,6 +890,8 @@ const work = {
       case "market": this.done("status"); (d.items || []).forEach((m, i) => { const bad = m.error && m.price == null;
         this.add("mk" + i, `📈 ${m.name || m.ticker}`, bad ? "데이터 못 가져옴" : `${m.price != null ? Number(m.price).toLocaleString() : "-"} · ${(m.source || "").replace(/\s*\(.*\)/, "")}`, "data");
         this.done("mk" + i, bad ? "⚠️" : "✅", { text: bad ? m.error : `**${m.name || m.ticker}** ${m.price ?? "-"} (${m.change_pct ?? "-"}%)\n\n출처: ${m.source} · ${m.asof}` }); }); break;
+      case "account": this.done("status"); this.add("acct", "💼 토스 내 계좌", d.ok ? "조회 전용 · 보유 종목·잔고" : "조회 실패", "data");
+        this.done("acct", d.ok ? "✅" : "⚠️", { text: d.text }); break;
       case "dart": (d.items || []).forEach((r, i) => { this.add("dart" + i, `📑 ${r.name || r.code} 공시·실적`,
           r.error ? "DART 못 가져옴" : `DART · ${r.prelim ? "잠정실적 " + r.prelim.slice(5) + " · " : ""}${r.report || "공시"}${r.op ? " · 영업이익 " + r.op + (r.op_yoy != null ? ` (${r.op_yoy > 0 ? "+" : ""}${r.op_yoy}%)` : "") : ""}`, "data");
         this.done("dart" + i, r.error ? "⚠️" : "✅", { text: r.text }); }); break;
