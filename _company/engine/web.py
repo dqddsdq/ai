@@ -374,8 +374,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/autotrade/review":
             return self._json(at.review_now())
         if path == "/api/autotrade/proposal":
-            from . import tradelearn as tl
-            return self._json(tl.decide(str(body.get("id", "")), str(body.get("action", ""))))
+            from . import tradelearn as tlearn   # 'tl' 은 도구(tools) 모듈 이름이라 겹치면 안 됨
+            return self._json(tlearn.decide(str(body.get("id", "")), str(body.get("action", ""))))
         if path == "/api/autotrade/scan":
             return self._json(at.scan_now())
         if path == "/api/autotrade/reset-paper":
