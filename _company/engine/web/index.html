@@ -213,6 +213,20 @@ button { cursor: pointer; }
 .charts img, .chart-view img { width: 100%; border: 1px solid var(--line); border-radius: 10px; cursor: zoom-in; background: #fff; display: block; }
 .chart-chip { border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12.5px; cursor: pointer; color: var(--text); }
 .tlog a.chart-link { color: var(--accent); cursor: pointer; text-decoration: underline; }
+/* 차트 화면 (탭 / 여러 개) */
+.cv-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.cv-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line); margin-top: 10px; padding-bottom: 0; scrollbar-width: thin; }
+.cv-tab { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-bottom: none; background: var(--bg); color: var(--muted);
+  border-radius: 10px 10px 0 0; padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.cv-tab.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: 0 -2px 0 var(--accent) inset; }
+.cv-tab .x { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
+.cv-grid { display: grid; gap: 10px; margin-top: 10px; }
+.cv-cell { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 8px; min-width: 0; }
+.cv-cell .hd { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-bottom: 6px; }
+.cv-cell .hd .sp { flex: 1; }
+.cv-cell img { width: 100%; display: block; border-radius: 8px; background: #fff; cursor: zoom-in; }
+.cv-iv { border: 1px solid var(--line); background: var(--bg); color: var(--text); border-radius: 8px; padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.cv-iv.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 /* 자동매매 */
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .seg button { border: 0; background: transparent; padding: 8px 14px; font: inherit; color: var(--text); cursor: pointer; }
@@ -379,6 +393,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
   <button class="side-btn nav" data-view="learn"><span class="ico">📚</span>공부 노트</button>
   <button class="side-btn nav" data-view="sim"><span class="ico">🎲</span>시뮬레이션</button>
   <button class="side-btn nav" data-view="tools"><span class="ico">🧰</span>도구 <span class="tb wait" id="tools-badge" hidden></span></button>
+  <button class="side-btn nav" data-view="charts"><span class="ico">📊</span>차트</button>
   <button class="side-btn nav" data-view="trade"><span class="ico">🤖</span>자동매매 <span class="tb" id="trade-badge" hidden></span></button>
   <button class="side-btn nav" data-view="improve"><span class="ico">🛠️</span>개선 <span class="tb wait" id="imp-badge" hidden></span></button>
   <div class="side-label">최근 대화</div>
@@ -451,6 +466,25 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
   </section>
 
   <div class="phone-pop" id="phone-pop" hidden></div>
+  <!-- 차트 화면 -->
+  <section class="view" id="view-charts">
+    <div class="scroll"><div class="column" style="max-width:1400px">
+      <div class="page-head">차트</div>
+      <div class="cv-bar">
+        <input class="field" id="cv-sym" style="width:180px" placeholder="종목 추가 (NVDA, 005930)">
+        <button class="btn primary" id="cv-add">＋ 추가</button>
+        <div class="seg" id="cv-mode"><button data-m="tabs">탭으로 보기</button><button data-m="grid">한 화면에 여러 개</button></div>
+        <select class="field" id="cv-cols" style="width:auto"><option value="2">2열</option><option value="3">3열</option><option value="4">4열</option></select>
+        <label style="display:flex;gap:4px;align-items:center;font-size:13px"><input type="checkbox" id="cv-auto" checked> 🤖 자동매매 종목도</label>
+        <div class="spacer"></div><span class="muted" id="cv-upd" style="font-size:12px"></span>
+        <button class="btn" id="cv-refresh">새로고침</button>
+      </div>
+      <div class="cv-tabs" id="cv-tabs"></div>
+      <div id="cv-body"></div>
+      <p class="muted" style="font-size:12.5px;margin-top:8px">토스 데이터로 그린 차트예요 (AI 가 보는 것과 같은 그림). 1분마다 자동 갱신 · 그림을 누르면 크게 · 자동매매가 가진 종목엔 산 가격·손절·나눠 팔기선이 표시돼요.</p>
+    </div></div>
+  </section>
+
   <!-- 자동매매 -->
   <section class="view" id="view-trade">
     <div class="scroll"><div class="column">
@@ -680,6 +714,8 @@ function show(view) {
   if (view === "tools") renderToolsPage();
   if (view === "improve") renderImprovePage();
   clearInterval(tradeTimer);
+  clearInterval(cv.timer);
+  if (view === "charts") cv.open();
   if (view === "trade") { renderTrade(); renderLiveCharts(true); tradeTimer = setInterval(() => { renderTrade(false); renderLiveCharts(); }, 15000); }
   $("#top-title").textContent = view === "chat" ? (state.conv?.title || "") : "";
 }
@@ -1393,6 +1429,99 @@ function renderLearn(L) {
   const tr = L.trades || [];
   $("#learn-trades").innerHTML = tr.length ? tr.map(x => `<div>${esc(x.entry_time.slice(5, 16))} <b>${esc(x.sym)}</b> ${x.closed ? `${pctS(x.pnl_pct)} · ${esc(x.exit_kind || "")}` : "보유 중"} · 최대 ${pctS(x.mfe)} / 최저 ${pctS(x.mae)}${x.features && x.features.change != null ? ` · 살 때 ${pctS(x.features.change)}, 거래량 ${x.features.ratio}배${x.features.pre ? " (프리장)" : ""}` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
 }
+// ── 차트 화면 (탭 / 여러 개) ──
+const cv = {
+  tabs: [], auto: [], active: 0, mode: "tabs", cols: 2, timer: null, imgs: {},
+  load() {
+    try { const d = JSON.parse(localStorage.getItem("chartView") || "{}"); Object.assign(this, { tabs: d.tabs || [], active: d.active || 0, mode: d.mode || "tabs", cols: d.cols || 2 }); } catch {}
+    $("#cv-cols").value = String(this.cols);
+  },
+  save() { try { localStorage.setItem("chartView", JSON.stringify({ tabs: this.tabs, active: this.active, mode: this.mode, cols: this.cols })); } catch {} },
+  all() {
+    const mine = this.tabs.map(t => ({ ...t, auto: false }));
+    const auto = $("#cv-auto").checked ? this.auto.filter(a => !mine.some(m => m.sym === a.sym)).map(a => ({ sym: a.sym, iv: (this.ivOf[a.sym] || "1m"), auto: true, held: a.held })) : [];
+    return [...auto, ...mine];
+  },
+  ivOf: {},
+  async refreshAuto() {
+    const d = await api("/api/autotrade").catch(() => null);
+    if (!d) return;
+    const held = Object.keys((d.config.mode === "paper" ? d.paper.positions : d.bot_pos) || {});
+    const picks = ((d.picks || {}).picks || []).map(x => x.symbol);
+    this.auto = [...new Set([...held, ...picks])].slice(0, 6).map(s => ({ sym: s, held: held.includes(s) }));
+  },
+  async fetch(t) {
+    const key = t.sym + "|" + t.iv;
+    const r = await fetch(`/api/chart?live=1&symbol=${encodeURIComponent(t.sym)}&interval=${t.iv}`).then(x => x.json()).catch(e => ({ error: e.message }));
+    this.imgs[key] = r; return r;
+  },
+  cell(t, i, big) {
+    const key = t.sym + "|" + t.iv, r = this.imgs[key];
+    const img = !r ? `<div class="muted" style="padding:30px 0;text-align:center">그리는 중…</div>` : r.error ? `<div class="muted" style="padding:20px 0">⚠️ ${esc(r.error)}</div>`
+      : `<img src="/api/upload/${esc(r.id)}?v=${r.v}" alt="${esc(t.sym)}">`;
+    const ln = r && !r.error ? Object.entries(r.lines || {}) : [];
+    return `<div class="cv-cell" data-i="${i}"><div class="hd"><b>${esc(t.sym)}</b>${t.auto ? `<span class="tb ${t.held ? "ok" : "wait"}">🤖 ${t.held ? "보유" : "고름"}</span>` : ""}<span class="sp"></span>
+      <button class="cv-iv ${t.iv === "1m" ? "on" : ""}" data-iv="1m">1분봉</button><button class="cv-iv ${t.iv === "1d" ? "on" : ""}" data-iv="1d">일봉</button>
+      ${!t.auto && !big ? `<button class="cv-tab-x x" title="닫기" style="border:0;background:none;cursor:pointer;color:var(--muted)">✕</button>` : ""}</div>${img}
+      ${ln.length ? `<div class="muted" style="font-size:12px;margin-top:4px">${ln.map(([k, v]) => `${esc(k)} ${v}`).join(" · ")}</div>` : ""}</div>`;
+  },
+  render() {
+    const list = this.all();
+    if (this.active >= list.length) this.active = Math.max(0, list.length - 1);
+    document.querySelectorAll("#cv-mode button").forEach(b => b.classList.toggle("on", b.dataset.m === this.mode));
+    $("#cv-cols").hidden = this.mode !== "grid";
+    $("#cv-tabs").hidden = this.mode !== "tabs";
+    $("#cv-tabs").innerHTML = list.map((t, i) => `<button class="cv-tab ${i === this.active ? "on" : ""}" data-i="${i}">${t.auto ? "🤖 " : ""}${esc(t.sym)} <span class="muted" style="font-weight:400">${t.iv === "1m" ? "1분" : "일봉"}</span>${t.auto ? "" : `<span class="x" data-x="${i}" title="닫기">✕</span>`}</button>`).join("")
+      + `<button class="cv-tab" id="cv-tab-add" title="종목 추가">＋</button>`;
+    if (!list.length) { $("#cv-body").innerHTML = `<p class="muted" style="margin-top:14px">위에 종목을 추가하세요. 자동매매가 종목을 사거나 고르면 🤖 탭이 자동으로 생겨요.</p>`; return; }
+    if (this.mode === "tabs") $("#cv-body").innerHTML = `<div class="cv-grid" style="grid-template-columns:1fr">${this.cell(list[this.active], this.active, true)}</div>`;
+    else $("#cv-body").innerHTML = `<div class="cv-grid" style="grid-template-columns:repeat(${this.cols}, minmax(0, 1fr))">${list.map((t, i) => this.cell(t, i, false)).join("")}</div>`;
+    // 이벤트
+    document.querySelectorAll("#cv-tabs .cv-tab[data-i]").forEach(b => b.onclick = (e) => {
+      if (e.target.dataset.x !== undefined) { this.close(+e.target.dataset.x); return; }
+      this.active = +b.dataset.i; this.save(); this.render(); this.paint();
+    });
+    $("#cv-tab-add").onclick = () => $("#cv-sym").focus();
+    document.querySelectorAll("#cv-body .cv-cell").forEach(c => {
+      const t = list[+c.dataset.i];
+      c.querySelectorAll(".cv-iv").forEach(b => b.onclick = () => {
+        if (t.auto) this.ivOf[t.sym] = b.dataset.iv; else { const k = this.tabs.find(x => x.sym === t.sym); if (k) k.iv = b.dataset.iv; }
+        this.save(); this.render(); this.paint();
+      });
+      c.querySelector(".cv-tab-x")?.addEventListener("click", () => this.close(+c.dataset.i));
+      c.querySelector("img")?.addEventListener("click", (e) => window.open(e.target.src, "_blank"));
+    });
+  },
+  close(i) {
+    const t = this.all()[i]; if (!t || t.auto) return;
+    this.tabs = this.tabs.filter(x => x.sym !== t.sym); this.save(); this.render(); this.paint();
+  },
+  add() {
+    const sym = $("#cv-sym").value.trim().toUpperCase(); if (!sym) return $("#cv-sym").focus();
+    $("#cv-sym").value = "";
+    if (!this.tabs.some(x => x.sym === sym)) this.tabs.push({ sym, iv: "1m" });
+    this.active = this.all().findIndex(x => x.sym === sym); this.save(); this.render(); this.paint();
+  },
+  async paint() {   // 지금 보이는 차트만 그리기 (탭: 1개, 여러 개: 전부)
+    const list = this.all();
+    const show = this.mode === "tabs" ? (list[this.active] ? [list[this.active]] : []) : list;
+    await Promise.all(show.map(t => this.fetch(t)));
+    this.render();
+    $("#cv-upd").textContent = "갱신 " + new Date().toLocaleTimeString().slice(0, -3);
+  },
+  async open() {
+    this.load(); await this.refreshAuto(); this.render(); this.paint();
+    clearInterval(this.timer);
+    this.timer = setInterval(async () => { if (document.hidden) return; await this.refreshAuto(); this.paint(); }, 60000);
+  },
+};
+$("#cv-add").onclick = () => cv.add();
+$("#cv-sym").onkeydown = (e) => { if (e.key === "Enter") cv.add(); };
+document.querySelectorAll("#cv-mode button").forEach(b => b.onclick = () => { cv.mode = b.dataset.m; cv.save(); cv.render(); cv.paint(); });
+$("#cv-cols").onchange = () => { cv.cols = +$("#cv-cols").value; cv.save(); cv.render(); };
+$("#cv-auto").onchange = () => { cv.render(); cv.paint(); };
+$("#cv-refresh").onclick = async () => { await cv.refreshAuto(); cv.paint(); };
+
 let liveChartAt = 0;
 async function renderLiveCharts(force = false) {
   if (!force && Date.now() - liveChartAt < 55000) return;

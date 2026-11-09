@@ -277,7 +277,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chart":   # 📊 차트 그리기 (자동매매가 가진 종목이면 산 가격·손절·나눠 팔기선 표시)
             q = dict(parse_qsl(urlparse(self.path).query))
             try:
-                return self._json(at.draw_chart(q.get("symbol", ""), q.get("interval", "1m")))
+                r = at.draw_chart(q.get("symbol", ""), q.get("interval", "1m"), live=q.get("live") == "1")
+                return self._json({**r, "v": int(time.time())})
             except Exception as e:
                 return self._json({"error": str(e)}, 400)
         if path == "/api/phone":
