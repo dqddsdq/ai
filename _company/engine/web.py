@@ -222,7 +222,7 @@ class Handler(BaseHTTPRequestHandler):
         local = host in ("127.0.0.1", "localhost") and client in ("127.0.0.1", "::1")
         if not local:
             # 폰 접속: 켜져 있을 때만, 주소창은 이 PC 의 IP 로만 (다른 도메인 위장 차단), PIN 등록한 기기만
-            if not PHONE["on"] or host != PHONE["url"].split("//")[1].split(":")[0]:
+            if not PHONE["on"] or host != PHONE["url"].split("//")[1].split(":")[0] or not _private_ip(client):
                 self._json({"error": "로컬 접속만 허용"}, 403)
                 return False
             path = urlparse(self.path).path
@@ -773,6 +773,18 @@ def _lan_ip() -> str:
         s.close()
 
 
+def _private_ip(ip: str) -> bool:
+    """집 안 네트워크 주소인지 (192.168.x · 10.x · 172.16~31.x · 100.64~127.x[Tailscale]) — 인터넷 공개 주소면 False"""
+    import ipaddress
+    try:
+        a = ipaddress.ip_address(ip.split("%")[0])
+    except ValueError:
+        return False
+    if a.version == 6 and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    return a.is_private and not a.is_loopback or a in ipaddress.ip_network("100.64.0.0/10")
+
+
 def _phone_secret(name: str, make) -> str:
     """PIN·토큰은 _cache 에 보관 → 다시 켜도 폰을 또 등록할 필요 없음"""
     f = ag.COMPANY_DIR / "_cache" / name
@@ -787,6 +799,9 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     import secrets
     url = f"http://127.0.0.1:{port}"
     ip = _lan_ip() if phone else ""
+    public_ip = ""
+    if ip and not _private_ip(ip):  # PC 가 인터넷 공개 주소를 직접 받는 경우 → 폰 접속을 열면 전 세계에 노출
+        public_ip, ip = ip, ""
     try:
         server = ThreadingHTTPServer(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
     except OSError:  # 이미 켜져 있음 (AI 시작.bat 두 번 실행 등)
@@ -802,6 +817,9 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
                      token=_phone_secret("phone_token.txt", lambda: secrets.token_hex(24)))
         print(f"📱 폰(같은 와이파이)에서: {PHONE['url']}  ·  PIN {PHONE['pin']}")
         print("   처음 켤 때 윈도우 방화벽 창이 뜨면 '개인 네트워크' 허용을 눌러 주세요.")
+    elif public_ip:
+        print(f"📱 이 PC 주소({public_ip})가 인터넷에 공개된 주소라서, 안전을 위해 폰 접속은 꺼 두었어요 (PC 에서는 정상 사용).")
+        print("   폰으로 쓰려면 공유기(와이파이)에 연결하거나 Tailscale 을 쓰세요.")
     elif phone:
         print("📱 와이파이 주소를 못 찾아서 폰 접속은 꺼 두었어요 (PC 에서만 사용 가능)")
     if open_browser:
