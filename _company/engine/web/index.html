@@ -1284,7 +1284,10 @@ async function renderTrade(fillForm = true) {
     TRADE_NUM.forEach(k => $("#t-" + k).value = c[k]); TRADE_SEL.forEach(k => $("#t-" + k).value = c[k]); TRADE_CHK.forEach(k => $("#t-" + k).checked = !!c[k]);
   }
   const pk = d.picks || {};
-  let ph = d.scanning ? "<div>🔎 준비 중… (처음엔 몇 분~10여 분)</div>" : "";
+  const pr = d.progress || {};
+  let ph = d.scanning ? `<div>🔎 ${esc(pr.what || "준비")} 중… ${pr.total ? `<b>${Math.round(pr.done / pr.total * 100)}%</b> (${pr.done.toLocaleString()}/${pr.total.toLocaleString()})` : "(목록 받는 중)"}</div>` : "";
+  if (d.base_ready && c.strategy === "surge" && !d.scanning) ph += `<div>✅ 급등주 기준값 준비 완료</div>`;
+  if (c.mode !== "off" && d.next_open && d.next_open !== "지금") ph += `<div class="muted">⏰ 종목 찾기 시작: <b>${esc(d.next_open)}</b> (한국 시간)${c.market === "US" && c.us_premarket ? " · 프리장부터" : ""}</div>`;
   if (!d.base_ready && c.strategy === "surge" && !d.scanning) ph += `<div class="muted">급등주 기준값이 아직 없어요 — 켜 두면 장 전에 자동 준비, 또는 '기준값 다시 준비'</div>`;
   ph += pk.picks && pk.picks.length ? `<div class="muted">${esc(pk.day || "")} ${esc(pk.time || "")} · ${esc(pk.note || "")}</div>` + pk.picks.map(x => `<div><b>${esc(x.name)}</b> (${esc(x.symbol)}) · 점수 ${x.score}<br><span class="muted">${esc(x.reason)}</span></div>`).join("")
     : (pk.note ? `<div class="muted">${esc(pk.note)}</div>` : "");

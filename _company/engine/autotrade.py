@@ -634,7 +634,21 @@ def overview() -> dict:
             "picks": s.get("picks") or {}, "scanning": _busy.is_set(), "bot_pos": s.get("bot_pos", {}),
             "realized_today": s.get("realized_today", 0), "base_ready": picker.base_ready(c["market"]), "month": s.get("month", {}),
             "session_minutes": minutes_now(c["market"], c),
-            "local_time": picker.mnow(c["market"]).strftime("%H:%M")}
+            "local_time": picker.mnow(c["market"]).strftime("%H:%M"), "progress": dict(picker.PROGRESS), "next_open": _next_open(c)}
+
+
+def _next_open(c: dict) -> str:
+    """다음에 종목 찾기를 시작하는 한국 시각 (예: '오늘 18:05')"""
+    market = c["market"]
+    first = -330 if _ext(market, c) else 0
+    now = datetime.now(KST)
+    for step in range(0, 60 * 24 * 4, 5):   # 5분 단위로 최대 4일 앞까지
+        t = now + timedelta(minutes=step)
+        m = picker.session_minutes(market, t, extended=_ext(market, c))
+        if m is not None and first + 5 <= m <= 360:
+            day = "오늘" if t.date() == now.date() else ("내일" if t.date() == (now + timedelta(days=1)).date() else t.strftime("%m/%d"))
+            return "지금" if step == 0 else f"{day} {t:%H:%M}"
+    return ""
 
 
 # ── 백그라운드 ──

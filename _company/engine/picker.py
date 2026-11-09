@@ -146,6 +146,9 @@ def universe(market: str, log=print) -> dict[str, dict]:
 
 
 # ── 급등주 ──
+PROGRESS = {"done": 0, "total": 0, "what": ""}   # 화면에 보여줄 준비 진행률
+
+
 def _base_file(market: str):
     return COMPANY_DIR / "_cache" / f"picker_base_{market}.json"
 
@@ -176,7 +179,9 @@ def prepare_day(cfg: dict, log=print) -> dict:
     syms = sorted(infos)
     log(f"🔎 {'미장' if market == 'US' else '국장'} 급등주 준비: 보통주 {len(syms)}개 기준값 계산 중 (처음엔 몇 분~10여 분)")
     rows = {}
+    PROGRESS.update(done=0, total=len(syms), what="급등주 기준값 계산")
     for i, sym in enumerate(syms):
+        PROGRESS["done"] = i
         if i and i % 500 == 0:
             log(f"   {i}/{len(syms)}")
         try:
@@ -190,6 +195,7 @@ def prepare_day(cfg: dict, log=print) -> dict:
         vols = [float(c.get("volume") or 0) for c in cs[-20:]]
         rows[sym] = {"name": infos[sym].get("name") or sym, "prev": closes[-1], "vol20": sum(vols) / 20,
                      "value20_krw": sum(c * v for c, v in zip(closes, vols)) / 20 * fx}
+    PROGRESS.update(done=len(syms), total=len(syms), what="")
     b = {"day": today, "market": market, "rows": rows}
     _base_file(market).parent.mkdir(parents=True, exist_ok=True)
     _base_file(market).write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
