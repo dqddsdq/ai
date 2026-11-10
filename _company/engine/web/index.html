@@ -501,6 +501,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="trade-both" style="margin-top:6px;font-size:13px"></div>
         <div id="trade-status" class="muted" style="margin-top:6px;font-size:13px"></div>
         <div id="trade-goal" style="margin-top:8px;font-size:14px"></div>
+        <div id="trade-pre" style="margin-top:6px;font-size:13px"></div>
         <div id="trade-run-out" class="tlog" style="margin-top:6px"></div>
       </div>
       <div class="card"><b>💬 엔진에게 묻기·시키기</b>
@@ -1435,6 +1436,10 @@ async function renderTrade(fillForm = true) {
   $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
   renderLearn(d.learn || {});
   renderLab(d.lab || {});
+  const pf = d.preflight || {};
+  $("#trade-pre").innerHTML = (pf.day ? `🩺 실데이터 점검 ${esc(pf.day)} ${esc(pf.at || "")}: ${pf.closed ? "휴장일 — 오늘 매매 안 함" : pf.ok ? "✅ 통과" : "❌ 문제 있음 (오늘 새로 안 삼)"} <details style="display:inline"><summary style="display:inline;cursor:pointer" class="muted">자세히</summary>${(pf.checks || []).map(x => `<div class="muted">${x.ok ? "✅" : (x.critical ? "❌" : "⚠️")} ${esc(x.name)} — ${esc(x.detail)}</div>`).join("")}</details>` : `<span class="muted">🩺 실데이터 점검: 장 열릴 때 자동</span>`)
+    + ` <button class="btn" id="trade-pf" style="padding:2px 8px;font-size:12px">지금 점검</button>`;
+  $("#trade-pf").onclick = async () => { $("#trade-pf").disabled = true; const r = await api("/api/autotrade/preflight", { market: tradeMk() }); alert(r.closed ? "오늘 휴장이에요" : r.ok ? "점검 통과" : "문제 있음: " + r.checks.filter(x => !x.ok).map(x => x.name + "(" + x.detail + ")").join(", ")); renderTrade(false); };
   const chipSyms = [...new Set([...Object.keys(d.bot_pos || {}), ...Object.keys((d.paper || {}).positions || {}), ...Object.keys(d.cands || {}), ...((d.picks || {}).picks || []).map(x => x.symbol)])];
   $("#chart-chips").innerHTML = chipSyms.map(x => `<button class="chart-chip" data-sym="${esc(x)}">${esc(x)}</button>`).join("");
   document.querySelectorAll("#chart-chips [data-sym]").forEach(b => b.onclick = () => { $("#chart-sym").value = b.dataset.sym; drawChart("1m"); });

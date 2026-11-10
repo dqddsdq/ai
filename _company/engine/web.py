@@ -284,6 +284,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(tlearn.decide(str(body.get("id", "")), str(body.get("action", ""))))
         if path == "/api/autotrade/scan":
             return self._json(at.scan_now())
+        if path == "/api/autotrade/preflight":
+            return self._json(at.preflight())
         if path == "/api/autotrade/backtest":
             return self._json(at.backtest_now())
         if path == "/api/autotrade/lab-reset":

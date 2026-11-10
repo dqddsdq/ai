@@ -822,6 +822,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         if side == "BUY":
             if halted:
                 results.append(f"{sym}: ⛔ 오늘 정지 중이라 안 삼"); continue
+            if minutes is not None and minutes < 0 and state().get("no_premarket_until", "") >= datetime.now(KST).strftime("%Y-%m-%d"):
+                results.append(f"{sym}: 토스가 프리장 주문을 안 받아서 정규장부터 삼"); continue
             if target_hit and c["stop_at_target"]:
                 results.append(f"{sym}: 이번 달 목표 달성 → 새로 안 삼"); continue
             if stop_why and style == "surge":
@@ -919,6 +921,11 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
             with _lock:
                 s = state(); s["orders"].append(rec); _save(s)
             event("주문 거절", f"{label} — {e}", symbol=sym)
+            mins_ = minutes_now(_mkt(sym))
+            if side == "BUY" and mins_ is not None and mins_ < 0 and ("hours" in str(e).lower() or "시간" in str(e)):
+                with _lock:   # 토스가 프리장 주문을 안 받음 → 일주일 동안 프리장 매수 안 함
+                    s = state(); s["no_premarket_until"] = (datetime.now(KST) + timedelta(days=7)).strftime("%Y-%m-%d"); _save(s)
+                event("실데이터", "토스가 프리장 주문을 받지 않아요 → 일주일 동안 프리장에는 사지 않고 정규장부터 살게요")
             return f"{sym}: 주문 거절 — {e}"
     else:
         f = 1 if _mkt(sym) == "KR" else fx
@@ -1010,7 +1017,7 @@ def overview() -> dict:
             "local_time": picker.mnow(c["market"]).strftime("%H:%M"), "progress": dict(picker.PROGRESS), "next_open": _next_open(c),
             "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper", c["market"]),
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
-            "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview()}
+            "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {}}
 
 
 def _brief(m: str) -> dict:
@@ -1098,6 +1105,14 @@ def start(log_fn=print) -> None:
                 (c["strategy"] == "surge" or (state().get("swing") or {}).get("day") == picker.session_date(m))
             if not ready and not _busy().is_set():
                 prepare_now()
+        if mins is not None:
+            sd = picker.session_date(m)
+            s0 = state()
+            if (s0.get("preflight") or {}).get("day") != sd:
+                preflight()   # 🩺 그날 첫 장중 확인 전에 실데이터 점검 (휴장일·날짜 기준·형식)
+                s0 = state()
+            if (s0.get("preflight") or {}).get("closed"):
+                return        # 휴장일
         if mins is None:
             # 📚 장 마감 후 하루 한 번 복기 (미장 뉴욕 16:05~, 국장 15:35~)
             s0 = state()
@@ -1715,3 +1730,110 @@ def backtest_now(wait: bool = False) -> dict:
 def lab_overview() -> dict:
     c = config()
     return {"shadow": shadow.overview(c, c["market"]) if c["shadow_on"] else {}, "backtest": bt.load(c["market"])}
+
+
+# ── 🩺 실데이터 점검 (그날 처음 장이 열릴 때 자동 · 화면 버튼) ──
+REF_SYMBOL = {"US": "AAPL", "KR": "005930"}
+
+
+def _calendar_open(market: str, day: str):
+    """토스 휴장일 정보 → True(열림)/False(휴장)/None(모름). 응답 형식이 확실치 않아 여러 이름을 확인"""
+    try:
+        r = toss._get(f"/api/v1/market-calendar/{market}", date=day)
+    except toss.TossError:
+        return None
+    items = r if isinstance(r, list) else [r] if isinstance(r, dict) else []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if it.get("date") and str(it["date"])[:10] != day:
+            continue
+        for k in ("isOpen", "open", "isTradingDay", "tradingDay", "marketOpen", "isBusinessDay", "businessDay"):
+            if isinstance(it.get(k), bool):
+                return it[k]
+        for k in ("isHoliday", "holiday", "closed", "isClosed"):
+            if isinstance(it.get(k), bool):
+                return not it[k]
+    return None
+
+
+def preflight() -> dict:
+    """실제 토스 데이터로 엔진이 기대하는 형식이 맞는지 확인. 중요한 게 틀리면 그날 새로 사지 않음 (보유 종목 관리는 계속)"""
+    c = config()
+    m = c["market"]
+    day = picker.session_date(m)
+    checks: list[tuple[str, bool, str, bool]] = []   # (이름, 통과, 설명, 중요)
+
+    def add(name, ok, detail, critical=True):
+        checks.append((name, bool(ok), detail, critical))
+
+    closed = False
+    if not toss.enabled():
+        add("토스 연결", False, "토스 키가 없어요", True)
+    else:
+        try:
+            toss.account_seq(); add("로그인·계좌", True, "종합계좌 찾음")
+        except toss.TossError as e:
+            add("로그인·계좌", False, str(e))
+        op = _calendar_open(m, day)
+        if op is False:
+            closed = True
+        add("휴장일", True, "오늘 휴장 → 매매 안 함" if closed else ("장 열리는 날" if op else "휴장 정보 형식을 몰라서 주말만 쉬어요"), False)
+        ref = REF_SYMBOL[m]
+        try:
+            r = toss._get("/api/v1/candles", symbol=ref, interval="1d", count=5) or {}
+            cs = r.get("candles") or []
+            bad = []
+            for x in cs:   # 엔진은 날짜를 timestamp 앞 10글자로 비교 → 그 시장 날짜와 같아야 함
+                ts = datetime.fromisoformat(str(x["timestamp"]).replace("Z", "+00:00"))
+                if ts.tzinfo and picker.session_date(m, ts) != str(x["timestamp"])[:10]:
+                    bad.append(str(x["timestamp"]))
+            add("차트 날짜 기준", bool(cs) and not bad, f"{len(cs)}개 확인" + (f" · 날짜가 어긋나는 봉 {len(bad)}개 (예: {bad[0]})" if bad else ""))
+        except (toss.TossError, ValueError, KeyError) as e:
+            add("차트 날짜 기준", False, f"일봉을 못 읽었어요: {e}")
+        try:
+            q = toss.prices([ref]).get(ref) or {}
+            ts = q.get("time")
+            fresh = True
+            mins = minutes_now(m, c)
+            if ts and mins is not None and mins >= 5:
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(str(ts).replace("Z", "+00:00")).astimezone(timezone.utc)).total_seconds() / 60
+                fresh = age < 20
+                add("현재가 신선도", fresh, f"{age:.0f}분 전 가격", False)
+            else:
+                add("현재가", bool(q.get("price")), f"{q.get('price')} (시각 {ts or '없음'})")
+        except (toss.TossError, ValueError) as e:
+            add("현재가", False, str(e))
+        try:
+            h = toss.holdings()
+            items = h.get("items") or []
+            ok = all({"symbol", "quantity", "averagePurchasePrice"} <= set(it) for it in items)
+            add("보유 종목 형식", ok, f"보유 {len(items)}개" + ("" if ok else " · 필요한 칸(symbol/quantity/averagePurchasePrice)이 없어요"))
+        except toss.TossError as e:
+            add("보유 종목 형식", False, str(e))
+        try:
+            bp = toss.buying_power("KRW" if m == "KR" else "USD") or {}
+            float(bp.get("cashBuyingPower"))
+            add("주문 가능 현금", True, f"{bp.get('cashBuyingPower')} {'원' if m == 'KR' else '달러'}")
+        except (toss.TossError, TypeError, ValueError) as e:
+            add("주문 가능 현금", False, f"형식이 달라요: {e}")
+        try:
+            oo = toss.open_orders()
+            add("미체결 주문 형식", isinstance(oo, list), f"{len(oo)}건")
+        except toss.TossError as e:
+            add("미체결 주문 형식", False, str(e))
+    failed = [x for x in checks if x[3] and not x[1]]
+    res = {"day": day, "at": datetime.now(KST).strftime("%H:%M"), "closed": closed, "ok": not failed,
+           "checks": [{"name": n, "ok": o, "detail": d, "critical": cr} for n, o, d, cr in checks]}
+    with _lock:
+        s = state(); s["preflight"] = res; _save(s)
+    if closed:
+        event("휴장", f"{'미장' if m == 'US' else '국장'} 오늘({day}) 휴장 → 매매 안 함")
+    elif failed:
+        why = "실데이터 점검 실패: " + " · ".join(f"{n}({d})" for n, _, d, _ in failed)
+        if c["mode"] == "live":
+            _halt_today(why)   # 새로 사지 않음 (보유 종목 손절·정리는 계속)
+        event("실데이터", why + (" → 오늘은 새로 사지 않아요" if c["mode"] == "live" else ""))
+    else:
+        event("실데이터", "점검 통과: " + " · ".join(f"{n}" for n, *_ in checks))
+    return res
