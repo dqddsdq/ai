@@ -28,8 +28,12 @@ WORK_ROOT = COMPANY_DIR / "_cache" / "improve"
 BACKUP_ROOT = COMPANY_DIR / "_cache" / "backups"
 HISTORY = SHARED_DIR / "improvements.json"
 EDITABLE_DIRS = ("engine", "_agents", "_shared")
-PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py", "engine/toss.py", "engine/autotrade.py", "engine/tradelearn.py", "engine/picker.py", "engine/shadow.py", "engine/backtest.py", "engine/notify.py", "engine/store.py", "engine/selftest.py", "engine/news.py", "_shared/autotrade.json",
-             "_shared/improvements.json", "_shared/tool_requests.json"}
+# 🔒 절대 못 고치는 파일: 키·돈 안전장치(토스 주문 생성·취소만)·승인 절차·자체 점검·기록 저장·텔레그램(실전 불가)
+PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py", "engine/toss.py", "engine/notify.py",
+             "engine/store.py", "engine/selftest.py", "_shared/autotrade.json", "_shared/improvements.json", "_shared/tool_requests.json"}
+# ⚠️ 고칠 수 있지만 조심할 매매 코드: 사장님 승인 + 자체 점검(돈 이동·실전 켜기·미수·정지 규칙) 통과해야 적용
+TRADING = {"engine/autotrade.py", "engine/tradelearn.py", "engine/picker.py", "engine/shadow.py", "engine/backtest.py", "engine/news.py",
+           "engine/chart.py", "engine/dart.py"}
 SKIP = {"__pycache__", "archive"}
 RUNTIME = {"_shared/improvements.json", "_shared/tool_requests.json", "_shared/autotrade.json"}   # 실행 중 계속 바뀌는 기록 파일 (복사·비교 안 함)
 TEXT_EXT = {".py", ".md", ".json", ".html", ".txt", ".js", ".css"}
@@ -50,6 +54,9 @@ _shared/ (settings.json 설정, goals.md·decisions.md·identity.md 회사 메�
 규칙:
 - 아래 파일은 절대 수정·삭제하지 마라: {protected}
 - 보안 장치(로컬 접속 제한, 도구 허용 목록, 키 보관, 승인 절차)를 약하게 만들지 마라. 그런 요청이면 고치지 말고 이유만 써라.
+- 매매 코드({trading})는 고쳐도 된다. 단 절대 하지 마라: 돈 이동·출금·이체, 토스 API 직접 호출(꼭 engine/toss.py 함수만),
+  채팅·텔레그램·자동으로 실전 켜기, 미수·신용(현금 주문 가능 금액만), 사장님이 직접 산 주식·직접 낸 주문 건드리기,
+  손실 한도·정지·'정지 풀기는 화면 버튼만' 약하게 하기, 설정 허용 범위 넓히기. 적용 전에 자체 점검이 돌아서 어기면 막힌다.
 - 새 외부 패키지·인터넷 주소를 추가해야 하면 고치지 말고 필요하다고만 써라.
 - 주석은 한국어로 짧게.
 - 다 고친 뒤 마지막에 사장님이 읽을 요약을 한국어로 3~6줄: 무엇을 왜 바꿨는지, 적용 후 앱을 다시 켜야 하는지(코드 수정이면 '다시 켜야 함', 지시문·설정만이면 '바로 적용').
@@ -145,7 +152,7 @@ def changes(job_id: str) -> list[dict]:
             continue
         diff = "".join(difflib.unified_diff(a.splitlines(True), b.splitlines(True), f"원본/{rel}", f"수정/{rel}", n=2))
         out.append({"path": rel, "status": "added" if rel not in orig else "deleted" if rel not in new else "modified",
-                    "protected": rel in PROTECTED, "diff": diff[:20000],
+                    "protected": rel in PROTECTED, "trading": rel in TRADING, "diff": diff[:20000],
                     "plus": sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")),
                     "minus": sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))})
     return out
@@ -156,6 +163,10 @@ def _checks(box: Path, files: list[dict]) -> list[dict]:
     if any(f["protected"] for f in files):
         res.append({"name": "보호 파일", "ok": False, "detail": "보호 파일을 건드려서 적용할 수 없어요: "
                     + ", ".join(f["path"] for f in files if f["protected"])})
+    tr = [f["path"] for f in files if f.get("trading")]
+    if tr:
+        res.append({"name": "⚠️ 매매 코드 변경", "ok": not any(f["status"] == "deleted" for f in files if f.get("trading")),
+                    "detail": "매매 코드가 바뀌어요: " + ", ".join(tr) + " — 자체 점검 통과해야 적용 · 적용 후 [되돌리기] 가능 · 처음엔 가상 매매로 확인 추천"})
     py = [f for f in files if f["path"].endswith(".py") and f["status"] != "deleted"]
     if py:
         bad = []
@@ -205,7 +216,7 @@ def run(job_id: str, on_text=None, on_activity=None, model: str | None = None) -
         raise pv.ProviderError("Claude Code 가 없어서 변경안을 만들 수 없어요")
     _update(job_id, status="working")
     box = _make_sandbox(job_id)
-    prompt = DEV_PROMPT.format(protected=", ".join(sorted(PROTECTED)), request=job["request"] + (f"\n(이유: {job['why']})" if job.get("why") else ""))
+    prompt = DEV_PROMPT.format(protected=", ".join(sorted(PROTECTED)), trading=", ".join(sorted(TRADING)), request=job["request"] + (f"\n(이유: {job['why']})" if job.get("why") else ""))
     cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
            "--tools", "Read,Edit,Write,Grep,Glob", "--allowedTools", "Read,Edit,Write,Grep,Glob",
            "--permission-mode", "acceptEdits", "--no-session-persistence", "--strict-mcp-config"]

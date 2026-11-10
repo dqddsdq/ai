@@ -40,8 +40,8 @@ def 토스_쓰기는_주문_생성_취소만():
 @case
 def 자기개선_보호_파일():
     from . import improve
-    need = {".env", "engine/toss.py", "engine/autotrade.py", "engine/tradelearn.py", "engine/improve.py", "engine/tools.py",
-            "engine/notify.py", "engine/store.py", "engine/selftest.py", "engine/news.py", "_shared/autotrade.json"}
+    need = {".env", "engine/toss.py", "engine/improve.py", "engine/tools.py",
+            "engine/notify.py", "engine/store.py", "engine/selftest.py", "_shared/autotrade.json"}
     assert need <= improve.PROTECTED, need - improve.PROTECTED
 
 
@@ -61,6 +61,41 @@ def 텔레그램으로_실전_못_켬():
         assert calls[-2:] == [{"mode": "paper"}, {"mode": "off"}], calls
     finally:
         at.save_config, at.emergency_stop = orig
+
+
+@case
+def 매매_코드는_토스_API_직접_호출_안함():
+    from . import improve
+    base = Path(__file__).resolve().parent.parent
+    for rel in sorted(improve.TRADING):
+        p = base / rel
+        if not p.exists():
+            continue
+        src = p.read_text(encoding="utf-8")
+        for bad in ("tossinvest.com", "X-Tossinvest", "Authorization", "toss._post", "toss._token", "transfer", "withdraw"):
+            assert bad not in src, f"{rel} 에 '{bad}' 가 있어요 — 토스 요청은 engine/toss.py 함수로만"
+
+
+@case
+def 채팅으로_실전_못_켬_정지_못_풂():
+    from . import autotrade as at
+    acts = at.find_actions("[[TRADE_MODE: live | 수익]] [[TRADE_SET: mode=live | x]] [[TRADE_SET: halted_today= | x]]")
+    assert not acts, acts
+    assert not at.apply_action({"type": "mode", "value": "live"})["ok"]
+    assert not at.apply_action({"type": "set", "param": "mode", "value": "live"})["ok"]
+    assert not at.apply_action({"type": "unhalt"})["ok"]
+    assert "unhalt" not in at.LABELS and "mode" in at.DEFAULTS
+
+
+@case
+def 설정_허용_범위():
+    """손실 한도·손절·주문 수 같은 안전 범위를 넓히지 못하게 (매매 코드가 바뀌어도)"""
+    from . import autotrade as at
+    limit = {"stop_loss_pct": 50, "max_daily_loss_pct": 50, "loss_pct_max": 50, "stop_max": 30, "limit_max_mult": 20,
+             "max_orders_per_day": 100, "pick_count": 10, "focus_max_pct": 100, "ai_max_per_hour": 600}
+    for k, hi in limit.items():
+        assert k in at.NUMS and at.NUMS[k][1] <= hi, (k, at.NUMS.get(k))
+    assert at.DEFAULTS["mode"] != "live" and at.CHOICES["mode"] == ("off", "paper", "live")
 
 
 @case

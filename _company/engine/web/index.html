@@ -1708,7 +1708,7 @@ function improveCard(job, container) {
     let full = j;
     if (["ready", "blocked", "applied", "rolled_back"].includes(j.status) && !j.files?.[0]?.diff) full = await api("/api/improve/" + j.id);
     const [label, cls] = impStatus(full.status);
-    const files = (full.files || []).map(f => `<details class="imp-file"${(full.files || []).length <= 2 ? " open" : ""}><summary>${f.protected ? "🔒 " : ""}<b>${esc(f.path)}</b> <span class="muted">${{ added: "새 파일", deleted: "삭제", modified: "수정" }[f.status] || ""} · +${f.plus} −${f.minus}</span></summary>${f.diff ? diffHTML(f.diff) : ""}</details>`).join("");
+    const files = (full.files || []).map(f => `<details class="imp-file"${(full.files || []).length <= 2 ? " open" : ""}><summary>${f.protected ? "🔒 " : f.trading ? "⚠️ " : ""}<b>${esc(f.path)}</b> <span class="muted">${{ added: "새 파일", deleted: "삭제", modified: "수정" }[f.status] || ""} · +${f.plus} −${f.minus}</span></summary>${f.diff ? diffHTML(f.diff) : ""}</details>`).join("");
     const checks = (full.checks || []).map(c => `<div class="chk">${c.ok ? "✅" : "❌"} ${esc(c.name)} — <span class="muted">${esc(c.detail || "")}</span></div>`).join("");
     el.innerHTML = `<div class="th">🛠️ <b>${full.team && full.team !== "사장님" ? esc(teamName(full.team)) + "이 개선을 제안해요" : "개선 요청"}</b><span class="tb ${cls}">${esc(label)}</span></div>
       <div class="why">${esc(full.request)}${full.why ? `<br>이유: ${esc(full.why)}` : ""}</div>
