@@ -73,23 +73,67 @@ def load(path: Path, default=dict) -> dict:
         return data
 
 
+_errors: list[str] = []
+_err_at: dict[str, float] = {}
+
+
+def write_text(path: Path, text: str) -> None:
+    """안전하게 쓰기: 임시 파일 → 바꿔치기.
+    윈도우에서 백신·OneDrive·검색 색인이 파일을 잠깐 잡고 있으면 바꿔치기가 '액세스 거부'로 실패해서
+    → 조금씩 기다리며 다시 시도 → 그래도 안 되면 직접 덮어쓰기. 다 안 되면 OSError"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident() % 100000}.tmp")   # 쓰는 곳마다 다른 임시 파일
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
+    last = None
+    for wait in (0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0):
+        if wait:
+            time.sleep(wait)
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as e:   # 다른 프로그램이 잠깐 잡고 있음
+            last = e
+        except OSError as e:
+            last = e
+            break
+    try:   # 마지막 방법: 직접 덮어쓰기 (원래 내용은 .bak 에 있음)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return
+    except OSError as e:
+        last = e
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+    raise last
+
+
 def save(path: Path, data) -> None:
-    """임시 파일에 쓰고 바꿔치기 + 가끔 백업"""
+    """임시 파일에 쓰고 바꿔치기 + 가끔 백업. 디스크에 못 써도 예외를 안 냄(메모리엔 반영, 다음 저장 때 다시 시도)
+    → 자동매매가 저장 실패로 멈추지 않게"""
     path = Path(path)
     key = str(path)
     with _lock:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                pass
-        os.replace(tmp, path)
         e = _cache.setdefault(key, {"data": data, "mt": None, "bak": 0})
-        e["data"], e["mt"] = data, path.stat().st_mtime_ns
+        e["data"] = data
+        try:
+            write_text(path, json.dumps(data, ensure_ascii=False))
+        except OSError as err:
+            now = time.time()
+            if now - _err_at.get(key, 0) > 300:   # 같은 파일 알림은 5분에 한 번
+                _err_at[key] = now
+                _errors.append(f"{path.name} 저장 실패 ({type(err).__name__}) — 다른 프로그램(백신·OneDrive 등)이 잡고 있는 것 같아요. 다음 저장 때 다시 시도해요")
+            return
+        e["mt"] = path.stat().st_mtime_ns
         now = time.time()
         if now - e["bak"] >= BAK_EVERY:
             e["bak"] = now
@@ -105,6 +149,13 @@ def save(path: Path, data) -> None:
                         old.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def errors() -> list[str]:
+    """저장 실패 알림 꺼내 가기 (한 번만)"""
+    with _lock:
+        out, _errors[:] = list(_errors), []
+    return out
 
 
 def recovered() -> list[str]:

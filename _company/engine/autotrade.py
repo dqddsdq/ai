@@ -1352,7 +1352,12 @@ def start(log_fn=print) -> None:
                     try:
                         tick(m, timers[m])
                     except Exception as e:
-                        event("오류", f"{type(e).__name__}: {e}")
+                        try:
+                            event("오류", f"{type(e).__name__}: {e}")
+                        except Exception:   # 오류 기록조차 실패해도 자동매매는 계속
+                            _log_fn(f"🤖 [오류] {type(e).__name__}: {e}")
+                    for msg in store.errors():
+                        _log_fn("💾 " + msg)
 
     _thread = threading.Thread(target=loop, daemon=True, name="autotrade")
     _thread.start()

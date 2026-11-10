@@ -867,6 +867,29 @@ def _phone_secret(name: str, make) -> str:
     return v
 
 
+_instance_lock = []
+
+
+def _single_instance() -> bool:
+    """이 PC 에서 앱이 하나만 돌게 (파일 잠금 — 앱이 꺼지면 자동으로 풀림)"""
+    f = ag.COMPANY_DIR / "_cache" / "app.lock"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(f, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return False
+    _instance_lock.append(fh)
+    return True
+
+
 def _keep_awake() -> None:
     """윈도우: 앱이 켜져 있는 동안 PC 가 절전 모드로 들어가지 않게 (화면은 꺼져도 됨) — 자동매매가 밤새 돌아야 해서"""
     if os.name != "nt":
@@ -887,6 +910,11 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     public_ip = ""
     if ip and not _private_ip(ip):  # PC 가 인터넷 공개 주소를 직접 받는 경우 → 폰 접속을 열면 전 세계에 노출
         public_ip, ip = ip, ""
+    if not _single_instance():   # 앱이 두 개 켜지면 자동매매도 두 개가 돌아서 같은 기록 파일을 동시에 씀 → 막기
+        print(f"이미 다른 창에서 켜져 있어요. 브라우저로 {url} 을 엽니다.")
+        if open_browser:
+            webbrowser.open(url)
+        return
     try:
         server = ThreadingHTTPServer(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
     except OSError:  # 이미 켜져 있음 (AI 시작.bat 두 번 실행 등)

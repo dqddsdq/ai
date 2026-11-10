@@ -212,11 +212,8 @@ def _ledger() -> dict:
 
 
 def _ledger_save(d: dict) -> None:
-    f = _ledger_path()
-    f.parent.mkdir(parents=True, exist_ok=True)
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps(d), encoding="utf-8")
-    os.replace(tmp, f)
+    from . import store
+    store.write_text(_ledger_path(), json.dumps(d))   # 윈도우 '액세스 거부' 대비 다시 시도 포함
 
 
 def _refresh(d: dict, sym: str) -> None:

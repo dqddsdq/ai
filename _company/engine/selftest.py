@@ -344,6 +344,32 @@ def 기록_파일_깨지면_백업으로_복구():
         store.recovered()
 
 
+@case
+def 윈도우_액세스_거부여도_저장되고_안_멈춤():
+    import os
+    from . import store
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "s.json"
+        real, n = os.replace, [0]
+
+        def flaky(a, b):
+            n[0] += 1
+            if n[0] <= 3:
+                raise PermissionError(5, "액세스가 거부되었습니다")
+            return real(a, b)
+        os.replace = flaky
+        try:
+            store.save(p, {"a": 1})
+            assert json.loads(p.read_text(encoding="utf-8")) == {"a": 1}
+            os.replace = lambda a, b: (_ for _ in ()).throw(PermissionError(5, "거부"))
+            store.save(p, {"a": 2})            # 계속 거부돼도 예외 없이 직접 덮어쓰기
+            assert json.loads(p.read_text(encoding="utf-8")) == {"a": 2}
+        finally:
+            os.replace = real
+        assert not list(Path(d).glob("*.tmp"))
+        store.errors()
+
+
 def run(verbose: bool = True) -> tuple[int, int, list[str]]:
     fails = []
     for fn in CASES:
