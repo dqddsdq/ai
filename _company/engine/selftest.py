@@ -295,6 +295,21 @@ def 단타_매도_규칙():
 
 
 @case
+def AI_익절_모드():
+    """익절 규칙만 꺼지고 손절·마감 정리는 그대로, 안전장치(+3% → +0.3%)는 꼭 작동"""
+    from . import autotrade as at
+    c = _cfg(stop_loss_pct=3, partial_tp_pct=4, partial_tp_ratio=0.5, trail_pct=4, trail_wide_after_pct=10, trail_wide_pct=6,
+             limit_slip_pct=0.5, ai_tp_guard_peak=3, ai_tp_guard_floor=0.3)
+    nt = at._no_tp(c)
+    s = lambda price, high, mins=100: at.signal_surge(price, 10, 100, high, mins, False, nt)[0]  # noqa: E731
+    assert s(104.2, 104.2) == "HOLD" and s(100.1, 104.4) == "HOLD"   # 익절 규칙은 꺼짐
+    assert s(96.9, 100) == "SELL" and s(101, 101, mins=375) == "SELL"   # 손절·마감 정리는 그대로
+    assert at.tp_guard(100, 103.5, 100.2, c) and not at.tp_guard(100, 103.5, 101, c) and not at.tp_guard(100, 102, 100, c)
+    assert at.signal_swing([100.0] * 30, 93.9, 1, 100, 100, 2, {**at._no_tp(_cfg(swing_stop_pct=6))})[0] == "SELL"
+    assert "ai_take_profit" in at.CHOICES and at.DEFAULTS["ai_take_profit"] != "on"   # 처음부터 AI 에 맡기지 않음
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)

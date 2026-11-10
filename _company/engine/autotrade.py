@@ -102,6 +102,11 @@ DEFAULTS = {
     "promote_margin_pct": 1.0,     #   '현재'보다 총수익률이 이만큼(%p) 이상 높아야
     "promote_window_days": 14,     #   비교 기간(일)
     "backtest_on": True,           # 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로
+    "ai_take_profit": "test",      # 🤖 익절을 AI 에게: off=규칙대로 · test=규칙대로 팔되 'AI 였으면?'을 따로 비교 · on=익절 규칙 대신 AI 가 판단
+    "ai_tp_guard_peak": 3,         #    on 일 때 안전장치: 최고 수익이 +이 % 이상이었다가
+    "ai_tp_guard_floor": 0.3,      #    +이 % 까지 밀리면 무조건 팔기 (손절·마감 정리·하루 손실 한도는 그대로 먼저)
+    "ai_tp_min_trades": 10,        #    test 비교가 이 건수 이상 쌓이고
+    "ai_tp_margin_pct": 0.3,       #    AI 쪽이 평균 이 %p 이상 나으면 자동으로 on
     "ai_decide": True,             # 🤖 거래마다 AI 판단: 사기 전 살지·얼마나, 보유 중 일찍 팔지 (손절·마감 정리·한도는 못 바꿈)
     "ai_max_per_hour": 30,         #   AI 판단 시간당 최대 횟수 (넘으면 규칙대로)
     "ai_hold_check_min": 5,        #   보유 종목을 AI 가 다시 보는 간격(분)
@@ -128,8 +133,8 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1)}
-CHOICES = {"mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
+CHOICES = {"ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
 _log_fn = print
@@ -309,7 +314,7 @@ def event(kind: str, text: str, **extra) -> None:
         notify.send(f"{flag} [{kind}] {text}")
 
 
-NOTIFY_KINDS = {"공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
+NOTIFY_KINDS = {"익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
                 "휴장", "오류", "복구", "AI 판단", "백테스트"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 
@@ -415,6 +420,108 @@ def _seen_news_block(sym: str) -> bool:
         return True
     _news_seen[sym] = time.time()
     return False
+
+
+def _no_tp(c: dict) -> dict:
+    """익절 규칙(나눠 팔기·전부 익절·고점 대비 하락)만 끈 설정 — 손절·마감 정리·본전 정리·20일선·최대 일수는 그대로"""
+    return {**c, "partial_tp_pct": 0, "take_profit_pct": 0, "trail_pct": 1e9, "trail_wide_pct": 1e9, "trail_wide_after_pct": 0,
+            "swing_trail_pct": 1e9}
+
+
+def tp_guard(avg: float, high: float, price: float, c: dict) -> str:
+    """AI 익절 안전장치: 최고 +3% 이상 → +0.3% 까지 밀리면 무조건 팔기"""
+    if not avg:
+        return ""
+    peak, pnl = (high / avg - 1) * 100, (price / avg - 1) * 100
+    if peak >= c["ai_tp_guard_peak"] and pnl <= c["ai_tp_guard_floor"]:
+        return f"🛡️ AI 익절 안전장치: 최고 +{peak:.1f}% → 지금 {pnl:+.1f}% (기준 +{c['ai_tp_guard_floor']:g}%) → 팔기"
+    return ""
+
+
+def _ai_room(c: dict) -> bool:
+    """이번 시간 AI 판단 여유가 있는지 (횟수는 안 씀)"""
+    with _lock:
+        n = len([t for t in state().get("ai_calls", []) if time.time() - t < 3600])
+    return n < c["ai_max_per_hour"]
+
+
+def _ghost_open(sym: str, held: dict, high: float, price: float, style: str, bought: str | None) -> None:
+    """test 모드: 규칙이 익절했을 때 'AI 였으면?'을 이어서 따라가는 유령 보유 (돈 안 씀)"""
+    with _lock:
+        s = state()
+        g = s.setdefault("tp_ghost", {})
+        if sym not in g:
+            g[sym] = {"avg": held["avg"], "high": max(high, price), "rule_px": price, "style": style, "buy_day": bought,
+                      "t": datetime.now(KST).strftime("%m-%d %H:%M"), "ai_at": 0}
+            _save(s)
+
+
+def _ghost_step(c: dict, market: str, minutes) -> list[str]:
+    """유령 보유 따라가기: AI 익절 모드였으면 언제 팔았을지 → 규칙 익절과 차이 기록 → 충분히 나으면 자동으로 on"""
+    out = []
+    with _lock:
+        ghosts = dict(state().get("tp_ghost", {}))
+    if not ghosts:
+        return out
+    try:
+        qs = toss.prices(list(ghosts))
+    except toss.TossError:
+        return out
+    nt = _no_tp(c)
+    for sym, g in ghosts.items():
+        q = qs.get(sym)
+        if not q:
+            continue
+        price = q["price"]
+        g["high"] = max(g["high"], price)
+        why = tp_guard(g["avg"], g["high"], price, c)
+        if not why:
+            if g["style"] == "swing":
+                try:
+                    closes, _, _ = toss.daily(sym, 60)
+                except toss.TossError:
+                    continue
+                days = (datetime.now(KST).date() - datetime.strptime(g["buy_day"], "%Y-%m-%d").date()).days if g.get("buy_day") else 0
+                side, r = signal_swing(closes, price, 1, g["avg"], g["high"], days, nt)
+            elif minutes is None:
+                side, r = "SELL", "장 끝 (단타)"
+            else:
+                side, r = signal_surge(price, 1, g["avg"], g["high"], minutes, False, nt)
+            if side == "SELL":
+                why = "규칙(손절·마감 등): " + r
+        if not why:
+            dec = _ai_peek(("ghost", market, sym))
+            if dec and dec != "PENDING" and dec[0]:
+                why = "🤖 AI: " + dec[1]
+                _ai_jobs.pop(("ghost", market, sym), None)
+            elif dec is None and time.time() - g.get("ai_at", 0) >= c["ai_hold_check_min"] * 60 and _ai_room(c):
+                g["ai_at"] = time.time()
+                _ai_async(("ghost", market, sym), _ai_decide_hold, sym, {"avg": g["avg"], "qty": 1}, price, g["high"], g["style"],
+                          "익절 비교용 (규칙은 이미 팔았음)", c)
+        with _lock:
+            s = state()
+            gs = s.setdefault("tp_ghost", {})
+            if why:
+                gs.pop(sym, None)
+                diff = (price - g["rule_px"]) / g["avg"] * 100
+                st_ = s.setdefault("ai_tp_stats", {"n": 0, "sum": 0.0, "log": []})
+                st_["n"] += 1; st_["sum"] += diff
+                st_["log"] = (st_["log"] + [{"t": g["t"], "sym": sym, "diff": round(diff, 2), "why": why[:60]}])[-30:]
+                out.append(f"🤖 익절 비교 {sym}: AI 였으면 {diff:+.2f}%p ({why[:50]})")
+                event("익절 비교", f"{sym} 규칙 익절 {g['rule_px']:g} vs AI {price:g} → AI {diff:+.2f}%p · 누적 {st_['n']}건 평균 {st_['sum'] / st_['n']:+.2f}%p", symbol=sym)
+            elif sym in gs:
+                gs[sym] = g
+            _save(s)
+    # 자동 전환: 두 시장 합쳐서 충분히 쌓이고 AI 가 확실히 나으면 on
+    n = tot = 0
+    for m in ("US", "KR"):
+        with in_market(m):
+            st_ = state().get("ai_tp_stats") or {}
+        n += st_.get("n", 0); tot += st_.get("sum", 0.0)
+    if c["ai_take_profit"] == "test" and n >= c["ai_tp_min_trades"] and tot / n >= c["ai_tp_margin_pct"]:
+        if save_config({"ai_take_profit": "on"}, _by_auto=True).get("ok"):
+            event("규칙 교체", f"🤖 익절을 AI 판단으로 바꿨어요 — 비교 {n}건 평균 AI 쪽이 {tot / n:+.2f}%p 나음 (안전장치 +{c['ai_tp_guard_peak']:g}%→+{c['ai_tp_guard_floor']:g}%)")
+    return out
 
 
 def focus_ok(est: dict | None, c: dict) -> bool:
@@ -808,6 +915,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     stop_why = tl.guard(wday, bool(minutes is not None and minutes < 0))
 
     for sym in symbols:
+        tp_by_rule = None   # test 모드: 익절 규칙이 실제로 팔면 'AI 였으면?' 비교 시작
         q = quotes.get(sym)
         if not q:
             results.append(f"{sym}: 시세 없음"); continue
@@ -837,6 +945,23 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 else ("HOLD", "마감 30분 전부터는 새로 안 삼")
         else:
             side, reason = "HOLD", "선택 종목 아님"
+        if held["qty"] > 0 and c["ai_take_profit"] != "off" and c["ai_decide"] and not dry:   # 🤖 AI 익절
+            if side in ("SELL", "SELL_PART"):
+                nt = _no_tp(c)
+                if style == "swing":
+                    side_r = signal_swing(closes, price, held["qty"], held["avg"], high, days, nt)[0]
+                else:
+                    side_r = signal_surge(price, held["qty"], held["avg"], high, minutes, False, nt,
+                                          partial_done=bool(state()["partial"].get(sym)))[0]
+                if side_r == "HOLD":   # 이 매도는 익절 규칙이 낸 것
+                    if c["ai_take_profit"] == "on" and _ai_room(c):
+                        side, reason = "HOLD", f"🤖 익절은 AI 가 판단 (규칙이었으면: {reason[:60]})"
+                    elif c["ai_take_profit"] == "test":
+                        tp_by_rule = (dict(held), high, style, bought)
+            if c["ai_take_profit"] == "on" and side == "HOLD":
+                g_ = tp_guard(held["avg"], max(high, price), price, c)
+                if g_:
+                    side, reason = "SELL", g_
         if exits_only and side == "BUY":
             side = "HOLD"
         if side == "HOLD" and held["qty"] > 0 and c["ai_decide"] and not dry:   # 🤖 보유 중 AI 가 일찍 팔지 (따로 생각, 결과는 10초 확인 때도 반영)
@@ -955,7 +1080,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if qty < 1:
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if style == "surge" else price
+            if tp_by_rule:
+                _ghost_open(sym, tp_by_rule[0], tp_by_rule[1], price, tp_by_rule[2], tp_by_rule[3])
             results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part, quote=price))
+    if c["ai_take_profit"] == "test" and c["ai_decide"] and not dry:
+        try:
+            results += _ghost_step(c, market, minutes)
+        except Exception as e:
+            results.append(f"🤖 익절 비교 오류: {type(e).__name__}: {e}")
     if c["shadow_on"] and not dry:   # 🧪 같은 후보·시세로 규칙 조합들을 가상으로
         try:
             shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
@@ -1268,7 +1400,7 @@ def _summary_one() -> str:
 
 
 # ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
-LABELS = {"news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+LABELS = {"ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",

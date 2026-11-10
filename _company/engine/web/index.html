@@ -562,6 +562,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>장중 학습: 쉬는 시간 (분)<input id="t-pause_min" type="number"></label>
           <label>🎲 승률 낮을 때 최소 매수 비율 (0.25 = 25%)<input id="t-min_size_ratio" type="number" step="0.05"></label>
           <label>🎲 추정 승률이 이보다 낮으면 안 삼 (%, 0 = 안 씀)<input id="t-min_win_prob" type="number"></label>
+          <label>🤖 익절 판단<select id="t-ai_take_profit" class="field"><option value="test">비교 중 (규칙대로 팔고 AI 였으면? 비교 → 나으면 자동 전환)</option><option value="on">AI 가 판단 (안전장치 있음)</option><option value="off">규칙대로만</option></select></label>
+          <label>🛡️ AI 익절 안전장치: 최고 수익 (+%)<input id="t-ai_tp_guard_peak" type="number" step="0.5"></label>
+          <label>🛡️ 이만큼 밀리면 무조건 팔기 (+%)<input id="t-ai_tp_guard_floor" type="number" step="0.1"></label>
           <label>🎯 확신할 때만 몰아넣기: 한 종목 최대 비중 (%, 0 = 늘 똑같이 나눔)<input id="t-focus_max_pct" type="number"></label>
           <label>🎯 조건 ① 비슷한 지난 거래 (건 이상)<input id="t-focus_min_samples" type="number"></label>
           <label>🎯 조건 ② 기대 수익 (+% 이상, 수수료 뺀 값)<input id="t-focus_min_ev_pct" type="number" step="0.1"></label>
@@ -1388,8 +1391,8 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct"];
-const TRADE_SEL = ["strategy", "budget_mode"], TRADE_CHK = ["ai_decide", "shadow_on", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor"];
+const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit"], TRADE_CHK = ["ai_decide", "shadow_on", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 function tradeMk() { try { return localStorage.getItem("tradeMk") || "US"; } catch { return "US"; } }
 document.querySelectorAll("#trade-mk button").forEach(b => b.onclick = () => { try { localStorage.setItem("tradeMk", b.dataset.mk); } catch {} renderTrade(); renderLiveCharts(true); });
