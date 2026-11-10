@@ -876,6 +876,11 @@ def _restart() -> None:
         return
     log("🔄 자동 개선 적용 → 자동매매 바퀴가 끝나면 앱을 다시 켜요")
     at.pause_for_restart()
+    try:   # '자동 개선 적용' 같은 알림이 텔레그램으로 다 나간 뒤에 끄기
+        from . import notify
+        notify.flush(15)
+    except Exception:
+        pass
     time.sleep(1)
     os._exit(3)
 

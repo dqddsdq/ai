@@ -70,6 +70,19 @@ def send(text: str) -> None:
         pass
 
 
+_sending = threading.Event()
+
+
+def flush(timeout: float = 15) -> bool:
+    """보낼 알림이 다 나갈 때까지 기다림 (앱을 다시 켜기 직전 등)"""
+    end = time.time() + timeout
+    while time.time() < end:
+        if _q.empty() and not _sending.is_set():
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def _save_chat(cid: str) -> None:
     from . import tools
     os.environ["TELEGRAM_CHAT_ID"] = cid
@@ -119,8 +132,12 @@ def _handle(text: str) -> str:
 def _sender() -> None:
     while True:
         text = _q.get()
-        if enabled() and chat_id():
-            _call("sendMessage", chat_id=chat_id(), text=text, disable_web_page_preview="true")
+        _sending.set()
+        try:
+            if enabled() and chat_id():
+                _call("sendMessage", chat_id=chat_id(), text=text, disable_web_page_preview="true")
+        finally:
+            _sending.clear()
         time.sleep(1.1)   # 텔레그램 속도 제한
 
 
