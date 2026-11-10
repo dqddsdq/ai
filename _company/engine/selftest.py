@@ -87,6 +87,8 @@ def scan_source(src: str, name: str = "?") -> list[str]:
     for n in ast.walk(tree):
         if isinstance(n, ast.Constant) and isinstance(n.value, str) and ("tossinvest" in n.value.lower()):
             bad.append(f"{name}:{n.lineno} 토스 주소·헤더 직접 사용")
+        elif isinstance(n, ast.Constant) and isinstance(n.value, str) and ("ledger" in n.value.lower() or "toss_token" in n.value.lower()):
+            bad.append(f"{name}:{n.lineno} 봇 장부·토큰 파일 직접 접근")
         elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in alias:
             if n.attr.startswith("_") and n.attr != "_get":
                 bad.append(f"{name}:{n.lineno} toss.{n.attr} 접근")
@@ -118,6 +120,7 @@ def 엔진_코드는_토스를_우회하지_않음():
     assert scan_source("from . import toss\ntoss.place_limit_order = None")
     assert scan_source("import urllib\nu='https://openapi.TOSSINVEST.com'")
     assert scan_source("from . import toss\ngetattr(toss, '_tok')")
+    assert scan_source("open('_cache/toss_ledger.json', 'w')")
     assert not scan_source("from . import toss\ntoss._get('/api/v1/stocks')\ntoss.prices(['A'])")
 
 
@@ -148,9 +151,12 @@ def 미수_신용_안씀():
     """현금보다 큰 매수는 토스에 보내기 전에 막히고, 미수·신용 한도는 아예 안 넘어옴"""
     from . import toss
     sent = []
-    orig = toss._get, toss._post
+    orig = toss._get, toss._post, toss.TOKEN_CACHE
+    tmpd = tempfile.mkdtemp()
+    toss.TOKEN_CACHE = Path(tmpd) / "t.json"
+    (Path(tmpd) / "toss_ledger.json").write_text('{"v": 1, "seed": {"AAPL": 5}, "orders": {}}')
     toss._get = lambda path, account=False, **kw: {"cashBuyingPower": "100", "marginBuyingPower": "100000", "creditLimit": "9", "currency": kw.get("currency")}
-    toss._post = lambda path, body: (sent.append(body), {"orderId": "x"})[1]
+    toss._post = lambda path, body: (sent.append(body), {"orderId": f"x{len(sent)}"})[1]
     try:
         bp = toss.buying_power("USD")
         assert set(bp) == {"cashBuyingPower", "currency"}, bp
@@ -164,7 +170,7 @@ def 미수_신용_안씀():
         toss.place_limit_order("AAPL", "SELL", 5, 150, "t3")   # 매도는 현금 확인 없음
         assert len(sent) == 2
     finally:
-        toss._get, toss._post = orig
+        toss._get, toss._post, toss.TOKEN_CACHE = orig
 
 
 # ── 비용·체결 ──────────────────────────────────────────
@@ -196,6 +202,50 @@ def 확신할_때만_몰아넣기():
     assert not at.focus_ok({"n": 10, "ev": 5}, c)          # 표본 부족 → 분산
     assert not at.focus_ok({"n": 40, "ev": 1.0}, c)        # 기대 수익 부족 → 분산
     assert not at.focus_ok({"n": 40, "ev": 5}, {**c, "focus_max_pct": 0})   # 꺼짐
+
+
+@case
+def 사장님_주식_주문은_안_건드림():
+    """봇 장부(잠긴 토스 파일): 팔기는 봇이 산 체결 수량까지만, 취소는 봇이 낸 주문만"""
+    from . import toss
+    orig = toss._get, toss._post, toss.TOKEN_CACHE
+    tmpd = Path(tempfile.mkdtemp())
+    toss.TOKEN_CACHE = tmpd / "t.json"
+    orders = {}
+
+    def fake_get(path, account=False, **kw):
+        if path.startswith("/api/v1/orders/"):
+            return orders[path.split("/")[4]]
+        return {"cashBuyingPower": "100000"}
+
+    def fake_post(path, body):
+        if path.endswith("/cancel"):
+            return {"ok": True}
+        oid = f"o{len(orders) + 1}"
+        orders[oid] = {"status": "PENDING", "execution": {"filledQuantity": "0"}}
+        return {"orderId": oid}
+    toss._get, toss._post = fake_get, fake_post
+    try:
+        def blocked(fn, *a):
+            try:
+                fn(*a)
+                return False
+            except toss.TossError:
+                return True
+        assert blocked(toss.place_limit_order, "TSLA", "SELL", 1, 100, "a")           # 봇이 안 산 종목(사장님 주식) 매도 막힘
+        toss.place_limit_order("TSLA", "BUY", 3, 100, "b")                               # 봇 매수 3주 (아직 미체결)
+        assert blocked(toss.place_limit_order, "TSLA", "SELL", 1, 100, "c")           # 체결 전엔 못 팖
+        orders["o1"] = {"status": "FILLED", "execution": {"filledQuantity": "3"}}
+        assert blocked(toss.place_limit_order, "TSLA", "SELL", 4, 100, "d")           # 산 것보다 많이 못 팖 (사장님 주식 섞여 있어도)
+        toss.place_limit_order("TSLA", "SELL", 2, 100, "e")                              # 2주 매도 걸어 둠
+        assert toss.bot_sellable("TSLA") == 1                                            # 걸린 매도는 빼고 계산
+        assert blocked(toss.place_limit_order, "TSLA", "SELL", 2, 100, "f")
+        assert blocked(toss.cancel_order, "manual123")                                   # 사장님이 낸 주문 취소 막힘
+        toss.cancel_order("o2")                                                          # 봇 주문은 취소 가능
+        orders["o2"] = {"status": "CANCELED", "execution": {"filledQuantity": "1"}}
+        assert toss.bot_sellable("TSLA") == 2                                            # 1주만 팔리고 취소 → 2주 남음
+    finally:
+        toss._get, toss._post, toss.TOKEN_CACHE = orig
 
 
 @case

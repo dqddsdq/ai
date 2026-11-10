@@ -944,6 +944,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 with _lock:
                     s4 = state(); s4["partial"][sym] = True; _save(s4)
                 results.append(f"{sym}: 나눠 팔 수량이 안 돼서(보유 {held['qty']:g}주) 계속 보유 — 손절선은 본전으로"); continue
+            if live and qty >= 1:   # 🔒 잠긴 봇 장부 기준 수량까지만 (사장님 주식 보호)
+                try:
+                    can = int(toss.bot_sellable(sym))
+                except toss.TossError:
+                    can = qty
+                if can < qty:
+                    results.append(f"{sym}: 봇 장부상 팔 수 있는 건 {can}주 → {can}주만")
+                    qty = can
             if qty < 1:
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if style == "surge" else price

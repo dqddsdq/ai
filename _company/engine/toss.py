@@ -181,6 +181,85 @@ def order_price(sym: str, price: float, side: str) -> str:
     return f"{(math.floor if side == 'BUY' else math.ceil)(price * q) / q:.{2 if q == 100 else 4}f}"
 
 
+# ── 🔒 봇 장부: 봇이 직접 낸 주문만 기록 → 팔기는 '봇이 산 수량'까지만, 취소는 '봇이 낸 주문'만 ──
+# (사장님이 직접 산 주식·직접 낸 주문은 매매 코드가 어떻게 바뀌어도 여기서 막힘)
+_ledger_lock = threading.RLock()
+OPEN_STATUS = {"PENDING", "OPEN", "NEW", "ACCEPTED", "PARTIAL_FILLED", "PARTIALLY_FILLED", "RECEIVED"}
+
+
+def _ledger_path():
+    return TOKEN_CACHE.with_name("toss_ledger.json")
+
+
+def _ledger() -> dict:
+    f = _ledger_path()
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        seed = {}   # 처음 한 번: 이 기능 전에 봇이 산 종목(자동매매 기록의 봇 보유)을 장부 시작값으로
+        for m in ("US", "KR"):
+            try:
+                st = json.loads((f.parent / f"autotrade_state_{m}.json").read_text(encoding="utf-8"))
+                for k, v in (st.get("bot_pos") or {}).items():
+                    seed[k] = seed.get(k, 0) + float(v.get("qty") or 0)
+            except (OSError, ValueError, AttributeError):
+                pass
+        d = {"v": 1, "seed": seed, "orders": {}}
+        _ledger_save(d)
+        return d
+    except (OSError, ValueError):
+        return {"v": 1, "seed": {}, "orders": {}, "broken": True}
+
+
+def _ledger_save(d: dict) -> None:
+    f = _ledger_path()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d), encoding="utf-8")
+    os.replace(tmp, f)
+
+
+def _refresh(d: dict, sym: str) -> None:
+    """이 종목 장부 주문들의 체결 수량 갱신 (끝난 주문은 다시 안 물어봄)"""
+    for oid, o in d["orders"].items():
+        if o["sym"] != sym or o.get("done"):
+            continue
+        try:
+            r = get_order(oid) or {}
+        except TossError:
+            continue
+        o["filled"] = float((r.get("execution") or {}).get("filledQuantity") or 0)
+        o["done"] = bool(r.get("status")) and r.get("status") not in OPEN_STATUS
+    for oid in [k for k, o in d["orders"].items() if o["sym"] == sym and o.get("done")]:   # 끝난 주문은 시작값에 합쳐서 장부를 작게
+        o = d["orders"].pop(oid)
+        d["seed"][sym] = float(d["seed"].get(sym, 0)) + (o["filled"] if o["side"] == "BUY" else -o["filled"])
+    if d["seed"].get(sym, 1) <= 1e-9:
+        d["seed"].pop(sym, None)
+
+
+def bot_sellable(sym: str) -> float:
+    """봇이 팔 수 있는 수량 = 봇이 산 체결 수량 − 이미 판 수량 − 아직 걸려 있는 매도"""
+    sym = symbol(sym)
+    with _ledger_lock:
+        d = _ledger()
+        _refresh(d, sym)
+        _ledger_save(d)
+        q = float(d["seed"].get(sym, 0))
+        for o in d["orders"].values():
+            if o["sym"] != sym:
+                continue
+            if o["side"] == "BUY":
+                q += o["filled"]
+            else:
+                q -= o["filled"] if o.get("done") else max(o["qty"], o["filled"])
+        return max(0.0, q)
+
+
+def is_bot_order(order_id: str) -> bool:
+    with _ledger_lock:
+        return order_id in _ledger()["orders"]
+
+
 def place_limit_order(sym: str, side: str, quantity: int, price: float, client_order_id: str) -> dict:
     """지정가 주문 한 건. 호출은 autotrade.py 의 안전장치를 통과한 경우에만."""
     if side not in ("BUY", "SELL") or int(quantity) < 1:
@@ -196,12 +275,26 @@ def place_limit_order(sym: str, side: str, quantity: int, price: float, client_o
         need = int(quantity) * float(body["price"])
         if need > cash + 1e-9:
             raise TossError(f"현금 부족이라 안 보냈어요 (필요 {need:,.2f} {cur} > 현금 {cash:,.2f}) — 미수는 안 써요")
-    return _post("/api/v1/orders", body) or {}
+    with _ledger_lock:
+        if side == "SELL":   # 🔒 사장님 주식 보호: 봇이 산 수량까지만
+            can = bot_sellable(body["symbol"])
+            if int(quantity) > can + 1e-9:
+                raise TossError(f"봇이 산 수량({can:g}주)보다 많이 팔려고 해서 막았어요 — 사장님이 직접 산 주식은 안 건드려요")
+        r = _post("/api/v1/orders", body) or {}
+        oid = r.get("orderId")
+        if oid:
+            d = _ledger()
+            d["orders"][str(oid)] = {"sym": body["symbol"], "side": side, "qty": int(quantity), "filled": 0.0, "done": False,
+                                     "t": time.strftime("%Y-%m-%d %H:%M:%S")}
+            _ledger_save(d)
+        return r
 
 
 def cancel_order(order_id: str) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9\-_]+", order_id):
         raise TossError("주문번호가 이상해요")
+    if not is_bot_order(order_id):   # 🔒 사장님이 직접 낸 주문은 취소 안 함
+        raise TossError("봇이 낸 주문이 아니라서 취소하지 않았어요")
     return _post(f"/api/v1/orders/{order_id}/cancel", {}) or {}
 
 
