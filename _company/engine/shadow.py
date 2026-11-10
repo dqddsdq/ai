@@ -17,6 +17,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from . import store
 from .agents import COMPANY_DIR
 
 KST = timezone(timedelta(hours=9))
@@ -37,10 +38,7 @@ def _file(m: str):
 
 
 def _load(m: str) -> dict:
-    try:
-        d = json.loads(_file(m).read_text(encoding="utf-8"))
-    except Exception:
-        d = {}
+    d = store.load(_file(m))
     d.setdefault("variants", []); d.setdefault("promotions", []); d.setdefault("base_hash", "")
     return d
 
@@ -49,8 +47,7 @@ def _save(m: str, d: dict) -> None:
     for v in d["variants"]:
         v["trades"] = v["trades"][-300:]
     d["promotions"] = d["promotions"][-50:]
-    _file(m).parent.mkdir(parents=True, exist_ok=True)
-    _file(m).write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    store.save(_file(m), d)
 
 
 def _now() -> str:

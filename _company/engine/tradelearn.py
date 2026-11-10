@@ -20,6 +20,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from . import store
 from .agents import COMPANY_DIR
 
 FILE = COMPANY_DIR / "_cache" / "trade_journal.json"
@@ -32,10 +33,7 @@ MIN_TRADES = 5          # 이보다 적으면 규칙 조정 제안 안 함 (우�
 
 
 def _load() -> dict:
-    try:
-        d = json.loads(FILE.read_text(encoding="utf-8"))
-    except Exception:
-        d = {}
+    d = store.load(FILE)   # 메모리 보관 · 깨지면 백업에서 복구
     for k, v in (("trades", []), ("watch", {}), ("reviews", []), ("proposals", []), ("guard", {})):
         d.setdefault(k, v)
     return d
@@ -45,8 +43,7 @@ def _save(d: dict) -> None:
     d["trades"] = d["trades"][-500:]
     d["reviews"] = d["reviews"][-60:]
     d["proposals"] = d["proposals"][-100:]
-    FILE.parent.mkdir(parents=True, exist_ok=True)
-    FILE.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    store.save(FILE, d)
 
 
 def _now() -> str:

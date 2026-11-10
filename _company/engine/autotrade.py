@@ -34,7 +34,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import backtest as bt
-from . import picker, shadow, toss
+from . import picker, shadow, store, toss
 from . import tradelearn as tl
 from .agents import COMPANY_DIR, SHARED_DIR
 
@@ -129,10 +129,7 @@ _ctx = threading.local()        # 지금 처리 중인 시장 (스레드마다)
 
 
 def _raw_cfg() -> dict:
-    try:
-        return json.loads(CONFIG.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    return dict(store.load(CONFIG))   # 메모리 보관 (파일이 바뀌면 다시 읽음)
 
 
 def markets(raw: dict | None = None) -> list[str]:
@@ -241,7 +238,7 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
     if errors:
         return {"ok": False, "message": " · ".join(errors)}
     c.pop("market", None)
-    CONFIG.write_text(json.dumps(c, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    store.save(CONFIG, c)
     event("설정", f"모드 {c['mode']} · {'+'.join({'US': '미장', 'KR': '국장'}[m] for m in c['markets'])} · {STRAT_NAME[c['strategy']]} · "
                 f"{'현금 전부' if c['budget_mode'] == 'all_cash' else '한도 ' + format(c['max_total_krw'], ',') + '원'}"
                 + ("" if c["auto_pick"] else f" · 종목 {', '.join(c['symbols']) or '없음'}"))
@@ -273,13 +270,11 @@ def _fresh_day(s: dict, market: str) -> dict:
 
 def state() -> dict:
     with _lock:
-        try:
-            s = json.loads(_state_path().read_text(encoding="utf-8"))
-        except Exception:
-            s = {}
+        s = store.load(_state_path())   # 메모리 보관 · 깨지면 백업에서 복구
         for k, v in (("events", []), ("orders", []), ("bot_pos", {}), ("picks", {}), ("swing", {}), ("style", {}), ("buy_day", {}), ("highs", {}), ("realized_today", 0.0), ("month", {}), ("partial", {}), ("trail_mode", {}), ("hold_log", {})):
             s.setdefault(k, v)
-        s.setdefault("paper", {"cash": config()["paper_cash_krw"], "positions": {}, "realized": 0})
+        if "paper" not in s:
+            s["paper"] = {"cash": config()["paper_cash_krw"], "positions": {}, "realized": 0}
         for k, v in list(s["bot_pos"].items()):  # 예전 형식(수량만) 호환
             if not isinstance(v, dict):
                 s["bot_pos"][k] = {"qty": float(v), "avg": 0.0}
@@ -287,11 +282,9 @@ def state() -> dict:
 
 
 def _save(s: dict) -> None:
-    path = _state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     s["events"] = s["events"][-400:]
     s["orders"] = s["orders"][-400:]
-    path.write_text(json.dumps(s, ensure_ascii=False, indent=1), encoding="utf-8")
+    store.save(_state_path(), s)   # 임시 파일에 쓰고 바꿔치기 + 백업
 
 
 def event(kind: str, text: str, **extra) -> None:
@@ -974,7 +967,7 @@ def emergency_stop() -> dict:
     c = config(); was = c["mode"]
     c["mode"] = "off"
     c.pop("market", None)
-    CONFIG.write_text(json.dumps(c, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    store.save(CONFIG, c)
     canceled, errors = 0, []
     if was == "live" and toss.enabled():
         mine: set[str] = set()
@@ -1088,6 +1081,8 @@ def start(log_fn=print) -> None:
         return
 
     def tick(m: str, timers: dict) -> None:
+        for msg in store.recovered():
+            event("복구", msg)
         c = config()
         t = picker.mnow(m)
         # 장 전 준비: 미장은 뉴욕 07:00~ (프리장 켜면 00:30~), 국장은 07:30~ (평일)
