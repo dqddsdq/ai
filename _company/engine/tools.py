@@ -146,7 +146,7 @@ def save_key(tool_id: str, value: str) -> dict:
     if not t or t["type"] != "api_key":
         return {"ok": False, "message": "키를 넣을 수 없는 도구예요"}
     value = value.strip()
-    if not re.fullmatch(r"[A-Za-z0-9._@\-]{4,200}", value):
+    if not re.fullmatch(r"[A-Za-z0-9._@:\-]{4,200}", value):
         return {"ok": False, "message": "키 형식이 이상해요 (영문·숫자만, 공백 없이)"}
     env = t["env"]
     with _lock:

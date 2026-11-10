@@ -134,6 +134,18 @@ def run() -> int:
             problems += 1
             bad(str(e), "토스 개발자 화면의 클라이언트 ID·시크릿 키(같이 발급된 한 쌍)를 🧰 도구에 다시 넣어 보세요")
 
+    print("[8] 텔레그램 알림 (선택)")
+    from . import notify
+    if not notify.enabled():
+        ok("토큰 없음 — 🧰 도구에서 넣으면 폰으로 알림이 와요 (정상)")
+    else:
+        r = notify.test()
+        if r["ok"]:
+            ok(r["message"])
+        else:
+            problems += 1
+            bad(r["message"], "🧰 도구의 텔레그램 토큰을 확인하세요")
+
     print()
     if problems:
         print(f"⚠️  문제 {problems}개. 이 창을 캡처해서 보여주세요.")

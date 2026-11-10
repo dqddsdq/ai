@@ -284,6 +284,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(tlearn.decide(str(body.get("id", "")), str(body.get("action", ""))))
         if path == "/api/autotrade/scan":
             return self._json(at.scan_now())
+        if path == "/api/autotrade/notify-test":
+            from . import notify
+            return self._json(notify.test())
         if path == "/api/autotrade/preflight":
             return self._json(at.preflight())
         if path == "/api/autotrade/backtest":
@@ -907,6 +910,8 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     at.start(log)
+    from . import notify
+    notify.start(log)
     _keep_awake()
     if at.config()["mode"] != "off":
         print(f"🤖 자동매매 켜져 있음: {at.config()['mode']} (끄려면 화면의 🤖 자동매매 → 긴급 정지)")

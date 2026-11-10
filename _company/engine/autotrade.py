@@ -295,7 +295,16 @@ def event(kind: str, text: str, **extra) -> None:
         s = state()
         s["events"].append({"t": datetime.now(KST).strftime("%m-%d %H:%M:%S"), "kind": kind, "text": text, **extra})
         _save(s)
-    _log_fn(f"🤖 {'🇺🇸' if cur_market() == 'US' else '🇰🇷'} [{kind}] {text}")
+    flag = '🇺🇸' if cur_market() == 'US' else '🇰🇷'
+    _log_fn(f"🤖 {flag} [{kind}] {text}")
+    if kind in NOTIFY_KINDS and not (kind == "자동 조정" and not text.startswith(("오늘 자동으로", "모드"))) \
+            and not (kind == "실데이터" and text.startswith("점검 통과")):
+        from . import notify
+        notify.send(f"{flag} [{kind}] {text}")
+
+
+NOTIFY_KINDS = {"실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
+                "휴장", "오류", "복구", "AI 판단", "백테스트"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 
 def _mkt(sym: str) -> str:

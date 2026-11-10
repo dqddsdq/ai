@@ -129,6 +129,23 @@
         "오픈API 키 발급 화면의 시크릿 키 복사 (한 번만 보여줄 수 있어요)",
         "여기 붙여넣기"
       ]
+    },
+    {
+      "id": "telegram",
+      "name": "텔레그램 알림 봇",
+      "type": "api_key",
+      "env": "TELEGRAM_BOT_TOKEN",
+      "signup": "https://t.me/BotFather",
+      "teams": [
+        "trader"
+      ],
+      "free": true,
+      "desc": "체결·손절·정지·오류를 폰으로 알림, /상태 /정지 /가상 /끄기 명령",
+      "steps": [
+        "텔레그램에서 @BotFather 검색 → /newbot → 봇 이름 정하기",
+        "받은 토큰(123456:ABC… 형식)을 여기 붙여넣기",
+        "텔레그램에서 방금 만든 봇에게 아무 말이나 한 번 보내기 → 알림 채팅으로 자동 등록"
+      ]
     }
   ]
 }
