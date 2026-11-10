@@ -92,6 +92,16 @@ def 가상_체결은_불리하게_지정가보다_나쁘진_않게():
     assert tl.fill_px(c, 100, "BUY", limit=101) > 100           # 지정가 여유 있으면 현재가+미끄러짐
 
 
+@case
+def 확신할_때만_몰아넣기():
+    from . import autotrade as at
+    c = _cfg(focus_max_pct=50, focus_min_samples=20, focus_min_ev_pct=2)
+    assert at.focus_ok({"n": 25, "ev": 2.5}, c)
+    assert not at.focus_ok({"n": 10, "ev": 5}, c)          # 표본 부족 → 분산
+    assert not at.focus_ok({"n": 40, "ev": 1.0}, c)        # 기대 수익 부족 → 분산
+    assert not at.focus_ok({"n": 40, "ev": 5}, {**c, "focus_max_pct": 0})   # 꺼짐
+
+
 # ── 매도 규칙 ──────────────────────────────────────────
 @case
 def 단타_매도_규칙():
