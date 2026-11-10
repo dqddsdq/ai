@@ -100,10 +100,26 @@ def 설정_허용_범위():
 
 @case
 def 미수_신용_안씀():
-    import inspect
+    """현금보다 큰 매수는 토스에 보내기 전에 막히고, 미수·신용 한도는 아예 안 넘어옴"""
     from . import toss
-    src = inspect.getsource(toss)
-    assert "cashBuyingPower" in src
+    sent = []
+    orig = toss._get, toss._post
+    toss._get = lambda path, account=False, **kw: {"cashBuyingPower": "100", "marginBuyingPower": "100000", "creditLimit": "9", "currency": kw.get("currency")}
+    toss._post = lambda path, body: (sent.append(body), {"orderId": "x"})[1]
+    try:
+        bp = toss.buying_power("USD")
+        assert set(bp) == {"cashBuyingPower", "currency"}, bp
+        try:
+            toss.place_limit_order("AAPL", "BUY", 1, 150, "t1")
+            raise AssertionError("현금보다 큰 매수가 통과됨")
+        except toss.TossError:
+            pass
+        assert not sent
+        toss.place_limit_order("AAPL", "BUY", 1, 90, "t2")
+        toss.place_limit_order("AAPL", "SELL", 5, 150, "t3")   # 매도는 현금 확인 없음
+        assert len(sent) == 2
+    finally:
+        toss._get, toss._post = orig
 
 
 # ── 비용·체결 ──────────────────────────────────────────

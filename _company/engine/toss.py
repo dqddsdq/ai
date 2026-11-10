@@ -187,6 +187,15 @@ def place_limit_order(sym: str, side: str, quantity: int, price: float, client_o
         raise TossError("주문 값이 이상해요")
     body = {"symbol": symbol(sym), "side": side, "orderType": "LIMIT", "quantity": str(int(quantity)),
             "price": order_price(sym, price, side), "timeInForce": "DAY", "clientOrderId": client_order_id[:36]}
+    if side == "BUY":   # 💵 미수 방지: 보내기 직전에 '현금으로 살 수 있는 금액' 안인지 토스에 다시 확인 (매매 코드와 상관없이 여기서 막음)
+        cur = "KRW" if re.fullmatch(r"\d{6}", body["symbol"]) else "USD"
+        try:
+            cash = float(buying_power(cur).get("cashBuyingPower") or 0)
+        except (TypeError, ValueError):
+            cash = 0.0
+        need = int(quantity) * float(body["price"])
+        if need > cash + 1e-9:
+            raise TossError(f"현금 부족이라 안 보냈어요 (필요 {need:,.2f} {cur} > 현금 {cash:,.2f}) — 미수는 안 써요")
     return _post("/api/v1/orders", body) or {}
 
 
@@ -264,7 +273,9 @@ def holdings() -> dict:
 
 
 def buying_power(currency: str = "KRW") -> dict:
-    return _get("/api/v1/buying-power", account=True, currency=currency) or {}
+    """주문 가능 금액 — 💵 현금 항목만 돌려줌 (미수·신용·대출 한도는 아예 안 넘김 → 다른 코드가 실수로라도 못 씀)"""
+    d = _get("/api/v1/buying-power", account=True, currency=currency) or {}
+    return {k: v for k, v in d.items() if "cash" in k.lower() or k == "currency"}
 
 
 def _won(v) -> str:
