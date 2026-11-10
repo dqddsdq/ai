@@ -156,6 +156,31 @@ def check(sym: str, market: str) -> dict:
     return _cached(f"{market}:{sym}", lambda: _kr(sym) if market == "KR" else _us(sym))
 
 
+_busy: set[str] = set()
+
+
+def peek(sym: str, market: str) -> dict:
+    """기다리지 않는 확인: 보관된 결과가 있으면 바로, 없으면 따로(백그라운드) 확인 시작하고 {"pending": True}
+    → 공시 사이트가 느려도 자동매매(손절 확인 등)가 멈추지 않음"""
+    key = f"{market}:{sym}"
+    with _lock:
+        hit = _mem.get(key)
+        if hit and time.time() - hit[0] < TTL:
+            return hit[1]
+        if key in _busy:
+            return {"ok": False, "pending": True, "bad": [], "items": []}
+        _busy.add(key)
+
+    def run():
+        try:
+            check(sym, market)
+        finally:
+            with _lock:
+                _busy.discard(key)
+    threading.Thread(target=run, daemon=True, name=f"news-{sym}").start()
+    return {"ok": False, "pending": True, "bad": [], "items": []}
+
+
 def note(nw: dict | None) -> str:
     """주문 이유·AI 판단에 붙일 한 줄"""
     if not nw or not nw.get("ok"):

@@ -18,6 +18,8 @@ import urllib.request
 API = os.getenv("TELEGRAM_API_BASE", "https://api.telegram.org") + "/bot{token}/{method}"
 _q: "queue.Queue[str]" = queue.Queue(maxsize=200)
 _started = threading.Event()
+_reg_until = [0.0]
+_reg_who = [""]   # 채팅 등록을 받는 시각 (PC 화면에서 '텔레그램 시험'을 누른 뒤 10분만 — 남이 먼저 말 걸어 등록되는 것 방지)
 _last_err = [""]
 HELP = ("🤖 1인 기업 AI 자동매매\n/상태 — 지금 상태·보유·오늘 손익\n/정지 — 긴급 정지 (꺼짐 + 자동매매 미체결 취소)\n"
         "/가상 — 가상 매매로 전환\n/끄기 — 자동매매 끄기\n(실전 켜기는 PC 화면에서만)")
@@ -136,8 +138,13 @@ def _poller(log) -> None:
             cid = str((msg.get("chat") or {}).get("id", ""))
             if not cid:
                 continue
-            if not chat_id():   # 처음 말 건 채팅을 사장님 채팅으로 등록
+            if not chat_id() and time.time() > _reg_until[0]:
+                continue    # 등록 시간이 아니면 무시 (PC 에서 '텔레그램 시험'을 눌러야 열림)
+            if not chat_id():   # 등록 시간 안에 처음 말 건 채팅을 사장님 채팅으로 등록
                 _save_chat(cid)
+                _reg_until[0] = 0.0
+                who = (msg.get("from") or {})
+                _reg_who[0] = f"{who.get('first_name', '')} @{who.get('username', '')}".strip()
                 log("🔔 텔레그램 채팅 등록됨 (이 채팅으로 알림을 보내요)")
                 send("✅ 1인 기업 AI 알림이 연결됐어요.\n\n" + HELP)
                 continue
@@ -156,7 +163,7 @@ def start(log=print) -> None:
     threading.Thread(target=_sender, daemon=True, name="tg-send").start()
     threading.Thread(target=_poller, args=(log,), daemon=True, name="tg-poll").start()
     if enabled():
-        log("🔔 텔레그램 알림 켜짐" + ("" if chat_id() else " — 봇에게 아무 말이나 한 번 보내면 그 채팅으로 등록돼요"))
+        log("🔔 텔레그램 알림 켜짐" + ("" if chat_id() else " — 🤖 자동매매 화면에서 '텔레그램 시험'을 누르고 10분 안에 봇에게 말을 걸면 등록돼요"))
 
 
 def test() -> dict:
@@ -167,6 +174,9 @@ def test() -> dict:
         return {"ok": False, "message": f"토큰 확인 실패 ({me.get('description', _last_err[0])})"}
     name = (me.get("result") or {}).get("username", "")
     if not chat_id():
-        return {"ok": True, "message": f"봇 @{name} 연결됨 — 텔레그램에서 이 봇에게 아무 말이나 한 번 보내면 알림 채팅으로 등록돼요"}
+        _reg_until[0] = time.time() + 600
+        return {"ok": True, "message": f"봇 @{name} 연결됨 — 지금부터 10분 안에 텔레그램에서 이 봇에게 아무 말이나 보내면 그 채팅이 알림 채팅으로 등록돼요"
+                                       " (그 뒤엔 등록 안 받음 · 다른 사람 명령은 무시)"}
     send("🔔 시험 알림이에요. 잘 오면 연결 끝!")
-    return {"ok": True, "message": f"봇 @{name} 로 시험 알림을 보냈어요"}
+    return {"ok": True, "message": f"봇 @{name} 로 시험 알림을 보냈어요" + (f" (등록된 사람: {_reg_who[0]})" if _reg_who[0] else "")
+            + " — 다른 사람으로 등록됐다면 .env 의 TELEGRAM_CHAT_ID 줄을 지우고 다시 시험을 누르세요"}

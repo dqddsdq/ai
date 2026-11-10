@@ -40,8 +40,8 @@ def 토스_쓰기는_주문_생성_취소만():
 @case
 def 자기개선_보호_파일():
     from . import improve
-    need = {".env", "engine/toss.py", "engine/improve.py", "engine/tools.py",
-            "engine/notify.py", "engine/store.py", "engine/selftest.py", "_shared/autotrade.json"}
+    need = {".env", "engine/toss.py", "engine/improve.py", "engine/tools.py", "engine/doctor.py", "engine/__init__.py",
+            "engine/__main__.py", "engine/notify.py", "engine/store.py", "engine/selftest.py", "_shared/autotrade.json"}
     assert need <= improve.PROTECTED, need - improve.PROTECTED
 
 
@@ -63,17 +63,62 @@ def 텔레그램으로_실전_못_켬():
         at.save_config, at.emergency_stop = orig
 
 
+LOCKED_PY = {"toss.py", "selftest.py", "improve.py", "tools.py", "doctor.py", "notify.py", "store.py", "__init__.py", "__main__.py"}
+
+
+def scan_source(src: str, name: str = "?") -> list[str]:
+    """토스 우회 검사: 토스 주소·헤더 직접 쓰기, toss 모듈 내부(_token·_post·_http 등) 접근, toss 함수 바꿔치기"""
+    import ast
+    bad = []
+    tree = ast.parse(src)
+    alias = {"toss"}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom):
+            mod = n.module or ""
+            for a in n.names:
+                if a.name == "toss":
+                    alias.add(a.asname or "toss")
+                if mod.endswith("toss") and (a.name == "*" or (a.name.startswith("_") and a.name != "_get")):
+                    bad.append(f"{name}:{n.lineno} toss 내부 가져오기 ({a.name})")
+        elif isinstance(n, ast.Import):
+            for a in n.names:
+                if a.name.endswith(".toss") or a.name == "toss":
+                    alias.add(a.asname or a.name.split(".")[-1])
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and ("tossinvest" in n.value.lower()):
+            bad.append(f"{name}:{n.lineno} 토스 주소·헤더 직접 사용")
+        elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in alias:
+            if n.attr.startswith("_") and n.attr != "_get":
+                bad.append(f"{name}:{n.lineno} toss.{n.attr} 접근")
+            if isinstance(n.ctx, (ast.Store, ast.Del)):
+                bad.append(f"{name}:{n.lineno} toss.{n.attr} 바꿔치기")
+        elif isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in ("getattr", "setattr", "delattr", "vars") \
+                and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id in alias:
+            bad.append(f"{name}:{n.lineno} {n.func.id}(toss, …)")
+        elif isinstance(n, ast.Constant) and n.value == "sys.modules":
+            pass
+        elif isinstance(n, ast.Attribute) and n.attr == "modules" and isinstance(n.value, ast.Name) and n.value.id == "sys":
+            bad.append(f"{name}:{n.lineno} sys.modules 조작")
+    return bad
+
+
 @case
-def 매매_코드는_토스_API_직접_호출_안함():
-    from . import improve
-    base = Path(__file__).resolve().parent.parent
-    for rel in sorted(improve.TRADING):
-        p = base / rel
-        if not p.exists():
+def 엔진_코드는_토스를_우회하지_않음():
+    base = Path(__file__).resolve().parent
+    bad = []
+    for p in sorted(base.rglob("*.py")):
+        if p.name in LOCKED_PY and p.parent == base or "__pycache__" in p.parts:
             continue
-        src = p.read_text(encoding="utf-8")
-        for bad in ("tossinvest.com", "X-Tossinvest", "Authorization", "toss._post", "toss._token", "transfer", "withdraw"):
-            assert bad not in src, f"{rel} 에 '{bad}' 가 있어요 — 토스 요청은 engine/toss.py 함수로만"
+        bad += scan_source(p.read_text(encoding="utf-8"), p.relative_to(base.parent).as_posix())
+    assert not bad, bad[:5]
+    # 검사기 자체도 확인
+    assert scan_source("from . import toss\ntoss._token()")
+    assert scan_source("from . import toss as t\nt._post('/x', {})")
+    assert scan_source("from .toss import _http")
+    assert scan_source("from . import toss\ntoss.place_limit_order = None")
+    assert scan_source("import urllib\nu='https://openapi.TOSSINVEST.com'")
+    assert scan_source("from . import toss\ngetattr(toss, '_tok')")
+    assert not scan_source("from . import toss\ntoss._get('/api/v1/stocks')\ntoss.prices(['A'])")
 
 
 @case
@@ -165,6 +210,20 @@ def 공시_악재_판정():
     assert len(u["bad"]) == 3 and len(u["items"]) == 2, u
     assert news.note({"ok": True, "src": "SEC", "bad": [], "items": []}).endswith("급등 이유 모름)")
     assert news.note({"ok": False}) == ""
+
+
+@case
+def 공시_확인이_느려도_매매가_안_멈춤():
+    import time
+    from . import news
+    orig = news.check
+    news.check = lambda sym, m: (time.sleep(2), {"ok": True, "bad": [], "items": []})[1]
+    try:
+        t0 = time.time()
+        r = news.peek("ZZZTEST", "US")
+        assert r.get("pending") and time.time() - t0 < 0.5, r
+    finally:
+        news.check = orig
 
 
 # ── 매도 규칙 ──────────────────────────────────────────

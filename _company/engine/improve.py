@@ -30,6 +30,7 @@ HISTORY = SHARED_DIR / "improvements.json"
 EDITABLE_DIRS = ("engine", "_agents", "_shared")
 # 🔒 절대 못 고치는 파일: 키·돈 안전장치(토스 주문 생성·취소만)·승인 절차·자체 점검·기록 저장·텔레그램(실전 불가)
 PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py", "engine/toss.py", "engine/notify.py",
+             "engine/__init__.py", "engine/__main__.py", "engine/doctor.py",
              "engine/store.py", "engine/selftest.py", "_shared/autotrade.json", "_shared/improvements.json", "_shared/tool_requests.json"}
 # ⚠️ 고칠 수 있지만 조심할 매매 코드: 사장님 승인 + 자체 점검(돈 이동·실전 켜기·미수·정지 규칙) 통과해야 적용
 TRADING = {"engine/autotrade.py", "engine/tradelearn.py", "engine/picker.py", "engine/shadow.py", "engine/backtest.py", "engine/news.py",
@@ -158,8 +159,26 @@ def changes(job_id: str) -> list[dict]:
     return out
 
 
+def _clean_box(box: Path) -> None:
+    """검사 전에 복사본 정리: 비교 대상이 아닌 파일(캐시 .pyc·실행 파일·폴더 밖 파일)은 지움 → 검사를 속이는 파일 방지"""
+    keep = set(_files(box).values())
+    for f in sorted(box.rglob("*"), reverse=True):
+        top = f.relative_to(box).parts[0]
+        if f.is_file() and (top not in EDITABLE_DIRS or f not in keep):
+            f.unlink(missing_ok=True)
+        elif f.is_dir() and (top not in EDITABLE_DIRS or "__pycache__" in f.parts) and not any(f.iterdir()):
+            f.rmdir()
+
+
+def _env() -> dict:
+    e = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+    e.update(PYTHONNOUSERSITE="1", PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
+    return e
+
+
 def _checks(box: Path, files: list[dict]) -> list[dict]:
     res = []
+    _clean_box(box)
     if any(f["protected"] for f in files):
         res.append({"name": "보호 파일", "ok": False, "detail": "보호 파일을 건드려서 적용할 수 없어요: "
                     + ", ".join(f["path"] for f in files if f["protected"])})
@@ -176,9 +195,9 @@ def _checks(box: Path, files: list[dict]) -> list[dict]:
                 bad.append(f"{f['path']}: {(r.stderr or '').strip()[-200:]}")
         res.append({"name": "파이썬 문법", "ok": not bad, "detail": "; ".join(bad) or f"{len(py)}개 파일 통과"})
         r = subprocess.run([sys.executable, "-c", "import engine.web, engine.team, engine.providers"],
-                           cwd=box, capture_output=True, text=True, timeout=120)
+                           cwd=box, capture_output=True, text=True, timeout=120, env=_env())
         res.append({"name": "앱 불러오기", "ok": r.returncode == 0, "detail": "정상" if r.returncode == 0 else (r.stderr or "")[-300:]})
-        r = subprocess.run([sys.executable, "-m", "engine.selftest"], cwd=box, capture_output=True, text=True, timeout=180)
+        r = subprocess.run([sys.executable, "-B", "-m", "engine.selftest"], cwd=box, capture_output=True, text=True, timeout=180, env=_env())
         tail = (r.stdout or "").strip().splitlines()[-1:] or [""]
         res.append({"name": "자체 점검 (매매·안전 규칙)", "ok": r.returncode == 0,
                     "detail": tail[0] if r.returncode == 0 else ((r.stdout or "") + (r.stderr or ""))[-400:]})

@@ -177,7 +177,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     continue
                 ft = cd.get("features") or {}
                 nw = cd.get("news") or {}
-                if nw.get("ok") and nw.get("bad"):   # 📰 악재 공시는 모든 조합이 안 삼
+                if nw.get("pending") or (nw.get("ok") and nw.get("bad")):   # 📰 확인 중이거나 악재 공시면 모든 조합이 안 삼 (실전과 같게)
                     continue
                 n_ratio = float(vc.get("news_unknown_ratio", 1)) if nw.get("ok") and not nw.get("items") else 1.0
                 if cd["style"] == "surge":

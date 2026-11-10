@@ -771,7 +771,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     picked = sorted(cands, key=lambda k: (cands[k]["est"]["ev"], cands[k]["score"]), reverse=True)
     if c["news_on"] and not exits_only and news.enabled(market):   # 📰 상위 후보 공시 확인 (20분 보관) → 실전·그림자·AI 판단 공통
         for k in [k for k in picked if k not in pos][:8]:
-            cands[k]["news"] = news.check(k, market)
+            cands[k]["news"] = news.peek(k, market)   # 기다리지 않음 (처음엔 '확인 중', 다음 바퀴에 결과)
             if cands[k]["news"].get("ok"):
                 cands[k]["features"]["news"] = "악재" if cands[k]["news"]["bad"] else "있음" if cands[k]["news"]["items"] else "없음"
     if cands:
@@ -872,6 +872,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             buy_px = price * (1 + c["limit_slip_pct"] / 100) if style == "surge" else price
             est, size_note = cands[sym]["est"], ""
             nw = cands[sym].get("news")
+            if nw and nw.get("pending"):
+                results.append(f"{sym}: 📰 공시 확인 중 (끝나면 다음 바퀴에 판단)"); continue
             if nw and nw.get("ok") and nw["bad"]:   # 📰 악재 공시 → 안 삼
                 msg = news.note(nw)
                 if not _seen_news_block(sym):
