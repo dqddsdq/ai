@@ -110,7 +110,10 @@ DEFAULTS = {
     "min_win_prob": 0,             # 추정 승률이 이보다 낮으면 안 삼 (0 = 안 씀)
     "ai_chart_check": False,       # 사기 직전 AI 가 1분봉 차트 그림을 보고 찬성/반대 (10~20초 늦어짐, 기본 꺼짐)
     "paper_cash_krw": 1000000,
-    "usd_krw": 1400,               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
+    "usd_krw": 1400,
+    "fee_us_pct": 0.1,             # 미장 수수료(%) 사고팔 때 각각
+    "fee_kr_pct": 0.015,           # 국장 수수료(%) 사고팔 때 각각
+    "tax_kr_pct": 0.18,            # 국장 증권거래세(%) 팔 때만 (세법 바뀌면 고치기)               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
 }
 NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_window_days": (1, 90), "ai_max_per_hour": (0, 600),
         "ai_hold_check_min": (1, 120), "stop_min": (0.5, 20), "stop_max": (1, 30), "limit_min_mult": (0.1, 1), "limit_max_mult": (1, 20), "loss_pct_min": (0.5, 20),
@@ -119,7 +122,7 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000)}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2)}
 CHOICES = {"mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -561,7 +564,8 @@ def _reconcile(fx: float) -> None:
                     s["buy_day"].setdefault(rec["symbol"], datetime.now(KST).strftime("%Y-%m-%d"))
                     tl.open_trade(rec["symbol"], delta, fill_px, rec.get("features"), "live", s["day"])
                 else:
-                    gain = (fill_px - bp["avg"]) * delta * f
+                    mk_ = _mkt(rec["symbol"]); c_ = config()   # 수수료·세금 포함 실제 손익
+                    gain = (fill_px * (1 - tl.side_cost(c_, mk_, "SELL") / 100) - bp["avg"] * (1 + tl.side_cost(c_, mk_, "BUY") / 100)) * delta * f
                     s["realized_today"] = float(s.get("realized_today", 0)) + gain
                     s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                     left = bp["qty"] - delta
@@ -923,7 +927,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
             s = state(); p = s["paper"]
             cur = p["positions"].get(sym, {"qty": 0, "avg": 0})
             if side == "BUY":
-                p["cash"] -= qty * p_ * f
+                p["cash"] -= qty * p_ * f * (1 + tl.side_cost(config(), _mkt(sym), "BUY") / 100)
                 tot = cur["qty"] + qty
                 p["positions"][sym] = {"qty": tot, "avg": (cur["avg"] * cur["qty"] + p_ * qty) / tot}
                 s["highs"][sym] = max(float(s["highs"].get(sym, 0)), p_)
@@ -931,8 +935,9 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
                 s["buy_day"].setdefault(sym, datetime.now(KST).strftime("%Y-%m-%d"))
                 tl.open_trade(sym, qty, p_, rec.get("features"), "paper", s["day"])
             else:
-                p["cash"] += qty * p_ * f
-                gain = (p_ - cur["avg"]) * qty * f
+                c_ = config(); mk_ = _mkt(sym)   # 수수료·세금 포함
+                p["cash"] += qty * p_ * f * (1 - tl.side_cost(c_, mk_, "SELL") / 100)
+                gain = (p_ * (1 - tl.side_cost(c_, mk_, "SELL") / 100) - cur["avg"] * (1 + tl.side_cost(c_, mk_, "BUY") / 100)) * qty * f
                 p["realized"] += gain; s["realized_today"] = float(s.get("realized_today", 0)) + gain
                 s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                 left = cur["qty"] - qty

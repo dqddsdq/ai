@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import store
+from . import tradelearn as tl
 from .agents import COMPANY_DIR
 
 KST = timezone(timedelta(hours=9))
@@ -151,9 +152,11 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     p["partial"] = True
                     continue
                 px = price * (1 - vc["limit_slip_pct"] / 100) if p["style"] == "surge" else price
-                v["cash"] += qty * px * f
-                v["trades"].append({"t": _now(), "sym": sym, "style": p["style"], "qty": qty, "pnl_pct": round((px / p["avg"] - 1) * 100, 2),
-                                    "pnl_krw": round((px - p["avg"]) * qty * f), "why": why[:60], "final": side == "SELL"})
+                sc, bc = tl.side_cost(vc, market, "SELL") / 100, tl.side_cost(vc, market, "BUY") / 100   # 수수료·세금 포함
+                v["cash"] += qty * px * f * (1 - sc)
+                net = px * (1 - sc) / (p["avg"] * (1 + bc)) - 1
+                v["trades"].append({"t": _now(), "sym": sym, "style": p["style"], "qty": qty, "pnl_pct": round(net * 100, 2),
+                                    "pnl_krw": round(net * p["avg"] * (1 + bc) * qty * f), "why": why[:60], "final": side == "SELL"})
                 if side == "SELL":
                     v["pos"].pop(sym)
                 else:
@@ -182,7 +185,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 qty = int(min(per_pos, v["cash"]) // (px * f))
                 if qty < 1:
                     continue
-                v["cash"] -= qty * px * f
+                v["cash"] -= qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
                 v["buys_today"] += 1
                 v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False,
                                  "buy_day": datetime.now(KST).strftime("%Y-%m-%d")}

@@ -127,6 +127,7 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
                 samples.append({"sym": sym, "day": day, "t": x["t"], "px": x["pick_px"], "change": x.get("change") or 0,
                                 "pre": bool(x.get("pre")), "ratio": x.get("ratio")})
     samples = samples[-60:]
+    cost = tl.rt_cost(cfg, market)   # 사고팔기 한 번 비용(%)
     log(f"📼 {'미장' if market == 'US' else '국장'} 백테스트: 단타 표본 {len(samples)}개 1분봉 받는 중")
     paths = []
     for s in samples:
@@ -152,14 +153,14 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
                     continue
                 r = _sim_surge(path, s["px"], prm, cfg, signal_surge, market)
                 if r is not None:
-                    rets.append(r)
+                    rets.append(r - cost)   # 수수료·세금 빼고
             if len(rets) >= max(5, len(paths) // 3):
                 results.append({"params": prm, **_score(rets, len(paths))})
     results.sort(key=lambda r: (r["avg"], r["n"]), reverse=True)
     # 현재 규칙 기준선
     cur = {k: cfg[k] for k in ("stop_loss_pct", "partial_tp_pct", "trail_pct", "surge_min_change_pct", "surge_volume_ratio", "pre_volume_ratio")}
-    base_rets = [r for r in (_sim_surge(p, s["px"], cur, cfg, signal_surge, market) for s, p in paths
-                             if s["change"] >= cur["surge_min_change_pct"]) if r is not None]
+    base_rets = [r - cost for r in (_sim_surge(p, s["px"], cur, cfg, signal_surge, market) for s, p in paths
+                                    if s["change"] >= cur["surge_min_change_pct"]) if r is not None]
     # 스윙
     sw_results = []
     sw_samples = [h for h in swing_hist if h.get("day", "") >= since_day][-20:]
@@ -186,7 +187,7 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
                         continue
                     r = _sim_swing(closes[idx + 1:idx + 1 + int(cfg["swing_max_days"])], closes[idx], prm, cfg, signal_swing, closes[max(0, idx - 60):idx + 1])
                     if r is not None:
-                        rets.append(r)
+                        rets.append(r - cost)
             if len(rets) >= 3:
                 sw_results.append({"params": prm, **_score(rets, len(rets))})
         sw_results.sort(key=lambda r: (r["avg"], r["n"]), reverse=True)

@@ -61,6 +61,18 @@ def _ts(t: dict) -> str:
     return (t.get("features") or {}).get("style") or "surge"
 
 
+def side_cost(cfg: dict, market: str, side: str) -> float:
+    """한쪽 거래 비용(%): 미장 수수료 / 국장 수수료 (+ 매도 때 증권거래세)"""
+    if market == "KR":
+        return float(cfg.get("fee_kr_pct", 0.015)) + (float(cfg.get("tax_kr_pct", 0.18)) if side == "SELL" else 0.0)
+    return float(cfg.get("fee_us_pct", 0.1))
+
+
+def rt_cost(cfg: dict, market: str) -> float:
+    """사고팔기 한 번의 총비용(%)"""
+    return side_cost(cfg, market, "BUY") + side_cost(cfg, market, "SELL")
+
+
 def _pnl(t: dict) -> float:
     q = sum(x["qty"] for x in t["exits"])
     return sum(x["qty"] * (x["px"] / t["entry_px"] - 1) for x in t["exits"]) / q * 100 if q and t["entry_px"] else 0.0
@@ -111,7 +123,9 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
         t["mfe"], t["mae"] = max(t["mfe"], round(r, 2)), min(t["mae"], round(r, 2))
         if closed_all:
             t["closed"] = True
-            t["pnl_pct"] = round(_pnl(t), 2)
+            t["gross_pct"] = round(_pnl(t), 2)
+            t["cost_pct"] = round(rt_cost(cfg, _tm(t)), 3)
+            t["pnl_pct"] = round(t["gross_pct"] - t["cost_pct"], 2)   # 수수료·세금 뺀 실제 수익률
             t["exit_kind"] = _kind(t["exits"][-1]["reason"])
             try:
                 t["hold_min"] = round((datetime.strptime(t["exits"][-1]["t"], "%Y-%m-%d %H:%M:%S") -
