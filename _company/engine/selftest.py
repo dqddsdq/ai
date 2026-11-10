@@ -41,7 +41,7 @@ def 토스_쓰기는_주문_생성_취소만():
 def 자기개선_보호_파일():
     from . import improve
     need = {".env", "engine/toss.py", "engine/autotrade.py", "engine/tradelearn.py", "engine/improve.py", "engine/tools.py",
-            "engine/notify.py", "engine/store.py", "engine/selftest.py", "_shared/autotrade.json"}
+            "engine/notify.py", "engine/store.py", "engine/selftest.py", "engine/news.py", "_shared/autotrade.json"}
     assert need <= improve.PROTECTED, need - improve.PROTECTED
 
 
@@ -100,6 +100,20 @@ def 확신할_때만_몰아넣기():
     assert not at.focus_ok({"n": 10, "ev": 5}, c)          # 표본 부족 → 분산
     assert not at.focus_ok({"n": 40, "ev": 1.0}, c)        # 기대 수익 부족 → 분산
     assert not at.focus_ok({"n": 40, "ev": 5}, {**c, "focus_max_pct": 0})   # 꺼짐
+
+
+@case
+def 공시_악재_판정():
+    from . import news
+    k = news.classify_kr(["주요사항보고서(유상증자결정)", "전환사채권발행결정", "주권매매거래정지해제", "무상증자결정",
+                          "단일판매ㆍ공급계약체결", "임원ㆍ주요주주특정증권등소유상황보고서", "감자결정", "상장폐지사유발생"])
+    assert k["bad"] == ["주요사항보고서(유상증자결정)", "전환사채권발행결정", "감자결정", "상장폐지사유발생"], k
+    assert k["items"] == ["주권매매거래정지해제", "무상증자결정", "단일판매ㆍ공급계약체결"], k
+    u = news.classify_us([{"form": "424B5"}, {"form": "8-K", "items": "3.01"}, {"form": "8-K", "items": "2.02,9.01"},
+                          {"form": "4"}, {"form": "S-3"}, {"form": "8-K", "items": "1.01"}])
+    assert len(u["bad"]) == 3 and len(u["items"]) == 2, u
+    assert news.note({"ok": True, "src": "SEC", "bad": [], "items": []}).endswith("급등 이유 모름)")
+    assert news.note({"ok": False}) == ""
 
 
 # ── 매도 규칙 ──────────────────────────────────────────

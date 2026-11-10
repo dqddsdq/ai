@@ -146,6 +146,24 @@
         "받은 토큰(123456:ABC… 형식)을 여기 붙여넣기",
         "텔레그램에서 방금 만든 봇에게 아무 말이나 한 번 보내기 → 알림 채팅으로 자동 등록"
       ]
+    },
+    {
+      "id": "sec_edgar",
+      "name": "SEC 공시 (미장)",
+      "type": "api_key",
+      "env": "SEC_CONTACT_EMAIL",
+      "signup": "https://www.sec.gov/os/accessing-edgar-data",
+      "teams": [
+        "trader",
+        "stock"
+      ],
+      "free": true,
+      "desc": "미장 자동매매가 사기 전에 최근 24시간 공시(증자·상장폐지 등 악재, 실적·계약 같은 급등 이유)를 확인",
+      "steps": [
+        "가입·키 없음 (무료)",
+        "SEC 규칙상 접속할 때 연락용 이메일을 밝혀야 해요 → 사장님 이메일을 여기 입력",
+        "이 이메일은 SEC(sec.gov)에만 보내져요"
+      ]
     }
   ]
 }

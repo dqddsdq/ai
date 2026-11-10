@@ -34,7 +34,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import backtest as bt
-from . import picker, shadow, store, toss
+from . import news, picker, shadow, store, toss
 from . import tradelearn as tl
 from .agents import COMPANY_DIR, SHARED_DIR
 
@@ -108,6 +108,8 @@ DEFAULTS = {
     "prob_sizing": True,           # 학습 기록으로 승률을 추정해 살 금액 조절 (25%~100%, 한도는 절대 안 넘음)
     "min_size_ratio": 0.25,        # 승률이 낮을 때 최소로 사는 비율
     "min_win_prob": 0,             # 추정 승률이 이보다 낮으면 안 삼 (0 = 안 씀)
+    "news_on": True,               # 📰 사기 전에 공시 확인 (국장 DART · 미장 SEC) — 악재(증자·CB·감자·상장폐지 등)면 안 삼
+    "news_unknown_ratio": 1.0,     #    공시가 하나도 없는 '이유 모르는 급등'이면 금액 × 이 값 (1 = 안 줄임 · 그림자 매매로 0.5·0.25 비교 후 자동 교체)
     "focus_max_pct": 50,           # 🎯 확신할 때만 몰아넣기: 조건 맞으면 한 종목에 예산의 최대 이 %까지 (0 = 안 씀, 늘 똑같이 나눔)
     "focus_min_samples": 20,       #    조건 ① 비슷한 지난 거래가 이 건수 이상
     "focus_min_ev_pct": 2,         #    조건 ② 기대 수익(수수료 뺀 값)이 +이 % 이상
@@ -126,7 +128,7 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20)}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1)}
 CHOICES = {"mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -307,7 +309,7 @@ def event(kind: str, text: str, **extra) -> None:
         notify.send(f"{flag} [{kind}] {text}")
 
 
-NOTIFY_KINDS = {"실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
+NOTIFY_KINDS = {"공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
                 "휴장", "오류", "복구", "AI 판단", "백테스트"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 
@@ -402,6 +404,17 @@ def signal_swing(closes: list[float], price: float, qty: float, avg: float, high
     if days >= c["swing_max_days"]:
         return "SELL", f"[스윙] {days}일 보유 → 정리 (평단 대비 {pnl:+.1f}%)"
     return "HOLD", f"[스윙] 보유 유지 {days}일째 (평단 대비 {pnl:+.1f}% · 최고 +{peak:.1f}%)"
+
+
+_news_seen: dict[str, float] = {}
+
+
+def _seen_news_block(sym: str) -> bool:
+    """같은 종목 악재 알림은 1시간에 한 번만"""
+    if time.time() - _news_seen.get(sym, 0) < 3600:
+        return True
+    _news_seen[sym] = time.time()
+    return False
 
 
 def focus_ok(est: dict | None, c: dict) -> bool:
@@ -756,6 +769,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         cd["est"] = tl.estimate(cd["features"], c)
         cd["reason"] += f" · 추정 승률 {cd['est']['p'] * 100:.0f}%({cd['est']['n']}건) · 기대 {cd['est']['ev']:+.2f}%"
     picked = sorted(cands, key=lambda k: (cands[k]["est"]["ev"], cands[k]["score"]), reverse=True)
+    if c["news_on"] and not exits_only and news.enabled(market):   # 📰 상위 후보 공시 확인 (20분 보관) → 실전·그림자·AI 판단 공통
+        for k in [k for k in picked if k not in pos][:8]:
+            cands[k]["news"] = news.check(k, market)
+            if cands[k]["news"].get("ok"):
+                cands[k]["features"]["news"] = "악재" if cands[k]["news"]["bad"] else "있음" if cands[k]["news"]["items"] else "없음"
     if cands:
         with _lock:
             s2 = state(); s2["cands"] = {k: {"style": v["style"], "reason": v["reason"], "ev": v["est"]["ev"], "p": v["est"]["p"]} for k, v in cands.items()}; _save(s2)
@@ -853,6 +871,13 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 이미 {c['pick_count']}종목 보유 중"); continue
             buy_px = price * (1 + c["limit_slip_pct"] / 100) if style == "surge" else price
             est, size_note = cands[sym]["est"], ""
+            nw = cands[sym].get("news")
+            if nw and nw.get("ok") and nw["bad"]:   # 📰 악재 공시 → 안 삼
+                msg = news.note(nw)
+                if not _seen_news_block(sym):
+                    event("공시 악재", f"{sym} 안 삼 — {msg}", symbol=sym)
+                tl.flag_watch(wday, sym, news="악재")
+                results.append(f"{sym}: {msg} → 안 삼"); continue
             cap_pos, cap_ord = caps["position"], caps["order"]
             if focus_ok(est, c) and caps["total"] * c["focus_max_pct"] / 100 > cap_pos:   # 🎯 확신할 때만 몰아넣기 ('종목당 최대'는 그대로 지킴)
                 cap_pos = _cap(caps["total"] * c["focus_max_pct"] / 100, c["max_position_krw"])
@@ -860,6 +885,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 if cap_pos > caps["position"]:
                     size_note = f"🎯 확신 집중: 비슷한 거래 {est['n']}건 기대 {est['ev']:+.2f}% → 한도 {cap_pos:,.0f}원"
             budget = min(max(caps["order"], cap_ord), cap_pos - held["qty"] * price * f, caps["total"] - invested, cash_local * fx)
+            if nw and nw.get("ok") and not nw["items"] and c["news_unknown_ratio"] < 1:   # 이유 모르는 급등 → 비중 축소
+                budget *= c["news_unknown_ratio"]
+                size_note = " · ".join(x for x in (size_note, f"📰 급등 이유 모름 → 금액 {c['news_unknown_ratio'] * 100:.0f}%") if x)
             full_budget = budget
             if c["prob_sizing"]:   # 🎲 비슷한 조건의 지난 거래로 승률 추정 → 금액 조절
                 ratio_, note_ = tl.size_ratio(est, c)
@@ -903,7 +931,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             feat = dict(cands[sym]["features"])
             if c["ai_decide"] and why:
                 feat["ai_decide"] = "산다"
-            results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · 🎲 {size_note}" if size_note else "")
+            nnote = news.note(nw)
+            results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · {nnote}" if nnote else "") + (f" · 🎲 {size_note}" if size_note else "")
                                     + (f" · 🤖 AI: {why}" if why else ""), live, fx, chart=chart_id, est=est, feat=feat, quote=price))
             invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
         else:
@@ -1229,7 +1258,7 @@ def _summary_one() -> str:
 
 
 # ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
-LABELS = {"focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+LABELS = {"news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -1635,7 +1664,9 @@ def _ai_decide_buy(sym: str, cd: dict, price: float, c: dict):
         name, img = "", None
     e = cd["est"]
     prompt = (f"{'스윙(며칠 보유)' if cd['style'] == 'swing' else '단타(그날 정리)'} 매수 후보 {sym}, 현재가 {price}.\n"
-              f"고른 이유: {cd['reason']}\n학습 기록 추정: 승률 {e['p'] * 100:.0f}% ({e['basis']}), 기대 수익 {e['ev']:+.2f}%\n"
+              f"고른 이유: {cd['reason']}\n"
+              + (f"최근 공시: {news.note(cd.get('news'))} (급등 이유가 공시로 설명되면 좋은 신호, 이유가 없으면 신중히)\n" if news.note(cd.get('news')) else "")
+              + f"학습 기록 추정: 승률 {e['p'] * 100:.0f}% ({e['basis']}), 기대 수익 {e['ev']:+.2f}%\n"
               f"규칙: 손절 -{c['swing_stop_pct' if cd['style'] == 'swing' else 'stop_loss_pct']}%. "
               f"첨부 {'일봉' if iv == '1d' else '1분봉'} 차트(이동평균·VWAP·거래량)를 보고 지금 살지, 산다면 금액을 얼마나(0.25~1) 할지 정하세요. "
               "꼭대기 추격·거래량 감소 하락·지지선 이탈이면 안 사요. 수익률을 최대화하는 쪽으로.\n"

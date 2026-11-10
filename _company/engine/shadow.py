@@ -24,13 +24,14 @@ from .agents import COMPANY_DIR
 KST = timezone(timedelta(hours=9))
 VIRTUAL = 1_000_000
 TUNE_KEYS = ["stop_loss_pct", "partial_tp_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "surge_min_change_pct",
-             "surge_volume_ratio", "pre_volume_ratio", "swing_stop_pct", "swing_trail_pct"]
+             "surge_volume_ratio", "pre_volume_ratio", "swing_stop_pct", "swing_trail_pct", "news_unknown_ratio"]
 GRID = {"stop_loss_pct": [2, 2.5, 3, 4, 5], "partial_tp_pct": [0, 3, 4, 5, 6, 8], "trail_pct": [3, 4, 5, 6],
         "trail_wide_after_pct": [8, 10, 15], "trail_wide_pct": [5, 6, 8], "surge_min_change_pct": [5, 7, 10, 15],
-        "surge_volume_ratio": [2, 3, 5, 8], "pre_volume_ratio": [0.1, 0.2, 0.4], "swing_stop_pct": [4, 6, 8], "swing_trail_pct": [5, 8, 12]}
+        "surge_volume_ratio": [2, 3, 5, 8], "pre_volume_ratio": [0.1, 0.2, 0.4], "swing_stop_pct": [4, 6, 8], "swing_trail_pct": [5, 8, 12],
+        "news_unknown_ratio": [1, 0.5, 0.25]}
 LABEL = {"stop_loss_pct": "손절", "partial_tp_pct": "나눠팔기", "trail_pct": "고점대비", "trail_wide_after_pct": "넓힘기준",
          "trail_wide_pct": "넓은고점대비", "surge_min_change_pct": "급등최소", "surge_volume_ratio": "거래량배수",
-         "pre_volume_ratio": "프리장거래량", "swing_stop_pct": "스윙손절", "swing_trail_pct": "스윙고점대비"}
+         "pre_volume_ratio": "프리장거래량", "swing_stop_pct": "스윙손절", "swing_trail_pct": "스윙고점대비", "news_unknown_ratio": "이유모를때금액"}
 _lock = threading.RLock()
 
 
@@ -92,6 +93,8 @@ def ensure(c: dict, market: str, seeds: list[dict] | None = None, force: bool = 
             return d
         rnd = random.Random(_hash(base) + market)
         vs = [_new_variant("현재", base, "현재 실전 규칙")]
+        nb = {**base, "news_unknown_ratio": 0.5 if float(base.get("news_unknown_ratio", 1)) >= 1 else 1}   # 📰 공시 반영 비교용
+        vs.append(_new_variant("공시비교", nb, "이유 모르는 급등 금액 비교"))
         for sd in (seeds or [])[:3]:
             p = {**base, **{k: v for k, v in sd.items() if k in TUNE_KEYS}}
             if _hash(p) not in {_hash(v["params"]) for v in vs}:
@@ -173,6 +176,10 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 if not q or not market_open(sym, "BUY"):
                     continue
                 ft = cd.get("features") or {}
+                nw = cd.get("news") or {}
+                if nw.get("ok") and nw.get("bad"):   # 📰 악재 공시는 모든 조합이 안 삼
+                    continue
+                n_ratio = float(vc.get("news_unknown_ratio", 1)) if nw.get("ok") and not nw.get("items") else 1.0
                 if cd["style"] == "surge":
                     if (ft.get("change") or 0) < vc["surge_min_change_pct"]:
                         continue
@@ -184,7 +191,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 f = 1 if market == "KR" else fx
                 lim = q["price"] * (1 + vc["limit_slip_pct"] / 100) if cd["style"] == "surge" else q["price"]
                 px = tl.fill_px(vc, q["price"], "BUY", lim)
-                qty = int(min(per_pos, v["cash"]) // (px * f))
+                qty = int(min(per_pos * n_ratio, v["cash"]) // (px * f))
                 if qty < 1:
                     continue
                 v["cash"] -= qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
