@@ -111,6 +111,7 @@ DEFAULTS = {
     "ai_chart_check": False,       # 사기 직전 AI 가 1분봉 차트 그림을 보고 찬성/반대 (10~20초 늦어짐, 기본 꺼짐)
     "paper_cash_krw": 1000000,
     "usd_krw": 1400,
+    "sim_slip_pct": 0.1,           # 가상 체결 미끄러짐(%) — 가상 매매·그림자·백테스트가 실전보다 좋게 나오지 않게
     "fee_us_pct": 0.1,             # 미장 수수료(%) 사고팔 때 각각
     "fee_kr_pct": 0.015,           # 국장 수수료(%) 사고팔 때 각각
     "tax_kr_pct": 0.18,            # 국장 증권거래세(%) 팔 때만 (세법 바뀌면 고치기)               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
@@ -122,7 +123,7 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2)}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2)}
 CHOICES = {"mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -886,7 +887,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if c["ai_decide"] and why:
                 feat["ai_decide"] = "산다"
             results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · 🎲 {size_note}" if size_note else "")
-                                    + (f" · 🤖 AI: {why}" if why else ""), live, fx, chart=chart_id, est=est, feat=feat))
+                                    + (f" · 🤖 AI: {why}" if why else ""), live, fx, chart=chart_id, est=est, feat=feat, quote=price))
             invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
         else:
             part = side == "SELL_PART"
@@ -898,7 +899,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if qty < 1:
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if style == "surge" else price
-            results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part))
+            results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part, quote=price))
     if c["shadow_on"] and not dry:   # 🧪 같은 후보·시세로 규칙 조합들을 가상으로
         try:
             shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
@@ -909,7 +910,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
 
 
 def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float, partial: bool = False,
-             chart: str = "", est: dict | None = None, feat: dict | None = None) -> str:
+             chart: str = "", est: dict | None = None, feat: dict | None = None, quote: float | None = None) -> str:
     coid = "cai-" + uuid.uuid4().hex[:20]
     px = toss.order_price(sym, price, side)
     label = f"{sym} {'매수' if side == 'BUY' else '매도'} {qty}주 @ {px}"
@@ -938,7 +939,8 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
             return f"{sym}: 주문 거절 — {e}"
     else:
         f = 1 if _mkt(sym) == "KR" else fx
-        p_ = float(px)
+        p_ = tl.fill_px(config(), float(quote or price), side, float(px))   # 현재가 + 미끄러짐, 지정가보다 나쁘게는 X
+        rec["fill"] = round(p_, 4)
         with _lock:
             s = state(); p = s["paper"]
             cur = p["positions"].get(sym, {"qty": 0, "avg": 0})

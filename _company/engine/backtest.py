@@ -72,7 +72,9 @@ def _sim_surge(path: list[dict], entry: float, params: dict, base_cfg: dict, sig
     if not path:
         return None
     vc = {**base_cfg, **params}
-    px = entry * (1 + vc["limit_slip_pct"] / 100)
+    from .tradelearn import fill_px
+    px = fill_px(vc, entry, "BUY", entry * (1 + vc["limit_slip_pct"] / 100))
+    sell = lambda p_: fill_px(vc, p_, "SELL", p_ * (1 - vc["limit_slip_pct"] / 100)) / px - 1   # noqa: E731
     qty, high, partial, got = 1.0, px, False, 0.0
     for c in path:
         mins = picker.session_minutes(market, _ts(c["t"]), extended=True)
@@ -81,25 +83,27 @@ def _sim_surge(path: list[dict], entry: float, params: dict, base_cfg: dict, sig
             side, _ = signal_surge(price, qty, px, high, mins, False, vc, partial_done=partial)
             if side == "SELL_PART":
                 part = vc["partial_tp_ratio"]
-                got += part * (price * (1 - vc["limit_slip_pct"] / 100) / px - 1)
+                got += part * sell(price)
                 qty, partial = qty - part, True
             elif side == "SELL":
-                got += qty * (price * (1 - vc["limit_slip_pct"] / 100) / px - 1)
+                got += qty * sell(price)
                 return got * 100
-    return (got + qty * (path[-1]["c"] / px - 1)) * 100
+    return (got + qty * sell(path[-1]["c"])) * 100
 
 
 def _sim_swing(closes_after: list[float], entry: float, params: dict, base_cfg: dict, signal_swing, hist: list[float]) -> float | None:
     if not closes_after:
         return None
     vc = {**base_cfg, **params}
+    from .tradelearn import fill_px
+    buy = fill_px(vc, entry, "BUY", entry)
     high = entry
     for i, price in enumerate(closes_after):
         high = max(high, price)
         side, _ = signal_swing(hist + closes_after[:i], price, 1, entry, high, i + 1, vc)
         if side == "SELL":
-            return (price / entry - 1) * 100
-    return (closes_after[-1] / entry - 1) * 100
+            return (fill_px(vc, price, "SELL", price) / buy - 1) * 100
+    return (fill_px(vc, closes_after[-1], "SELL", closes_after[-1]) / buy - 1) * 100
 
 
 def _score(rets: list[float], n_all: int) -> dict:

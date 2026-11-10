@@ -151,7 +151,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 if side == "SELL_PART" and qty >= p["qty"]:
                     p["partial"] = True
                     continue
-                px = price * (1 - vc["limit_slip_pct"] / 100) if p["style"] == "surge" else price
+                lim = price * (1 - vc["limit_slip_pct"] / 100) if p["style"] == "surge" else price
+                px = tl.fill_px(vc, price, "SELL", lim)   # 실전 가상 매매와 같은 체결 방식
                 sc, bc = tl.side_cost(vc, market, "SELL") / 100, tl.side_cost(vc, market, "BUY") / 100   # 수수료·세금 포함
                 v["cash"] += qty * px * f * (1 - sc)
                 net = px * (1 - sc) / (p["avg"] * (1 + bc)) - 1
@@ -181,7 +182,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     if minutes is None or minutes > 360:
                         continue
                 f = 1 if market == "KR" else fx
-                px = q["price"] * (1 + vc["limit_slip_pct"] / 100) if cd["style"] == "surge" else q["price"]
+                lim = q["price"] * (1 + vc["limit_slip_pct"] / 100) if cd["style"] == "surge" else q["price"]
+                px = tl.fill_px(vc, q["price"], "BUY", lim)
                 qty = int(min(per_pos, v["cash"]) // (px * f))
                 if qty < 1:
                     continue

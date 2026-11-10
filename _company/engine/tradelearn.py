@@ -68,6 +68,16 @@ def side_cost(cfg: dict, market: str, side: str) -> float:
     return float(cfg.get("fee_us_pct", 0.1))
 
 
+def fill_px(cfg: dict, quote: float, side: str, limit: float | None = None) -> float:
+    """가상 체결가 (가상 매매·그림자·백테스트 공통): 현재가에서 불리하게 미끄러진 값, 지정가보다 나쁘게는 안 됨
+    — 실제 지정가 주문은 지정가 이하(매수)/이상(매도)에서만 체결되니까"""
+    sl = float(cfg.get("sim_slip_pct", 0.1)) / 100
+    px = quote * (1 + sl) if side == "BUY" else quote * (1 - sl)
+    if limit:
+        px = min(px, limit) if side == "BUY" else max(px, limit)
+    return px
+
+
 def rt_cost(cfg: dict, market: str) -> float:
     """사고팔기 한 번의 총비용(%)"""
     return side_cost(cfg, market, "BUY") + side_cost(cfg, market, "SELL")
