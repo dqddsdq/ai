@@ -118,7 +118,7 @@ def run() -> int:
         ok("키 없음 — 🧰 도구 화면에서 클라이언트 ID·시크릿 키를 넣으면 연결돼요 (정상)")
     else:
         try:
-            toss._token(force=True)
+            toss.check_login()
             ok("로그인 성공")
             toss.account_seq()
             ok("종합계좌 찾음")

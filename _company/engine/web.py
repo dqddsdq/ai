@@ -353,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tools":
             return self._json(tl.overview())
         if path == "/api/improve":
-            return self._json({"jobs": im.history()[:50]})
+            return self._json({"jobs": im.history()[:50], "auto": im.auto_on()})
         m = re.match(r"^/api/improve/([\w\-]+)$", path)
         if m:
             job = im.get(m.group(1))
@@ -413,6 +413,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/improve/new":
             req = str(body.get("request", "")).strip()
             return self._json(im.create(req, "", "사장님") if req else {"error": "무엇을 바꿀지 적어 주세요"})
+        if path == "/api/improve/auto":
+            return self._json(im.set_auto(bool(body.get("on"))))
         if path in ("/api/improve/apply", "/api/improve/rollback", "/api/improve/discard"):
             fn = {"apply": im.apply, "rollback": im.rollback, "discard": im.discard}[path.rsplit("/", 1)[1]]
             res = fn(str(body.get("id", "")))
@@ -867,6 +869,17 @@ def _phone_secret(name: str, make) -> str:
     return v
 
 
+def _restart() -> None:
+    """자동 개선을 적용한 뒤 앱 다시 켜기 ('AI 시작.bat' 이 종료 코드 3을 보면 바로 다시 켬)"""
+    if os.environ.get("CAI_SUPERVISED") != "1":
+        log("🛠️ 코드가 바뀌었어요 — 'AI 시작.bat' 으로 켜야 자동으로 다시 켜져요. 지금은 직접 다시 켜 주세요")
+        return
+    log("🔄 자동 개선 적용 → 자동매매 바퀴가 끝나면 앱을 다시 켜요")
+    at.pause_for_restart()
+    time.sleep(1)
+    os._exit(3)
+
+
 _instance_lock = []
 
 
@@ -937,10 +950,14 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
         print("📱 와이파이 주소를 못 찾아서 폰 접속은 꺼 두었어요 (PC 에서만 사용 가능)")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    im.boot_check(log, _restart)   # 자동 개선 직후면 자체 점검 → 실패면 되돌리고 다시 켜기
     at.start(log)
     from . import notify
     notify.start(log)
     _keep_awake()
+    threading.Thread(target=im.auto_worker, args=(log, _restart), daemon=True, name="improve-auto").start()
+    if im.auto_on():
+        log("🤖🛠️ 자동 개선 켜짐 — 팀이 제안하면 고치고 검사 통과 시 바로 적용 (키·계좌 관련 파일은 잠금)")
     if at.config()["mode"] != "off":
         print(f"🤖 자동매매 켜져 있음: {at.config()['mode']} (끄려면 화면의 🤖 자동매매 → 긴급 정지)")
     try:

@@ -18,7 +18,8 @@ import subprocess
 import sys
 import tempfile
 import threading
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import providers as pv
@@ -28,10 +29,14 @@ WORK_ROOT = COMPANY_DIR / "_cache" / "improve"
 BACKUP_ROOT = COMPANY_DIR / "_cache" / "backups"
 HISTORY = SHARED_DIR / "improvements.json"
 EDITABLE_DIRS = ("engine", "_agents", "_shared")
-# 🔒 절대 못 고치는 파일: 키·돈 안전장치(토스 주문 생성·취소만)·승인 절차·자체 점검·기록 저장·텔레그램(실전 불가)
-PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py", "engine/toss.py", "engine/notify.py",
-             "engine/__init__.py", "engine/__main__.py", "engine/doctor.py",
-             "engine/store.py", "engine/selftest.py", "_shared/autotrade.json", "_shared/improvements.json", "_shared/tool_requests.json"}
+# 🔒 절대 못 고치는 파일 = 개인정보·키 + 계좌 관련 + 그걸 지키는 장치만 (그 외는 전부 자동 개선 가능)
+#   키: .env · tools.py(키 저장) · tools_catalog.json(설치 허용 목록)
+#   계좌: toss.py(주문 생성·취소만·미수 차단·사장님 주식 보호) · autotrade.json(실전 모드 설정) · notify.py(폰으로 계좌 조작)
+#   지키는 장치: improve.py(이 목록·적용 절차) · selftest.py(계좌 규칙 검사) · guard.py(자동 되돌리기) · __init__/__main__(검사 우회 방지)
+PROTECTED = {".env", "engine/tools.py", "_shared/tools_catalog.json",
+             "engine/toss.py", "_shared/autotrade.json", "engine/notify.py",
+             "engine/improve.py", "engine/selftest.py", "engine/guard.py", "engine/__init__.py", "engine/__main__.py",
+             "_shared/improvements.json", "_shared/tool_requests.json"}
 # ⚠️ 고칠 수 있지만 조심할 매매 코드: 사장님 승인 + 자체 점검(돈 이동·실전 켜기·미수·정지 규칙) 통과해야 적용
 TRADING = {"engine/autotrade.py", "engine/tradelearn.py", "engine/picker.py", "engine/shadow.py", "engine/backtest.py", "engine/news.py",
            "engine/chart.py", "engine/dart.py"}
@@ -333,3 +338,121 @@ def discard(job_id: str) -> dict:
     shutil.rmtree(WORK_ROOT / f"{job_id}.base", ignore_errors=True)
     _update(job_id, status="discarded")
     return {"ok": True}
+
+
+# ── 🤖 자동 개선: 팀이 제안하면 → 고치고 → 검사 통과하면 적용 → 앱 다시 켜기 → 안 되면 자동 되돌림 ──
+AUTO_FILE = COMPANY_DIR / "_cache" / "improve_auto.json"     # _cache 라 개발 AI 가 못 건드림
+VERIFY = COMPANY_DIR / "_cache" / "improve_verify.json"      # engine/guard.py 와 같이 씀
+ROLLED = COMPANY_DIR / "_cache" / "improve_rolled_back.json"
+AUTO_DAILY_MAX = 6
+
+
+def auto_on() -> bool:
+    try:
+        return bool(json.loads(AUTO_FILE.read_text(encoding="utf-8")).get("on", True))
+    except (OSError, ValueError):
+        return True   # 사장님이 '전부 자동'을 고르셔서 기본 켜짐
+
+
+def set_auto(on: bool) -> dict:
+    AUTO_FILE.parent.mkdir(parents=True, exist_ok=True)
+    AUTO_FILE.write_text(json.dumps({"on": bool(on)}), encoding="utf-8")
+    return {"ok": True, "on": bool(on), "message": "자동 개선 켜짐 — 검사 통과하면 승인 없이 적용돼요" if on else "자동 개선 꺼짐 — 변경안은 사장님이 [적용]을 눌러야 해요"}
+
+
+def _notify(text: str, log) -> None:
+    log(text)
+    try:
+        from . import notify
+        notify.send(text)
+    except Exception:
+        pass
+
+
+def boot_check(log, restart) -> None:
+    """앱이 켜질 때: ① 지킴이가 되돌렸으면 알림 ② 자동 개선 직후면 자체 점검 → 실패면 되돌리고 다시 켜기, 3분 잘 돌면 확정"""
+    if ROLLED.exists():
+        try:
+            m = json.loads(ROLLED.read_text(encoding="utf-8"))
+            _notify(f"🛟 자동 개선 '{m.get('request', '')[:50]}' 뒤로 앱이 제대로 안 켜져서 원래대로 되돌렸어요", log)
+        except (OSError, ValueError):
+            pass
+        ROLLED.unlink(missing_ok=True)
+    try:
+        mark = json.loads(VERIFY.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    from . import selftest
+    try:
+        _, n_all, fails = selftest.run(verbose=False)
+    except Exception as e:
+        fails, n_all = [f"{type(e).__name__}: {e}"], 0
+    if fails:
+        rollback(mark["job"])
+        VERIFY.unlink(missing_ok=True)
+        _notify(f"🛟 자동 개선 '{mark.get('request', '')[:50]}' 적용 뒤 자체 점검 실패({fails[0][:80]}) → 되돌리고 다시 켜요", log)
+        restart()
+        return
+
+    def confirm():
+        time.sleep(180)
+        if VERIFY.exists():
+            VERIFY.unlink(missing_ok=True)
+            _notify(f"✅ 자동 개선 확정: '{mark.get('request', '')[:60]}' (자체 점검 {n_all}개 통과 · 3분 정상 작동)", log)
+    threading.Thread(target=confirm, daemon=True, name="improve-confirm").start()
+
+
+def _today_auto() -> int:
+    day = datetime.now().strftime("%Y-%m-%d")
+    return sum(1 for r in _load() if r.get("auto_at", "").startswith(day))
+
+
+def auto_once(log, restart) -> str:
+    """자동 개선 한 번: 켜져 있고 다른 작업이 없으면 팀 제안 하나를 고치고 → 검사 → 적용 → (코드면) 다시 켜기"""
+    if not auto_on():
+        return "꺼짐"
+    if VERIFY.exists():
+        return "확인 중"
+    rows = _load()
+    if any(r.get("status") == "working" for r in rows):
+        return "다른 작업 중"
+    if _today_auto() >= AUTO_DAILY_MAX:
+        return "오늘 한도"
+    cutoff = (datetime.now() - timedelta(days=2)).isoformat(timespec="seconds")
+    job = next((r for r in rows if r.get("status") == "proposed" and not r.get("auto_at") and r.get("time", "") >= cutoff), None)
+    if not job:
+        return "제안 없음"
+    _update(job["id"], auto_at=datetime.now().isoformat(timespec="seconds"))
+    log(f"🤖🛠️ 자동 개선 시작: {job['request'][:50]}")
+    try:
+        res = run(job["id"])
+    except Exception as e:
+        _notify(f"🛠️ 자동 개선 실패: '{job['request'][:40]}' — {str(e)[:120]}", log)
+        return "실패"
+    if not res["ok"]:
+        bad = next((c for c in res["checks"] if not c["ok"]), {})
+        _notify(f"🛠️ 자동 개선 보류 (검사 실패: {bad.get('name', '')}): '{job['request'][:50]}' — 🛠️ 화면에서 확인할 수 있어요", log)
+        return "검사 실패"
+    r = apply(job["id"])
+    if not r.get("ok"):
+        _notify(f"🛠️ 자동 개선 적용 안 됨: {r.get('message', '')[:120]}", log)
+        return "적용 안 됨"
+    files = ", ".join(f["path"] for f in res["files"])[:150]
+    trading = any(f.get("trading") for f in res["files"])
+    _notify(f"🤖🛠️ 자동 개선 적용: '{job['request'][:60]}'\n파일: {files}" + ("\n⚠️ 매매 코드가 바뀌었어요" if trading else ""), log)
+    if r.get("needs_restart"):
+        VERIFY.write_text(json.dumps({"job": job["id"], "request": job["request"][:200], "boots": 0,
+                                      "t": datetime.now().isoformat(timespec="seconds")}, ensure_ascii=False), encoding="utf-8")
+        restart()
+        return "적용 · 다시 켜기"
+    return "적용"
+
+
+def auto_worker(log, restart) -> None:
+    """1분마다 auto_once (절대 안 죽음)"""
+    while True:
+        time.sleep(60)
+        try:
+            auto_once(log, restart)
+        except Exception as e:
+            log(f"🛠️ 자동 개선 오류: {type(e).__name__}: {e}")

@@ -140,6 +140,16 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
 CHOICES = {"ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
+_stop_req = threading.Event()   # 자동 개선 후 다시 켜기 전에: 지금 바퀴만 끝내고 멈춤
+_idle = threading.Event()
+
+
+def pause_for_restart(timeout: float = 90) -> bool:
+    """자동매매가 주문 도중에 끊기지 않게, 지금 돌고 있는 바퀴가 끝날 때까지 기다림"""
+    _stop_req.set()
+    if _thread is None or not _thread.is_alive():
+        return True
+    return _idle.wait(timeout)
 _log_fn = print
 _busy_m = {"US": threading.Event(), "KR": threading.Event()}   # 시장별 종목 준비/고르기 백그라운드 작업 중
 _ctx = threading.local()        # 지금 처리 중인 시장 (스레드마다)
@@ -1368,6 +1378,9 @@ def start(log_fn=print) -> None:
         timers = {"US": {"last": 0.0, "exit": 0.0}, "KR": {"last": 0.0, "exit": 0.0}}
         while True:
             time.sleep(5)
+            if _stop_req.is_set():
+                _idle.set()
+                return
             if config()["mode"] == "off":
                 continue
             for m in markets():   # 국장·미장을 각자 시간에 맞춰

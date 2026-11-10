@@ -31,13 +31,23 @@ echo        끄려면 이 창을 닫으세요. (앱이 오류로 꺼지면 10초
 echo.
 set "OPENBR="
 if /i "%~1"=="auto" set "OPENBR=--no-browser"
+set "CAI_SUPERVISED=1"
 
 :RUN
+rem 자동 개선 지킴이: 고친 뒤 앱이 계속 안 켜지면 원래대로 되돌림
+%PY% -m engine.guard
 %PY% -m engine web --phone %OPENBR%
+if errorlevel 3 if not errorlevel 4 goto UPDATED
 if not errorlevel 1 goto DONE
 echo.
 echo [다시 켜기] 앱이 오류로 꺼졌어요. 10초 뒤 자동으로 다시 켭니다. (멈추려면 이 창을 닫으세요)
 timeout /t 10 /nobreak > nul
+set "OPENBR=--no-browser"
+goto RUN
+
+:UPDATED
+echo.
+echo [업데이트] 자동 개선이 적용돼서 앱을 바로 다시 켭니다...
 set "OPENBR=--no-browser"
 goto RUN
 

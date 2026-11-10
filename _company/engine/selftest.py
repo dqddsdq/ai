@@ -40,8 +40,8 @@ def 토스_쓰기는_주문_생성_취소만():
 @case
 def 자기개선_보호_파일():
     from . import improve
-    need = {".env", "engine/toss.py", "engine/improve.py", "engine/tools.py", "engine/doctor.py", "engine/__init__.py",
-            "engine/__main__.py", "engine/notify.py", "engine/store.py", "engine/selftest.py", "_shared/autotrade.json"}
+    need = {".env", "engine/toss.py", "engine/improve.py", "engine/tools.py", "engine/guard.py", "engine/__init__.py",
+            "engine/__main__.py", "engine/notify.py", "engine/selftest.py", "_shared/autotrade.json", "_shared/tools_catalog.json"}
     assert need <= improve.PROTECTED, need - improve.PROTECTED
 
 
@@ -63,7 +63,7 @@ def 텔레그램으로_실전_못_켬():
         at.save_config, at.emergency_stop = orig
 
 
-LOCKED_PY = {"toss.py", "selftest.py", "improve.py", "tools.py", "doctor.py", "notify.py", "store.py", "__init__.py", "__main__.py"}
+LOCKED_PY = {"toss.py", "selftest.py", "improve.py", "tools.py", "notify.py", "guard.py", "__init__.py", "__main__.py"}
 
 
 def scan_source(src: str, name: str = "?") -> list[str]:
@@ -144,6 +144,35 @@ def 설정_허용_범위():
     for k, hi in limit.items():
         assert k in at.NUMS and at.NUMS[k][1] <= hi, (k, at.NUMS.get(k))
     assert at.DEFAULTS["mode"] != "live" and at.CHOICES["mode"] == ("off", "paper", "live")
+
+
+@case
+def 폰_접속은_같은_와이파이_PIN_만():
+    """개인정보 보호: 앱 화면은 이 PC 나 같은 와이파이(사설 IP)에서만, 폰은 PIN, 다른 사이트의 몰래 요청은 차단"""
+    import inspect
+    from . import web
+    assert web._private_ip("192.168.0.5") and web._private_ip("10.1.2.3") and web._private_ip("172.16.0.9")
+    assert not web._private_ip("8.8.8.8") and not web._private_ip("1.2.3.4")
+    src = inspect.getsource(web)
+    for need in ('"X-Company-AI"', "secrets_eq(", "PIN", '"127.0.0.1"'):
+        assert need in src, f"web.py 에서 보안 장치({need})가 빠졌어요"
+    assert '"0.0.0.0" if ip else "127.0.0.1"' in src, "폰 접속을 안 켰는데 외부에 열리면 안 돼요"
+
+
+@case
+def 키는_화면_기록에_안_나옴():
+    """개인정보·키: .env 의 값이 화면용 도구 목록·진단에 그대로 나가지 않게"""
+    import os
+    from . import tools
+    os.environ["TOSS_CLIENT_SECRET"] = os.environ.get("TOSS_CLIENT_SECRET") or "tssk_selftest_secret_value"
+    secret = os.environ["TOSS_CLIENT_SECRET"]
+    try:
+        dump = json.dumps(tools.overview() if hasattr(tools, "overview") else {}, ensure_ascii=False)
+    except Exception:
+        dump = ""
+    assert secret not in dump
+    if secret == "tssk_selftest_secret_value":
+        os.environ.pop("TOSS_CLIENT_SECRET", None)
 
 
 @case

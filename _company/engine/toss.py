@@ -110,6 +110,11 @@ def _token(force: bool = False) -> str:
         return tok
 
 
+def check_login() -> None:
+    """키로 로그인되는지만 확인 (진단용) — 실패하면 TossError"""
+    _token(force=True)
+
+
 def _get(path: str, account: bool = False, **params) -> object:
     """조회(GET)만. 허용 목록에 없는 주소(주문 등)는 보내기 전에 막음."""
     if not ALLOWED.match(path):
@@ -212,8 +217,23 @@ def _ledger() -> dict:
 
 
 def _ledger_save(d: dict) -> None:
-    from . import store
-    store.write_text(_ledger_path(), json.dumps(d))   # 윈도우 '액세스 거부' 대비 다시 시도 포함
+    """장부 저장 (다른 파일에 기대지 않음 — 잠긴 이 파일 안에서만). 윈도우 '액세스 거부' 대비 다시 시도"""
+    f = _ledger_path()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f"{f.name}.{os.getpid()}.{threading.get_ident() % 100000}.tmp")
+    tmp.write_text(json.dumps(d), encoding="utf-8")
+    for wait in (0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8, 1.0):
+        if wait:
+            time.sleep(wait)
+        try:
+            os.replace(tmp, f)
+            return
+        except PermissionError:
+            continue
+    try:
+        f.write_text(json.dumps(d), encoding="utf-8")
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _refresh(d: dict, sym: str) -> None:

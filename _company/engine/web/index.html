@@ -633,6 +633,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <textarea class="field" id="imp-input" rows="3" placeholder="예: 주식 팀 답 끝에 '이번 주 체크할 날짜'를 항상 넣게 해줘 / 작업 현황 창 글씨를 조금 키워줘"></textarea>
         <div class="row" style="margin-top:8px"><div class="spacer"></div><button class="btn primary" id="imp-new">변경안 만들기</button></div>
       </div>
+      <label class="muted" style="display:block;margin:8px 0"><input type="checkbox" id="imp-auto"> 🤖 <b>자동 개선</b> — 팀이 제안하면 AI 가 고치고, 검사 통과하면 승인 없이 적용 · 코드면 앱 자동 재시작 · 안 켜지면 자동 되돌림 (🔒 키·개인정보·계좌 관련 파일은 못 고침)</label>
       <div id="imp-list"></div>
     </div></div>
   </section>
@@ -1699,7 +1700,7 @@ function diffHTML(d) {
 }
 function impStatus(st) {
   return { proposed: ["제안됨", "wait"], working: ["만드는 중", "wait"], ready: ["검사 통과 · 적용 대기", "wait"], blocked: ["검사 실패", ""],
-           failed: ["실패", ""], applied: ["적용됨", "ok"], rolled_back: ["되돌림", ""], discarded: ["버림", ""], conflict: ["충돌 · 다시 만들기 필요", ""] }[st] || [st, ""];
+           failed: ["실패", ""], applied: ["적용됨", "ok"],  rolled_back: ["되돌림", ""], discarded: ["버림", ""], conflict: ["충돌 · 다시 만들기 필요", ""] }[st] || [st, ""];
 }
 async function refreshImpBadge() {
   const d = await api("/api/improve"); const n = (d.jobs || []).filter(j => ["proposed", "ready"].includes(j.status)).length;
@@ -1751,6 +1752,8 @@ async function renderImprovePage() {
   const d = await refreshImpBadge();
   $("#imp-list").innerHTML = (d.jobs || []).length ? "" : `<p class="muted">아직 개선 기록이 없어요.</p>`;
   (d.jobs || []).forEach(j => improveCard(j, $("#imp-list")));
+  $("#imp-auto").checked = !!d.auto;
+  $("#imp-auto").onchange = async (e) => { const r = await api("/api/improve/auto", { on: e.target.checked }); alert(r.message); };
 }
 $("#imp-new").onclick = async () => {
   const t = $("#imp-input").value.trim(); if (!t) return $("#imp-input").focus();
