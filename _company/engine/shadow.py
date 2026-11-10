@@ -163,6 +163,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                                     "pnl_krw": round(net * p["avg"] * (1 + bc) * qty * f), "why": why[:60], "final": side == "SELL"})
                 if side == "SELL":
                     v["pos"].pop(sym)
+                    if net < 0 and c.get("no_rebuy_after_loss", True):   # 실전과 같게: 손해 본 종목 그날 재진입 금지
+                        v.setdefault("no_rebuy", {})[sym] = session_day
                 else:
                     p["qty"] -= qty; p["partial"] = True
             if exits_only:
@@ -170,6 +172,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
             # 매수: 실전과 같은 후보, 기대 수익률 순, 이 조합의 진입 기준으로 거름
             per_pos = VIRTUAL / max(1, int(c["pick_count"]))
             for sym, cd in sorted(cands.items(), key=lambda kv: -kv[1]["est"]["ev"]):
+                if v.get("no_rebuy", {}).get(sym, "") >= session_day:
+                    continue
                 if sym in v["pos"] or len(v["pos"]) >= c["pick_count"] or v["buys_today"] >= c["max_orders_per_day"]:
                     continue
                 q = quotes.get(sym)

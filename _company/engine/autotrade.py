@@ -113,6 +113,9 @@ DEFAULTS = {
     "prob_sizing": True,           # 학습 기록으로 승률을 추정해 살 금액 조절 (25%~100%, 한도는 절대 안 넘음)
     "min_size_ratio": 0.25,        # 승률이 낮을 때 최소로 사는 비율
     "min_win_prob": 0,             # 추정 승률이 이보다 낮으면 안 삼 (0 = 안 씀)
+    "no_rebuy_after_loss": True,   # 🔁 손해 보고 판 종목은 다시 안 삼: 단타는 그날, 스윙은 아래 일수 동안 (손절 후 재진입 반복 방지)
+    "no_rebuy_swing_days": 3,
+    "explore_per_day": 2,          # 🔬 기대 수익이 마이너스지만 기록이 적어 확신 못 하는 후보: 하루 이만큼만 최소 금액으로 '탐색 매수' (0 = 안 삼)
     "news_on": True,               # 📰 사기 전에 공시 확인 (국장 DART · 미장 SEC) — 악재(증자·CB·감자·상장폐지 등)면 안 삼
     "news_unknown_ratio": 1.0,     #    공시가 하나도 없는 '이유 모르는 급등'이면 금액 × 이 값 (1 = 안 줄임 · 그림자 매매로 0.5·0.25 비교 후 자동 교체)
     "focus_max_pct": 50,           # 🎯 확신할 때만 몰아넣기: 조건 맞으면 한 종목에 예산의 최대 이 %까지 (0 = 안 씀, 늘 똑같이 나눔)
@@ -133,7 +136,7 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 20), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
 CHOICES = {"ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -278,7 +281,8 @@ def _fresh_day(s: dict, market: str) -> dict:
     day = picker.session_date(market)
     if s.get("day") != day:  # 장(현지 날짜)이 바뀌면 하루 카운트·정지·손익 초기화 (스윙 종목의 최고가는 유지)
         keep = {k: v for k, v in (s.get("highs") or {}).items() if (s.get("style") or {}).get(k) == "swing"}
-        s.update(day=day, orders_today=0, halted_today="", realized_today=0.0, highs=keep, day_budget=0.0)
+        s.update(day=day, orders_today=0, halted_today="", realized_today=0.0, highs=keep, day_budget=0.0, explore_today=0)
+        s["no_rebuy"] = {k: v for k, v in (s.get("no_rebuy") or {}).items() if v >= day}   # 기한 지난 재진입 금지는 풀기
     return s
 
 
@@ -990,6 +994,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 이번 달 목표 달성 → 새로 안 삼"); continue
             if stop_why and style == "surge":
                 results.append(f"{sym}: 📚 장중 학습 — {stop_why}"); continue
+            nr = (state().get("no_rebuy") or {}).get(sym)
+            if c["no_rebuy_after_loss"] and nr and nr >= state()["day"]:
+                results.append(f"{sym}: 🔁 손해 보고 판 종목이라 {nr}까지 다시 안 삼"); continue
             if state()["orders_today"] >= c["max_orders_per_day"]:
                 results.append(f"{sym}: 오늘 매수 횟수 한도({c['max_orders_per_day']}) 도달"); continue
             if len(pos) >= c["pick_count"]:
@@ -1018,6 +1025,13 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             full_budget = budget
             if c["prob_sizing"]:   # 🎲 비슷한 조건의 지난 거래로 승률 추정 → 금액 조절
                 ratio_, note_ = tl.size_ratio(est, c)
+                explore = ratio_ > 0 and est["ev"] < 0   # 기대 마이너스인데 기록이 적어서 건너뛰지 않은 경우
+                if explore:
+                    if int(state().get("explore_today", 0)) >= c["explore_per_day"]:
+                        ratio_, note_ = 0.0, f"기대 수익 {est['ev']:+.2f}% (기록 {est['n']}건) · 오늘 탐색 매수 {c['explore_per_day']}번 다 씀 → 건너뜀"
+                    else:
+                        ratio_ = float(c["min_size_ratio"])
+                        note_ = f"🔬 탐색 매수: 기대 {est['ev']:+.2f}% 지만 기록 {est['n']}건뿐이라 최소 금액({ratio_ * 100:.0f}%)으로 기록 쌓기"
                 size_note = " · ".join(x for x in (size_note, note_) if x)
                 if ratio_ <= 0:
                     event("확률 판단", f"{sym} 안 삼 — {size_note}", symbol=sym)
@@ -1059,6 +1073,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if c["ai_decide"] and why:
                 feat["ai_decide"] = "산다"
             nnote = news.note(nw)
+            if c["prob_sizing"] and est["ev"] < 0:
+                with _lock:
+                    s_e = state(); s_e["explore_today"] = int(s_e.get("explore_today", 0)) + 1; _save(s_e)
             results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · {nnote}" if nnote else "") + (f" · 🎲 {size_note}" if size_note else "")
                                     + (f" · 🤖 AI: {why}" if why else ""), live, fx, chart=chart_id, est=est, feat=feat, quote=price))
             invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
@@ -1080,6 +1097,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if qty < 1:
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if style == "surge" else price
+            if not part and c["no_rebuy_after_loss"] and held["avg"] and \
+                    (price / held["avg"] - 1) * 100 < tl.rt_cost(c, market):   # 수수료 빼고 손해로 파는 거면 재진입 금지
+                until = state()["day"] if style != "swing" else \
+                    (datetime.now(KST) + timedelta(days=int(c["no_rebuy_swing_days"]))).strftime("%Y-%m-%d")
+                with _lock:
+                    s_n = state(); s_n.setdefault("no_rebuy", {})[sym] = max(until, s_n["no_rebuy"].get(sym, "")); _save(s_n)
             if tp_by_rule:
                 _ghost_open(sym, tp_by_rule[0], tp_by_rule[1], price, tp_by_rule[2], tp_by_rule[3])
             results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part, quote=price))
@@ -1405,7 +1428,7 @@ def _summary_one() -> str:
 
 
 # ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
-LABELS = {"ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+LABELS = {"no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
