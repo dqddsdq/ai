@@ -28,7 +28,7 @@ WORK_ROOT = COMPANY_DIR / "_cache" / "improve"
 BACKUP_ROOT = COMPANY_DIR / "_cache" / "backups"
 HISTORY = SHARED_DIR / "improvements.json"
 EDITABLE_DIRS = ("engine", "_agents", "_shared")
-PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py", "engine/toss.py", "engine/autotrade.py", "engine/tradelearn.py", "engine/picker.py", "engine/shadow.py", "engine/backtest.py", "engine/notify.py", "engine/store.py", "_shared/autotrade.json",
+PROTECTED = {".env", "_shared/tools_catalog.json", "engine/tools.py", "engine/improve.py", "engine/toss.py", "engine/autotrade.py", "engine/tradelearn.py", "engine/picker.py", "engine/shadow.py", "engine/backtest.py", "engine/notify.py", "engine/store.py", "engine/selftest.py", "_shared/autotrade.json",
              "_shared/improvements.json", "_shared/tool_requests.json"}
 SKIP = {"__pycache__", "archive"}
 RUNTIME = {"_shared/improvements.json", "_shared/tool_requests.json", "_shared/autotrade.json"}   # 실행 중 계속 바뀌는 기록 파일 (복사·비교 안 함)
@@ -167,6 +167,10 @@ def _checks(box: Path, files: list[dict]) -> list[dict]:
         r = subprocess.run([sys.executable, "-c", "import engine.web, engine.team, engine.providers"],
                            cwd=box, capture_output=True, text=True, timeout=120)
         res.append({"name": "앱 불러오기", "ok": r.returncode == 0, "detail": "정상" if r.returncode == 0 else (r.stderr or "")[-300:]})
+        r = subprocess.run([sys.executable, "-m", "engine.selftest"], cwd=box, capture_output=True, text=True, timeout=180)
+        tail = (r.stdout or "").strip().splitlines()[-1:] or [""]
+        res.append({"name": "자체 점검 (매매·안전 규칙)", "ok": r.returncode == 0,
+                    "detail": tail[0] if r.returncode == 0 else ((r.stdout or "") + (r.stderr or ""))[-400:]})
     for f in files:
         if f["path"].endswith(".json") and f["status"] != "deleted":
             try:

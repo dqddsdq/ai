@@ -5,6 +5,7 @@
   python -m engine chat --agent writer      # 특정 팀과 대화
   python -m engine ask "이번 주 영상 아이디어 3개"   # 한 번만 묻기
   python -m engine models                   # 사용 가능한 AI 확인
+  python -m engine selftest                 # 자체 점검 (매매·안전 규칙)
   python -m engine set-model writer-2 gemini:gemini-2.5-pro
 """
 
@@ -309,6 +310,8 @@ def main(argv=None) -> None:
     s.add_argument("--agent", default="startup-money", help="시나리오를 설계할 에이전트 (기본 startup-money)")
     s.add_argument("--model", help="제공자:모델")
     s.set_defaults(func=cmd_simulate)
+    s = sub.add_parser("selftest", help="자체 점검 (매매·안전 규칙, 인터넷 없이)")
+    s.set_defaults(func=lambda a: sys.exit(__import__("engine.selftest", fromlist=["main"]).main()))
     s = sub.add_parser("doctor", help="문제 진단 (파이썬·패키지·Claude Code 연결 검사)")
     s.set_defaults(func=cmd_doctor)
     s = sub.add_parser("web", help="브라우저 화면 열기 (Claude 앱 스타일)")

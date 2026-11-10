@@ -146,6 +146,14 @@ def run() -> int:
             problems += 1
             bad(r["message"], "🧰 도구의 텔레그램 토큰을 확인하세요")
 
+    print("[9] 자체 점검 (매매·안전 규칙)")
+    from . import selftest
+    n_ok, n_all, fails = selftest.run(verbose=False)
+    if fails:
+        problems += 1
+        bad(f"{n_ok}/{n_all} 통과 — {fails[0][:120]}", "python -m engine selftest 로 자세히 보기")
+    else:
+        ok(f"{n_all}개 모두 통과")
     print()
     if problems:
         print(f"⚠️  문제 {problems}개. 이 창을 캡처해서 보여주세요.")
