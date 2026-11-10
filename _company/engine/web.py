@@ -864,6 +864,19 @@ def _phone_secret(name: str, make) -> str:
     return v
 
 
+def _keep_awake() -> None:
+    """윈도우: 앱이 켜져 있는 동안 PC 가 절전 모드로 들어가지 않게 (화면은 꺼져도 됨) — 자동매매가 밤새 돌아야 해서"""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+        print("💤 앱이 켜져 있는 동안 PC 절전 모드를 막아요 (화면 끄기는 괜찮아요)")
+    except Exception:
+        pass
+
+
 def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> None:
     import secrets
     url = f"http://127.0.0.1:{port}"
@@ -894,6 +907,7 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     at.start(log)
+    _keep_awake()
     if at.config()["mode"] != "off":
         print(f"🤖 자동매매 켜져 있음: {at.config()['mode']} (끄려면 화면의 🤖 자동매매 → 긴급 정지)")
     try:

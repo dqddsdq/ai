@@ -27,12 +27,24 @@ if errorlevel 1 echo [안내] Claude Code - claude 명령 - 를 못 찾았어요
 echo [3/3] 시작합니다. 브라우저에서 http://127.0.0.1:8765 가 열려요.
 echo        폰은 같은 와이파이에서 - 화면 왼쪽 아래 📱 버튼에 주소와 PIN 이 있어요.
 echo        처음에 윈도우 방화벽 창이 뜨면 '허용'을 눌러 주세요.
-echo        끄려면 이 창을 닫으세요.
+echo        끄려면 이 창을 닫으세요. (앱이 오류로 꺼지면 10초 뒤 자동으로 다시 켜요)
 echo.
-%PY% -m engine web --phone
+set "OPENBR="
+if /i "%~1"=="auto" set "OPENBR=--no-browser"
+
+:RUN
+%PY% -m engine web --phone %OPENBR%
+if not errorlevel 1 goto DONE
+echo.
+echo [다시 켜기] 앱이 오류로 꺼졌어요. 10초 뒤 자동으로 다시 켭니다. (멈추려면 이 창을 닫으세요)
+timeout /t 10 /nobreak > nul
+set "OPENBR=--no-browser"
+goto RUN
+
+:DONE
 echo.
 echo [종료됨] 위에 빨간 오류 메시지가 있으면 이 창을 캡처해서 보여주세요.
-pause
+if /i not "%~1"=="auto" pause
 exit /b 0
 
 :NOPY
