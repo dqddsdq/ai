@@ -119,6 +119,13 @@ DEFAULTS = {
     "no_rebuy_after_loss": True,   # 🔁 손해 보고 판 종목은 다시 안 삼: 단타는 그날, 스윙은 아래 일수 동안 (손절 후 재진입 반복 방지)
     "no_rebuy_swing_days": 3,
     "explore_per_day": 2,          # 🔬 기대 수익이 마이너스지만 기록이 적어 확신 못 하는 후보: 하루 이만큼만 최소 금액으로 '탐색 매수' (0 = 안 삼)
+    "lane_swing_mode": "live",     # 🤝 1호 일반(스윙) AI — live: 실전 모드 따라감 · paper: 가상 장부 · off: 새로 안 삼 (보유는 계속 관리)
+    "lane_surge_mode": "paper",    # 🤝 2호 급등주(단타) AI — 처음엔 가상으로 돌리고 성적 확인되면 자동으로 실전 (lane_auto_live)
+    "lane_share_surge": 50,        #    같은 장부를 쓰는 두 AI 의 예산 나누기: 2호 몫(%) (나머지 1호) — 자동 조정
+    "lane_auto_share": True, "lane_share_min": 30, "lane_share_max": 70,   #    잘하는 쪽으로 하루 5%p 씩, 이 범위 안에서
+    "lane_auto_live": True,        #    2호(가상)가 아래 조건을 채우면 실전으로 · 실전 쪽이 연속 손실이면 가상으로
+    "lane_live_trades": 30, "lane_live_days": 14,   #    최근 N일 끝난 거래 M건 이상 · 평균 플러스 · 승률 45%↑
+    "lane_cross_review": True,     #    장 마감 후 두 AI 가 서로 거래를 복기 → 공유 노트(교훈)에 기록
     "news_on": True,               # 📰 사기 전에 공시 확인 (국장 DART · 미장 SEC) — 악재(증자·CB·감자·상장폐지 등)면 안 삼
     "news_unknown_ratio": 1.0,     #    공시가 하나도 없는 '이유 모르는 급등'이면 금액 × 이 값 (1 = 안 줄임 · 그림자 매매로 0.5·0.25 비교 후 자동 교체)
     "focus_max_pct": 50,           # 🎯 확신할 때만 몰아넣기: 조건 맞으면 한 종목에 예산의 최대 이 %까지 (0 = 안 씀, 늘 똑같이 나눔)
@@ -139,8 +146,8 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 20), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
-CHOICES = {"ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 20), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
+CHOICES = {"lane_swing_mode": ("live", "paper", "off"), "lane_surge_mode": ("live", "paper", "off"), "ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
 _stop_req = threading.Event()   # 자동 개선 후 다시 켜기 전에: 지금 바퀴만 끝내고 멈춤
@@ -294,7 +301,8 @@ def _fresh_day(s: dict, market: str) -> dict:
     day = picker.session_date(market)
     if s.get("day") != day:  # 장(현지 날짜)이 바뀌면 하루 카운트·정지·손익 초기화 (스윙 종목의 최고가는 유지)
         keep = {k: v for k, v in (s.get("highs") or {}).items() if (s.get("style") or {}).get(k) == "swing"}
-        s.update(day=day, orders_today=0, halted_today="", realized_today=0.0, highs=keep, day_budget=0.0, explore_today=0)
+        s.update(day=day, orders_today=0, halted_today="", realized_today=0.0, highs=keep, day_budget=0.0, explore_today=0,
+                 realized_lane={}, realized_book={}, halted_lane={})
         nr = s.get("no_rebuy")
         s["no_rebuy"] = {k: v for k, v in (nr if isinstance(nr, dict) else {}).items() if str(v or "") >= day}   # 기한 지난 재진입 금지는 풀기
     return s
@@ -332,7 +340,7 @@ def event(kind: str, text: str, **extra) -> None:
         notify.send(f"{flag} [{kind}] {text}")
 
 
-NOTIFY_KINDS = {"익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
+NOTIFY_KINDS = {"교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
                 "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 
@@ -498,6 +506,78 @@ def _seen_news_block(sym: str) -> bool:
         return True
     _news_seen[sym] = time.time()
     return False
+
+
+# ── 🤝 두 AI (1호 일반=스윙 · 2호 급등주=단타) ──
+LANES = {"swing": "1호 일반(스윙)", "surge": "2호 급등주(단타)"}
+PERSONA = {"swing": "너는 1호 '일반 매매' AI 다: 며칠 보유하는 추세 스윙. 추세·거래대금·실적/공시 흐름을 중시하고, 급등 추격은 하지 않는다.",
+           "surge": "너는 2호 '급등주' AI 다: 당일 정리 단타. 거래량 폭증·상승 초입·가격 탄력을 중시하고, 꼭대기 추격·거래량 감소 때는 사지 않는다."}
+
+
+def lane_mode(c: dict, style: str) -> str:
+    return str(c.get(f"lane_{style}_mode", "live"))
+
+
+def lane_live(c: dict, style: str) -> bool:
+    """이 AI 의 새 매수가 실전인지 — 전체 모드가 실전이고 이 AI 도 live 일 때만 (가상 AI 는 절대 실전 주문 못 냄)"""
+    return c["mode"] == "live" and lane_mode(c, style) == "live"
+
+
+def lane_book(c: dict, style: str) -> str:
+    return "live" if lane_live(c, style) else "paper"
+
+
+def lane_share(c: dict, style: str) -> float:
+    """같은 장부를 쓰는 AI 들 사이의 예산 몫 (한 AI 만 그 장부를 쓰면 1.0)"""
+    on = [st for st in LANES if lane_book(c, st) == lane_book(c, style) and lane_mode(c, st) != "off"]
+    if len(on) < 2:
+        return 1.0
+    sh = min(1.0, max(0.0, float(c.get("lane_share_surge", 50)) / 100))
+    return sh if style == "surge" else 1.0 - sh
+
+
+def lane_persona(style: str, market: str) -> str:
+    """AI 판단 프롬프트 앞에 붙일 성향 + 공유 노트(두 AI 가 같이 쓰는 교훈)"""
+    notes = tl.lessons_text(market, 6)
+    return PERSONA.get(style, "") + (f"\n공유 노트(두 AI 가 같이 배운 것): {notes}" if notes else "")
+
+
+def _add_realized(s: dict, sym: str, gain: float, book: str) -> None:
+    """실현 손익을 전체·AI별·장부별로 같이 쌓기"""
+    s["realized_today"] = float(s.get("realized_today", 0)) + gain
+    st = (s.get("style") or {}).get(sym) or "surge"
+    rl = s.setdefault("realized_lane", {}); rl[st] = float(rl.get(st, 0)) + gain
+    rb = s.setdefault("realized_book", {}); rb[book] = float(rb.get(book, 0)) + gain
+
+
+def lane_stats(market: str, style: str, days: int = 14) -> dict:
+    """이 AI 의 최근 성적 (실전+가상 합산, 수수료 뺀 값) + 장부별 건수"""
+    since = (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d")
+    with tl._lock:
+        ts = [t for t in tl._load()["trades"] if t["closed"] and tl._tm(t) == market and tl._ts(t) == style
+              and str(t.get("exits", [{}])[-1].get("t", t.get("entry_time", ""))) >= since]
+    st = tl._stats(ts)
+    st.update(n_live=sum(1 for t in ts if t["mode"] == "live"), n_paper=sum(1 for t in ts if t["mode"] == "paper"), days=days)
+    return st
+
+
+def _lane_day_sums(market: str, style: str, n: int) -> list[float]:
+    """이 AI 의 최근 n일 하루 손익 합(%) — 오래된 것 → 최근"""
+    with tl._lock:
+        ts = [t for t in tl._load()["trades"] if t["closed"] and tl._tm(t) == market and tl._ts(t) == style]
+    by: dict[str, float] = {}
+    for t in ts:
+        by[t["day"]] = by.get(t["day"], 0.0) + float(t["pnl_pct"])
+    return [by[d] for d in sorted(by)[-n:]]
+
+
+def lanes_overview(market: str) -> dict:
+    c = config()
+    out = {}
+    for st, name in LANES.items():
+        out[st] = {"name": name, "mode": lane_mode(c, st), "live": lane_live(c, st), "book": lane_book(c, st),
+                   "share": round(lane_share(c, st) * 100), **lane_stats(market, st, int(c.get("lane_live_days", 14)))}
+    return out
 
 
 def _no_tp(c: dict) -> dict:
@@ -862,7 +942,7 @@ def _reconcile(fx: float) -> None:
                 else:
                     mk_ = _mkt(rec["symbol"]); c_ = config()   # 수수료·세금 포함 실제 손익
                     gain = (fill_px * (1 - tl.side_cost(c_, mk_, "SELL") / 100) - bp["avg"] * (1 + tl.side_cost(c_, mk_, "BUY") / 100)) * delta * f
-                    s["realized_today"] = float(s.get("realized_today", 0)) + gain
+                    _add_realized(s, rec["symbol"], gain, "live")
                     s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                     left = bp["qty"] - delta
                     tl.on_sell(rec["symbol"], delta, fill_px, rec.get("reason", ""), "live", left <= 1e-9, config())
@@ -946,16 +1026,24 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             with _lock:
                 s = state()
             if c["auto_pick"]:   # 자동매매가 산 수량만 (사장님이 직접 산 건 그대로)
-                pos = {k: {"qty": min(v["qty"], raw[k]["qty"]), "avg": v["avg"] or raw[k]["avg"]} for k, v in s["bot_pos"].items() if k in raw}
+                pos_live = {k: {"qty": min(v["qty"], raw[k]["qty"]), "avg": v["avg"] or raw[k]["avg"]} for k, v in s["bot_pos"].items() if k in raw}
             else:
-                pos = {k: v for k, v in raw.items() if k in c["symbols"]}
+                pos_live = {k: v for k, v in raw.items() if k in c["symbols"]}
             pending = {o.get("symbol") for o in toss.open_orders()}
             cash_local = 0.0 if exits_only else float((toss.buying_power(cur) or {}).get("cashBuyingPower") or 0)   # 매도만 볼 땐 현금 조회 생략
+            # 🤝 가상으로 돌리는 AI 가 있으면 그 종목은 가상 장부에서 (같은 바퀴에 실전·가상이 섞여 돌아감)
+            pos_paper = {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in s["paper"]["positions"].items()} \
+                if any(lane_mode(c, st) == "paper" for st in LANES) else {}
+            paper_cash = s["paper"]["cash"] / fx
         else:
             p = s["paper"]
-            pos = {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in p["positions"].items()}
+            pos_live, pos_paper = {}, {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in p["positions"].items()}
             pending, cash_local = set(), p["cash"] / fx
-        pos = {k: v for k, v in pos.items() if _mkt(k) == market and v["qty"] > 0}
+            paper_cash = cash_local
+        pos_live = {k: v for k, v in pos_live.items() if _mkt(k) == market and v["qty"] > 0}
+        pos_paper = {k: v for k, v in pos_paper.items() if _mkt(k) == market and v["qty"] > 0 and k not in pos_live}
+        live_syms = set(pos_live)   # 🔒 실전 장부에 있는 종목만 실전으로 팜 (가상 종목은 절대 실전 주문 안 냄)
+        pos = {**pos_paper, **pos_live}
         with _lock:   # 안 들고 있는 종목의 '이미 나눠 팔았음' 표시는 지움 (다음에 다시 사면 처음부터)
             s_p = state()
             gone = [k for k in s_p["partial"] if _mkt(k) == market and k not in pos]
@@ -965,7 +1053,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 _save(s_p)
         held_syms = list(pos)
         quotes = toss.prices(held_syms) if held_syms else {}
-        invested = sum(v["qty"] * quotes.get(k, {}).get("price", v["avg"]) * fx for k, v in pos.items())
+        _val = lambda k, v: v["qty"] * quotes.get(k, {}).get("price", v["avg"]) * fx   # noqa: E731
+        invested = sum(_val(k, v) for k, v in pos_live.items()) if live else sum(_val(k, v) for k, v in pos.items())   # 실전 장부 보유 가치
+        invested_paper = sum(_val(k, v) for k, v in pos_paper.items())
+        style_map = dict(s.get("style") or {})
+        invested_by = {st: sum(_val(k, v) for k, v in pos.items() if (style_map.get(k) or "surge") == st) for st in LANES}
     except toss.TossError as e:
         event("오류", str(e))
         return {"ok": False, "message": str(e)}
@@ -985,11 +1077,32 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         caps = {"total": c["max_total_krw"], "position": _cap(c["max_total_krw"], c["max_position_krw"]),
                 "order": _cap(c["max_total_krw"], c["max_order_krw"], c["max_position_krw"])}
         loss_limit = c["max_daily_loss_krw"]
-    unreal = sum((quotes.get(k, {}).get("price", v["avg"]) - v["avg"]) * v["qty"] * fx for k, v in pos.items() if v["avg"])
-    day_pl = float(s.get("realized_today", 0)) + unreal
+    _unr = lambda k, v: (quotes.get(k, {}).get("price", v["avg"]) - v["avg"]) * v["qty"] * fx if v["avg"] else 0.0   # noqa: E731
+    unreal_by = {st: sum(_unr(k, v) for k, v in pos.items() if (style_map.get(k) or "surge") == st) for st in LANES}
+    unreal = sum(_unr(k, v) for k, v in (pos_live if live else pos).items())
+    day_pl = float((s.get("realized_book") or {}).get("live" if live else "paper", s.get("realized_today", 0))) + unreal
     if live and not exits_only and not halted and day_pl <= -loss_limit and loss_limit > 0:
         halted = f"자동매매 오늘 손익 {day_pl:,.0f}원 — 한도 -{loss_limit:,.0f}원 초과"
         _halt_today(halted)   # 새로 사기만 멈추고, 이번 바퀴에도 들고 있는 종목 손절·정리는 계속
+    # 🤝 AI 별 예산·손실 한도 (같은 장부를 쓰면 몫으로 나눔 · 가상 AI 는 가상 장부 전체)
+    budget_paper = invested_paper + paper_cash * fx
+    lane_caps: dict[str, dict] = {}
+    halted_lane = dict(s.get("halted_lane") or {})
+    for st in LANES:
+        book_total = (caps["total"] if lane_book(c, st) == "live" and live else budget_paper) * lane_share(c, st)
+        lp = _cap(book_total / c["pick_count"], c["max_position_krw"])
+        lane_caps[st] = {"total": book_total, "position": lp, "order": _cap(lp, c["max_order_krw"])}
+        lane_pl = float((s.get("realized_lane") or {}).get(st, 0)) + unreal_by[st]
+        if c["budget_mode"] == "all_cash":   # 그날 첫 예산 기준 (실전 장부) / 가상 장부 전체 기준
+            base_ = day_budget if (lane_book(c, st) == "live" and live) else book_total
+            lane_limit = base_ * c["max_daily_loss_pct"] / 100 * lane_share(c, st)
+        else:
+            lane_limit = loss_limit * lane_share(c, st)
+        if not exits_only and lane_mode(c, st) != "off" and not halted_lane.get(st) and lane_limit > 0 and lane_pl <= -lane_limit:
+            halted_lane[st] = f"{LANES[st]} 오늘 손익 {lane_pl:,.0f}원 — 한도 -{lane_limit:,.0f}원 초과"
+            with _lock:
+                s_h = state(); s_h.setdefault("halted_lane", {})[st] = halted_lane[st]; _save(s_h)
+            event("정지", halted_lane[st] + " (이 AI 만 오늘 새로 안 삼)")
     month_key = datetime.now(KST).strftime("%Y-%m")
     with _lock:
         sm = state()
@@ -1001,6 +1114,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     month_pct = month_pl / month["start"] * 100 if month["start"] else 0
     target_hit = month_pct >= c["monthly_target_pct"]
     results.append(f"💼 예산 {caps['total']:,.0f}원 (종목당 {caps['position']:,.0f}원) · 보유 {invested:,.0f}원 · 오늘 손익 {day_pl:+,.0f}원")
+    results.append("🤝 " + " · ".join(f"{LANES[st]} {dict(live='실전', paper='가상', off='쉼')[lane_mode(c, st)]} 몫 {lane_share(c, st) * 100:.0f}% "
+                                      f"예산 {lane_caps[st]['total']:,.0f}원" + (" ⛔" if halted_lane.get(st) else "") for st in LANES))
     results.append(f"🎯 이번 달 {month_pct:+.1f}% / 목표 {c['monthly_target_pct']:g}%" + (" — 달성! 이번 달은 새로 안 사요" if target_hit and c["stop_at_target"] else ""))
 
     # 종목 후보: 단타(급등) + 스윙(추세)을 기대 수익률 순으로
@@ -1179,6 +1294,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         if side == "BUY":
             if halted:
                 results.append(f"{sym}: ⛔ 오늘 정지 중이라 안 삼"); continue
+            if lane_mode(c, style) == "off":
+                results.append(f"{sym}: {LANES[style]} 는 쉬는 중이라 안 삼"); continue
+            if halted_lane.get(style):
+                results.append(f"{sym}: ⛔ {LANES[style]} 오늘 정지 중 — {halted_lane[style][:50]}"); continue
+            buy_live = lane_live(c, style)   # 🔒 가상 AI 는 가상 장부로만
             if minutes is not None and minutes < 0 and state().get("no_premarket_until", "") >= datetime.now(KST).strftime("%Y-%m-%d"):
                 results.append(f"{sym}: 토스가 프리장 주문을 안 받아서 정규장부터 삼"); continue
             if target_hit and c["stop_at_target"]:
@@ -1194,8 +1314,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 🔁 손해 보고 판 종목이라 {nr}까지 다시 안 삼"); continue
             if state()["orders_today"] >= c["max_orders_per_day"]:
                 results.append(f"{sym}: 오늘 매수 횟수 한도({c['max_orders_per_day']}) 도달"); continue
-            if len(pos) >= c["pick_count"]:
-                results.append(f"{sym}: 이미 {c['pick_count']}종목 보유 중"); continue
+            if sum(1 for k in pos if (style_map.get(k) or (cands.get(k) or {}).get("style") or "surge") == style) >= c["pick_count"]:
+                results.append(f"{sym}: {LANES[style]} 가 이미 {c['pick_count']}종목 보유 중"); continue
+            caps = lane_caps[style]
             buy_px = price * (1 + c["limit_slip_pct"] / 100) if style == "surge" else price
             est, size_note = cands[sym]["est"], ""
             nw = cands[sym].get("news")
@@ -1213,7 +1334,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 cap_ord = _cap(cap_pos, c["max_order_krw"])
                 if cap_pos > caps["position"]:
                     size_note = f"🎯 확신 집중: 비슷한 거래 {est['n']}건 기대 {est['ev']:+.2f}% → 한도 {cap_pos:,.0f}원"
-            budget = min(max(caps["order"], cap_ord), cap_pos - held["qty"] * price * f, caps["total"] - invested, cash_local * fx)
+            budget = min(max(caps["order"], cap_ord), cap_pos - held["qty"] * price * f, caps["total"] - invested_by[style],
+                         (cash_local if buy_live else paper_cash) * fx)
             if nw and nw.get("ok") and not nw["items"] and c["news_unknown_ratio"] < 1:   # 이유 모르는 급등 → 비중 축소
                 budget *= c["news_unknown_ratio"]
                 size_note = " · ".join(x for x in (size_note, f"📰 급등 이유 모름 → 금액 {c['news_unknown_ratio'] * 100:.0f}%") if x)
@@ -1279,8 +1401,13 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 with _lock:
                     s_e = state(); s_e["explore_today"] = int(s_e.get("explore_today", 0)) + 1; _save(s_e)
             results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · {nnote}" if nnote else "") + (f" · 🎲 {size_note}" if size_note else "")
-                                    + (f" · 🤖 AI: {why}" if why else ""), live, fx, chart=chart_id, est=est, feat=feat, quote=price))
-            invested += qty * buy_px * f; cash_local -= qty * buy_px; pos[sym] = {"qty": qty, "avg": buy_px}
+                                    + (f" · 🤖 AI: {why}" if why else ""), buy_live, fx, chart=chart_id, est=est, feat=feat, quote=price))
+            invested_by[style] += qty * buy_px * f
+            if buy_live:
+                invested += qty * buy_px * f; cash_local -= qty * buy_px; live_syms.add(sym)
+            else:
+                paper_cash -= qty * buy_px
+            pos[sym] = {"qty": qty, "avg": buy_px}; style_map[sym] = style
         else:
             part = side == "SELL_PART"
             qty = int(held["qty"] * c["partial_tp_ratio"]) if part else int(held["qty"])
@@ -1289,7 +1416,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     s4 = state(); s4["partial"][sym] = "one"; _save(s4)   # 'one' = 주문 없이 나눠 팔기만 끝난 것으로 표시
                 _note_skip(sym, f"나눠 팔 수량이 안 됨(보유 {held['qty']:g}주) → 손절선은 본전으로, 남은 물량은 +{c['take_profit_pct']:g}% 익절 대기")
                 results.append(f"{sym}: 나눠 팔 수량이 안 돼서(보유 {held['qty']:g}주) 계속 보유 — 손절선은 본전으로"); continue
-            if live and qty >= 1:   # 🔒 잠긴 봇 장부 기준 수량까지만 (사장님 주식 보호)
+            sell_live = live and sym in live_syms   # 🔒 실전 장부에 있는 종목만 실전 매도 (가상 AI 종목은 가상 장부)
+            if sell_live and qty >= 1:   # 🔒 잠긴 봇 장부 기준 수량까지만 (사장님 주식 보호)
                 try:
                     can = int(toss.bot_sellable(sym))
                 except toss.TossError:
@@ -1302,7 +1430,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if style == "surge" else price
             try:   # 매도 주문이 먼저 (기록 오류로 매도가 막히면 안 됨)
-                results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part, quote=price))
+                results.append(_execute(sym, "SELL", qty, sell_px, reason, sell_live, fx, partial=part, quote=price))
             except Exception as e:
                 with _lock:   # 실패하면 다음 바퀴에 AI 가 다시 판단
                     s_f = state(); s_f.setdefault("ai_hold_at", {}).pop(sym, None); _save(s_f)
@@ -1383,7 +1511,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
                 c_ = config(); mk_ = _mkt(sym)   # 수수료·세금 포함
                 p["cash"] += qty * p_ * f * (1 - tl.side_cost(c_, mk_, "SELL") / 100)
                 gain = (p_ * (1 - tl.side_cost(c_, mk_, "SELL") / 100) - cur["avg"] * (1 + tl.side_cost(c_, mk_, "BUY") / 100)) * qty * f
-                p["realized"] += gain; s["realized_today"] = float(s.get("realized_today", 0)) + gain
+                p["realized"] += gain; _add_realized(s, sym, gain, "paper")
                 s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                 left = cur["qty"] - qty
                 tl.on_sell(sym, qty, p_, reason, "paper", left <= 1e-9, config())
@@ -1455,7 +1583,8 @@ def overview() -> dict:
             "local_time": picker.mnow(c["market"]).strftime("%H:%M"), "progress": dict(picker.PROGRESS), "next_open": _next_open(c),
             "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper", c["market"]),
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
-            "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {}}
+            "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {},
+            "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "halted_lane": s.get("halted_lane") or {}}
 
 
 def _brief(m: str) -> dict:
@@ -1480,6 +1609,15 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
             auto_adjust(r, mode_key)
     except Exception as e:
         event("오류", f"복기 실패: {type(e).__name__}: {e}")
+    try:   # 🤝 두 AI 교차 복기 → 공유 노트
+        if config()["lane_cross_review"]:
+            _cross_review(day, c["market"])
+    except Exception as e:
+        event("오류", f"교차 복기 실패: {type(e).__name__}: {e}")
+    try:   # 🤝 2호 가상→실전 자동 · 연속 손실이면 가상으로 · 예산 몫 조정
+        lane_auto(c["market"])
+    except Exception as e:
+        event("오류", f"AI 자동 조정 실패: {type(e).__name__}: {e}")
     c2 = config()
     try:
         if c2["shadow_on"] and c2["auto_promote"] and c2["mode"] != "off":
@@ -1587,6 +1725,8 @@ def hourly_text() -> str:
                 lines.append("  보유 없음")
             # 손익
             lines.append(f"  오늘 실현 {float(s.get('realized_today', 0)):+,.0f}원")
+            rl = s.get("realized_lane") or {}
+            lines.append("  🤝 " + " · ".join(f"{LANES[st]} {dict(live='실전', paper='가상', off='쉼')[lane_mode(c, st)]} {float(rl.get(st, 0)):+,.0f}원" for st in LANES))
             mo = s.get("month") or {}
             if mo.get("start"):
                 pct = float(mo.get("realized", 0)) / mo["start"] * 100
@@ -1772,7 +1912,7 @@ def _summary_one() -> str:
 
 
 # ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
-LABELS = {"no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+LABELS = {"lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -1820,6 +1960,12 @@ def _engine_one() -> str:
     if pk.get("picks") or pk.get("note"):
         lines.append(f"최근 종목 찾기 결과({pk.get('time', '')}): {pk.get('note', '')}")
         lines += [f"- {x['name']}({x['symbol']}) 점수 {x['score']} · {x['reason']}" for x in pk.get("picks", [])]
+    lv = lanes_overview(c["market"])
+    lines.append("🤝 두 AI: " + " / ".join(f"{v['name']} 모드 {v['mode']} 몫 {v['share']}% · 최근 {v['days']}일 {v.get('n', 0)}건"
+                                        + (f" 승률 {v['win_rate']}% 평균 {v['avg']:+.2f}%" if v.get("n") else "") for v in lv.values()))
+    notes = tl.lessons_text(c["market"], 8)
+    if notes:
+        lines.append("📒 공유 노트(교차 복기 교훈): " + notes)
     ev = s["events"][-25:]
     if ev:
         lines.append("최근 활동 기록:")
@@ -1873,7 +2019,7 @@ def find_actions(reply: str) -> list[dict]:
             if "=" not in arg:
                 continue
             k, v = [x.strip() for x in arg.split("=", 1)]
-            if k not in LABELS or k == "mode":   # 모드는 TRADE_MODE 로만 (실전 켜기는 채팅 불가)
+            if k not in LABELS or k == "mode" or (k.startswith("lane_") and k.endswith("_mode") and v.strip().lower() == "live"):   # 실전 켜기는 채팅 불가 (AI 별 모드도)
                 continue
             a.update(param=k, value=v, label=f"{LABELS[k]}: {c.get(k)} → {v}")
         elif kind == "MODE":
@@ -1898,8 +2044,8 @@ def apply_action(a: dict) -> dict:
     c = config()
     if t == "set":
         k, v = a.get("param"), a.get("value")
-        if k not in LABELS or k == "mode":
-            return {"ok": False, "message": "바꿀 수 없는 설정이에요"}
+        if k not in LABELS or k == "mode" or (k.startswith("lane_") and k.endswith("_mode") and str(v).strip().lower() == "live"):
+            return {"ok": False, "message": "바꿀 수 없는 설정이에요 (실전 켜기는 🤖 화면에서만)"}
         if isinstance(DEFAULTS.get(k), bool):
             v = str(v).strip().lower() in ("1", "true", "on", "켜기", "yes", "예")
         r = save_config({k: v})
@@ -2192,7 +2338,8 @@ def _ai_decide_buy(sym: str, cd: dict, price: float, c: dict):
     except Exception:
         name, img = "", None
     e = cd["est"]
-    prompt = (f"{'스윙(며칠 보유)' if cd['style'] == 'swing' else '단타(그날 정리)'} 매수 후보 {sym}, 현재가 {price}.\n"
+    prompt = (lane_persona(cd["style"], _mkt(sym)) + "\n"
+              f"{'스윙(며칠 보유)' if cd['style'] == 'swing' else '단타(그날 정리)'} 매수 후보 {sym}, 현재가 {price}.\n"
               f"고른 이유: {cd['reason']}\n"
               + (f"최근 공시: {news.note(cd.get('news'))} (급등 이유가 공시로 설명되면 좋은 신호, 이유가 없으면 신중히)\n" if news.note(cd.get('news')) else "")
               + f"학습 기록 추정: 승률 {e['p'] * 100:.0f}% ({e['basis']}), 기대 수익 {e['ev']:+.2f}%\n"
@@ -2269,7 +2416,8 @@ def _ai_decide_hold(sym: str, held: dict, price: float, high: float, style: str,
     except Exception:
         name, img = "", None
     pnl = (price / held["avg"] - 1) * 100 if held["avg"] else 0
-    prompt = (f"{'스윙' if style == 'swing' else '단타'} 보유 종목 {sym}: 평단 {held['avg']:g}, 현재가 {price:g} ({pnl:+.1f}%), 산 뒤 최고가 {high:g}.\n"
+    prompt = (lane_persona(style, _mkt(sym)) + "\n"
+              f"{'스윙' if style == 'swing' else '단타'} 보유 종목 {sym}: 평단 {held['avg']:g}, 현재가 {price:g} ({pnl:+.1f}%), 산 뒤 최고가 {high:g}.\n"
               f"지금 규칙 판단: {rule_note}\n첨부 차트를 보고 지금 일찍 파는 게 수익률에 나은지 판단하세요. "
               "추세가 살아 있으면 들고 가고, 꺾이는 게 뚜렷하면 팔아요. 애매하면 들고 가요.\n"
               '형식: {"sell": true/false, "reason": "한 줄"}')
@@ -2280,6 +2428,75 @@ def _ai_decide_hold(sym: str, held: dict, price: float, high: float, style: str,
 
 
 # ── 🧪📼 실험실 ──
+def _cross_review(day: str, market: str) -> str:
+    """🤝 장 마감 후 두 AI 가 서로의 거래를 복기 → 교훈 2~3개를 공유 노트에 (AI 호출 1번)"""
+    from . import providers as pv
+    from . import team as tm
+    with tl._lock:
+        ts = [t for t in tl._load()["trades"] if t["closed"] and t["day"] == day and tl._tm(t) == market]
+    if not ts:
+        return ""
+    def _row(t):
+        f = t.get("features") or {}
+        return {"sym": t["sym"], "pnl": t["pnl_pct"], "exit": t.get("exit_kind"), "mfe": t["mfe"], "mae": t["mae"],
+                "why_buy": (f.get("ai_decide") or ""), "change": f.get("change"), "ratio": f.get("ratio"), "mode": t["mode"]}
+    by = {LANES[st]: [_row(t) for t in ts if tl._ts(t) == st] for st in LANES}
+    c = config()
+    prompt = ("두 자동매매 AI 의 오늘 거래예요. " + " / ".join(f"{LANES[st]}: {lane_mode(c, st)}" for st in LANES) + "\n"
+              f"{json.dumps(by, ensure_ascii=False)}\n"
+              "둘이 서로의 거래를 평가해 주세요: 각자 잘한 점·아쉬운 점, 그리고 상대에게서 배울 점. "
+              "결과는 다음에 매수·매도 판단할 때 바로 쓸 수 있는 교훈 2~3개로 (숫자는 위 자료만, 한 줄씩, 투자 권유 문구 없이).\n"
+              '형식: {"lessons": ["...", "..."], "swing": "1호에게 한 줄", "surge": "2호에게 한 줄"}')
+    try:
+        reply = pv.chat(tm.fast_spec(), "너는 두 트레이더의 코치다. 짧고 구체적으로.", [{"role": "user", "content": prompt}], effort="low", timeout=120)
+        m = re.search(r"\{.*\}", reply, re.S)
+        r = json.loads(m.group(0)) if m else {}
+    except Exception as e:
+        event("오류", f"교차 복기 AI 실패: {type(e).__name__}")
+        return ""
+    lessons = [str(x).strip() for x in (r.get("lessons") or []) if str(x).strip()][:3]
+    for st in LANES:
+        if r.get(st):
+            lessons.append(f"[{LANES[st]}에게] {str(r[st]).strip()}")
+    for x in lessons:
+        tl.add_lesson(market, x, "교차 복기")
+    msg = f"{day} 두 AI 교차 복기 — " + " / ".join(lessons[:3])
+    event("교차 복기", msg[:400])
+    return msg
+
+
+def lane_auto(market: str) -> list[str]:
+    """🤝 ① 2호(가상)가 조건 채우면 실전 ② 실전 AI 가 연속 손실이면 가상으로 ③ 잘하는 쪽으로 예산 몫 5%p (범위 안)"""
+    c = config()
+    out = []
+    with in_market(market):
+        s = state()
+        days, need = int(c["lane_live_days"]), int(c["lane_live_trades"])
+        for st in LANES:
+            lm = lane_mode(c, st)
+            if c["lane_auto_live"] and lm == "paper" and c["mode"] == "live" and s.get("user_live_ok"):
+                stp = tl._stats([t for t in tl.trades_since("paper", (datetime.now(KST) - timedelta(days=days)).strftime("%Y-%m-%d"), market) if tl._ts(t) == st])
+                if stp.get("n", 0) >= need and stp["avg"] > 0 and stp["win_rate"] >= 45:
+                    if save_config({f"lane_{st}_mode": "live"}, _by_auto=True).get("ok"):
+                        msg = f"{LANES[st]} 가상 → 실전: 최근 {days}일 가상 {stp['n']}건 승률 {stp['win_rate']}% 평균 {stp['avg']:+.2f}%"
+                        event("규칙 교체", msg); out.append(msg)
+            elif c["lane_auto_live"] and lm == "live" and c["mode"] == "live":
+                sums = _lane_day_sums(market, st, int(c["mode_down_days"]))
+                if len(sums) >= int(c["mode_down_days"]) and all(x < 0 for x in sums):   # N일 연속 손실 → 이 AI 만 가상으로
+                    if save_config({f"lane_{st}_mode": "paper"}, _by_auto=True).get("ok"):
+                        msg = f"{LANES[st]} 실전 → 가상: {len(sums)}일 연속 손실 ({', '.join(f'{x:+.1f}%' for x in sums)}) — 가상에서 회복되면 다시 실전"
+                        event("자동 조정", msg); out.append(msg)
+        if c["lane_auto_share"] and all(lane_mode(c, st) != "off" for st in LANES):
+            a, b = lane_stats(market, "surge", days), lane_stats(market, "swing", days)
+            if a.get("n", 0) >= 10 and b.get("n", 0) >= 10 and a["avg"] != b["avg"]:
+                cur = float(c["lane_share_surge"])
+                new = min(float(c["lane_share_max"]), max(float(c["lane_share_min"]), cur + (5 if a["avg"] > b["avg"] else -5)))
+                if new != cur and save_config({"lane_share_surge": new}, _by_auto=True).get("ok"):
+                    msg = f"예산 몫 2호 {cur:g}% → {new:g}% (최근 {days}일 평균: 2호 {a['avg']:+.2f}% vs 1호 {b['avg']:+.2f}%)"
+                    event("자동 조정", msg); out.append(msg)
+    return out
+
+
 def _apply_params(params: dict, why: str, evidence: str) -> bool:
     """그림자 매매에서 나은 조합 → 실전 설정 (손절은 자동 범위 안으로)"""
     c = config()

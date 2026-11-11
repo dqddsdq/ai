@@ -659,6 +659,32 @@ def hot_goal_check(market: str) -> str:
             "\n※ 비중 확대는 자동으로 하지 않아요 — 사장님이 직접 정해 주세요")
 
 
+# ── 📒 공유 노트 (두 AI 가 같이 쓰는 교훈 — 교차 복기가 적고, 매수·매도 판단과 채팅이 읽음) ──
+LESSONS = COMPANY_DIR / "_cache" / "lessons.json"
+
+
+def add_lesson(market: str, text: str, by: str = "") -> None:
+    with _lock:
+        d = store.load(LESSONS, lambda: {"items": []})
+        d["items"] = (d["items"] + [{"t": _now(), "market": market, "text": text[:300], "by": by}])[-200:]
+        store.save(LESSONS, d)
+    try:   # 자동매매 팀 기억에도 한 줄 (채팅 AI 가 항상 보게)
+        from .agents import Agent
+        Agent("trader").remember(f"📒 교훈({'미장' if market == 'US' else '국장'}): {text[:200]}")
+    except Exception:
+        pass
+
+
+def lessons(market: str | None = None, n: int = 10) -> list[dict]:
+    with _lock:
+        items = store.load(LESSONS, lambda: {"items": []}).get("items", [])
+    return [x for x in items if not market or x.get("market") == market][-n:][::-1]
+
+
+def lessons_text(market: str | None, n: int = 6) -> str:
+    return " / ".join(x["text"] for x in lessons(market, n)[::-1])
+
+
 def last_review_text(mode: str, market: str | None = None) -> str:
     with _lock:
         revs = [r for r in _load()["reviews"] if r["mode"] == mode and (not market or r.get("market", "US") == market)]

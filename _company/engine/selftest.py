@@ -339,6 +339,23 @@ def AI_익절_모드():
 
 
 @case
+def 두_AI_장부_분리():
+    """가상 AI 는 절대 실전 주문 못 냄 · 같은 장부면 몫으로 나눔 · 채팅으로 AI 실전 켜기 불가"""
+    from . import autotrade as at
+    c = _cfg(mode="live", lane_swing_mode="live", lane_surge_mode="paper", lane_share_surge=50)
+    assert at.lane_live(c, "swing") and not at.lane_live(c, "surge")
+    assert at.lane_book(c, "surge") == "paper" and at.lane_share(c, "swing") == 1.0 and at.lane_share(c, "surge") == 1.0
+    c2 = {**c, "lane_surge_mode": "live", "lane_share_surge": 30}
+    assert at.lane_live(c2, "surge") and abs(at.lane_share(c2, "surge") - 0.3) < 1e-9 and abs(at.lane_share(c2, "swing") - 0.7) < 1e-9
+    c3 = {**c, "mode": "paper", "lane_surge_mode": "live"}
+    assert not at.lane_live(c3, "surge") and not at.lane_live(c3, "swing")   # 전체가 가상이면 둘 다 가상
+    assert not at.find_actions("[[TRADE_SET: lane_surge_mode=live | x]]")
+    assert at.find_actions("[[TRADE_SET: lane_surge_mode=paper | x]]")
+    assert not at.apply_action({"type": "set", "param": "lane_swing_mode", "value": "live"})["ok"]
+    assert at.PERSONA["surge"] != at.PERSONA["swing"]
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)

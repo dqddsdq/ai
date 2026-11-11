@@ -493,6 +493,10 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="chart-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
         <div class="chart-view" id="chart-view" style="margin-top:8px"></div>
       </div>
+      <div class="card"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
+        <div id="lanes" style="margin-top:8px"></div>
+        <div id="lessons" class="tlog" style="margin-top:8px"></div>
+      </div>
       <div class="card"><b>🧪 규칙 실험실</b> <span class="muted" style="font-size:12.5px">규칙 조합 여러 개를 실전과 동시에 가상으로 · 확실히 나은 조합은 실전 규칙으로 자동 교체</span>
         <span style="float:right"><button class="btn" id="lab-bt" style="padding:3px 10px;font-size:12px">지금 백테스트</button> <button class="btn" id="lab-reset" style="padding:3px 10px;font-size:12px">조합 새로 만들기</button></span>
         <div id="lab-shadow" class="tlog" style="margin-top:8px"></div>
@@ -536,6 +540,16 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>장중 학습: 쉬는 시간 (분)<input id="t-pause_min" type="number"></label>
           <label>🎲 승률 낮을 때 최소 매수 비율 (0.25 = 25%)<input id="t-min_size_ratio" type="number" step="0.05"></label>
           <label>🎲 추정 승률이 이보다 낮으면 안 삼 (%, 0 = 안 씀)<input id="t-min_win_prob" type="number"></label>
+          <label>🤝 1호 일반(스윙) AI<select id="t-lane_swing_mode" class="field"><option value="live">실전 (전체 모드 따라감)</option><option value="paper">가상 장부</option><option value="off">쉬기 (새로 안 삼)</option></select></label>
+          <label>🤝 2호 급등주(단타) AI<select id="t-lane_surge_mode" class="field"><option value="paper">가상 장부 (성적 되면 자동 실전)</option><option value="live">실전 (전체 모드 따라감)</option><option value="off">쉬기 (새로 안 삼)</option></select></label>
+          <label>🤝 2호 예산 몫 (%, 같은 장부일 때 · 나머지 1호)<input id="t-lane_share_surge" type="number"></label>
+          <label>🤝 몫 자동 조정 범위 최소 (%)<input id="t-lane_share_min" type="number"></label>
+          <label>🤝 몫 자동 조정 범위 최대 (%)<input id="t-lane_share_max" type="number"></label>
+          <label>🤝 2호 실전 전환 조건: 최근 며칠<input id="t-lane_live_days" type="number"></label>
+          <label>🤝 2호 실전 전환 조건: 가상 거래 몇 건 이상<input id="t-lane_live_trades" type="number"></label>
+          <label class="toggle"><input type="checkbox" id="t-lane_auto_share"> 🤝 잘하는 AI 쪽으로 예산 몫 자동 조정</label>
+          <label class="toggle"><input type="checkbox" id="t-lane_auto_live"> 🤝 2호 가상→실전 자동 (연속 손실이면 다시 가상)</label>
+          <label class="toggle"><input type="checkbox" id="t-lane_cross_review"> 🤝 장 마감 후 두 AI 교차 복기 → 공유 노트</label>
           <label>🤖 익절 판단<select id="t-ai_take_profit" class="field"><option value="test">비교 중 (규칙대로 팔고 AI 였으면? 비교 → 나으면 자동 전환)</option><option value="on">AI 가 판단 (안전장치 있음)</option><option value="off">규칙대로만</option></select></label>
           <label>🛡️ AI 익절 안전장치: 최고 수익 (+%)<input id="t-ai_tp_guard_peak" type="number" step="0.5"></label>
           <label>🛡️ 이만큼 밀리면 무조건 팔기 (+%)<input id="t-ai_tp_guard_floor" type="number" step="0.1"></label>
@@ -1339,8 +1353,8 @@ async function renderToolsPage() {
 
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
-  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor"];
-const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit"], TRADE_CHK = ["ai_decide", "shadow_on", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
+  "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades"];
+const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 function tradeMk() { try { return localStorage.getItem("tradeMk") || "US"; } catch { return "US"; } }
 document.querySelectorAll("#trade-mk button").forEach(b => b.onclick = () => { try { localStorage.setItem("tradeMk", b.dataset.mk); } catch {} renderTrade(); renderLiveCharts(true); });
@@ -1390,6 +1404,7 @@ async function renderTrade(fillForm = true) {
   $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
   renderLearn(d.learn || {});
   renderLab(d.lab || {});
+  renderLanes(d.lanes || {}, d.lessons || [], d.halted_lane || {});
   const pf = d.preflight || {};
   $("#trade-pre").innerHTML = (pf.day ? `🩺 실데이터 점검 ${esc(pf.day)} ${esc(pf.at || "")}: ${pf.closed ? "휴장일 — 오늘 매매 안 함" : pf.ok ? "✅ 통과" : "❌ 문제 있음 (오늘 새로 안 삼)"} <details style="display:inline"><summary style="display:inline;cursor:pointer" class="muted">자세히</summary>${(pf.checks || []).map(x => `<div class="muted">${x.ok ? "✅" : (x.critical ? "❌" : "⚠️")} ${esc(x.name)} — ${esc(x.detail)}</div>`).join("")}</details>` : `<span class="muted">🩺 실데이터 점검: 장 열릴 때 자동</span>`)
     + ` <button class="btn" id="trade-pf" style="padding:2px 8px;font-size:12px">지금 점검</button> <button class="btn" id="trade-tg" style="padding:2px 8px;font-size:12px">🔔 텔레그램 시험</button>`;
@@ -1425,6 +1440,13 @@ function tradeActionCard(a, container) {
   };
   el.querySelector('[data-a="no"]').onclick = () => { el.querySelector(".acts").innerHTML = '<span class="muted">무시했어요</span>'; el.querySelector(".tb").textContent = "무시"; };
   container.appendChild(el);
+}
+function renderLanes(L, lessons, halted) {
+  const modeKo = { live: "🔴 실전", paper: "📝 가상", off: "⏸️ 쉼" };
+  $("#lanes").innerHTML = Object.entries(L).map(([st, v]) => `<div class="chk" style="margin-bottom:4px"><b>${esc(v.name)}</b> ${modeKo[v.mode] || v.mode}${v.mode === "live" && !v.live ? ' <span class="muted">(전체 모드가 실전이 아니라 지금은 가상)</span>' : ""} · 예산 몫 ${v.share}%
+    · 최근 ${v.days}일 ${v.n || 0}건${v.n ? ` · 승률 ${v.win_rate}% · 평균 ${v.avg > 0 ? "+" : ""}${v.avg}% · 합 ${v.sum > 0 ? "+" : ""}${v.sum}%` : ""}${v.n_paper ? ` <span class="muted">(가상 ${v.n_paper}건)</span>` : ""}${halted[st] ? ` <span class="tb">⛔ 오늘 정지</span>` : ""}</div>`).join("")
+    || `<div class="muted">아직 기록 없음</div>`;
+  $("#lessons").innerHTML = lessons.length ? `<div><b>📒 공유 노트</b> <span class="muted">(교차 복기 교훈 · 두 AI 가 판단할 때 같이 읽음)</span></div>` + lessons.map(x => `<div>${esc(x.t.slice(5, 16))} ${esc(x.text)}</div>`).join("") : `<div class="muted">📒 공유 노트: 첫 교차 복기(장 마감 후) 뒤에 생겨요</div>`;
 }
 function renderLab(L) {
   const sh = L.shadow || {}, b = L.backtest || {};
