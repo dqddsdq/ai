@@ -61,6 +61,21 @@ def _ts(t: dict) -> str:
     return (t.get("features") or {}).get("style") or "surge"
 
 
+HOT_TAG = "hot30"         # 🚀 30% 초과 급등주 전략 태그
+HOT_MIN_CHANGE = 30.0
+HOT_GOAL_N, HOT_GOAL_PCT = 20, 50.0   # 확대 조건: 끝난 거래 20건 이상 + 누적 +50% 초과 (보고만, 자동 확대 안 함)
+
+
+def _strategy(t_or_f: dict) -> str:
+    """전략 태그: 30% 초과 급등주(그림자 급등 조합에서 넘어온 거래 포함) → hot30, 나머지는 ''"""
+    f = (t_or_f.get("features", t_or_f) if "features" in t_or_f else t_or_f) or {}
+    if t_or_f.get("strategy") == HOT_TAG or f.get("strategy") == HOT_TAG or f.get("hot_key"):
+        return HOT_TAG
+    if (f.get("style") or "surge") == "surge" and float(f.get("change") or 0) > HOT_MIN_CHANGE:
+        return HOT_TAG
+    return ""
+
+
 def side_cost(cfg: dict, market: str, side: str) -> float:
     """한쪽 거래 비용(%): 미장 수수료 / 국장 수수료 (+ 매도 때 증권거래세)"""
     if market == "KR":
@@ -100,9 +115,38 @@ def open_trade(sym: str, qty: float, px: float, features: dict | None, mode: str
         else:
             d["trades"].append({"id": uuid.uuid4().hex[:10], "day": day, "sym": sym, "mode": mode, "entry_time": _now(),
                                 "entry_px": px, "qty_in": qty, "features": features or {}, "mfe": 0.0, "mae": 0.0,
-                                "exits": [], "closed": False})
+                                "exits": [], "closed": False, "strategy": _strategy(features or {})})
         d["watch"].get(day, {}).get(sym, {}).update(bought=True)
         _save(d)
+
+
+SWING_FEATS = ("r20", "r60", "rsi", "value20", "volat", "chg1d", "vratio")   # 스윙 진입 조건 (단타 키 change·ratio 와 따로)
+
+
+def swing_missing(mode: str, market: str) -> list[dict]:
+    """진입 조건이 비어 있는 보유 중 스윙 거래 [{id, sym, entry_time, entry_px}]"""
+    with _lock:
+        return [{k: t[k] for k in ("id", "sym", "entry_time", "entry_px")} for t in _load()["trades"]
+                if not t["closed"] and t["mode"] == mode and _tm(t) == market and _ts(t) == "swing"
+                and any((t.get("features") or {}).get(k) is None for k in SWING_FEATS)]
+
+
+def fill_features(tid: str, feats: dict, note: str = "") -> bool:
+    """비어 있는(None) 진입 조건만 채움 (이미 있는 값은 안 바꿈)"""
+    with _lock:
+        d = _load()
+        t = next((x for x in d["trades"] if x["id"] == tid), None)
+        if not t:
+            return False
+        f = t.setdefault("features", {})
+        new = {k: v for k, v in feats.items() if v is not None and f.get(k) is None}
+        if not new:
+            return False
+        f.update(new)
+        if note:
+            f["feat_note"] = note
+        _save(d)
+        return True
 
 
 def mark(prices: dict[str, float], mode: str) -> None:
@@ -137,6 +181,11 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
             t["cost_pct"] = round(rt_cost(cfg, _tm(t)), 3)
             t["pnl_pct"] = round(t["gross_pct"] - t["cost_pct"], 2)   # 수수료·세금 뺀 실제 수익률
             t["exit_kind"] = _kind(t["exits"][-1]["reason"])
+            # 원금·실현 손익 (거래 통화 기준, 수수료·세금 포함) — 전략별 누적 수익률용
+            bc, sc = side_cost(cfg, _tm(t), "BUY") / 100, side_cost(cfg, _tm(t), "SELL") / 100
+            t["invested"] = round(t["entry_px"] * t["qty_in"] * (1 + bc), 4)
+            t["realized"] = round(sum(x["qty"] * x["px"] for x in t["exits"]) * (1 - sc) - t["invested"], 4)
+            t.setdefault("strategy", _strategy(t))
             try:
                 t["hold_min"] = round((datetime.strptime(t["exits"][-1]["t"], "%Y-%m-%d %H:%M:%S") -
                                        datetime.strptime(t["entry_time"], "%Y-%m-%d %H:%M:%S")).total_seconds() / 60)
@@ -233,6 +282,7 @@ def _stats(ts: list[dict]) -> dict:
 
 
 # ── 확률 추정 (비슷한 조건의 지난 거래로 승률·기대 수익) ──
+SHADOW_W = 0.5           # '현재' 그림자 조합 거래의 가중치 (실전 거래는 1)
 CHANGE_EDGES = [0, 8, 12, 20, 1e9]
 RATIO_EDGES = [0, 3, 5, 10, 1e9]
 PRE_RATIO_EDGES = [0, 0.3, 0.6, 1.5, 1e9]
@@ -272,27 +322,45 @@ def estimate(features: dict, cfg: dict) -> dict:
     f0 = dict(features); f0.setdefault("mkt", "US"); f0.setdefault("style", "surge")
     with _lock:   # 같은 시장·같은 종류(단타/스윙) 거래만 기준으로
         ts = [t for t in _load()["trades"] if t["closed"] and _tm(t) == f0["mkt"] and _ts(t) == f0["style"]][-200:]
-    wins_all = [t["pnl_pct"] for t in ts if t["pnl_pct"] > 0]
-    loss_all = [t["pnl_pct"] for t in ts if t["pnl_pct"] <= 0]
-    base_p = len(wins_all) / len(ts) if len(ts) >= 10 else 0.4
+    rows = [(t, 1.0) for t in ts]
+    try:   # 🧪 실전 규칙과 같은 '현재' 그림자 조합 거래만 가중치 0.5 (실전 일지에 같은 날 같은 종목이 있으면 중복이라 뺌)
+        from . import shadow
+        seen = {(t.get("sym"), t.get("day")) for t in ts}
+        rows += [(t, SHADOW_W) for t in shadow.base_samples(f0["mkt"])
+                 if _ts(t) == f0["style"] and (t["sym"], t.get("day")) not in seen]
+    except Exception:
+        pass
+    W = lambda rs: sum(w for _, w in rs)   # noqa: E731  가중 건수
+    def wmean(vals):   # 가중 평균 [(값, 가중치)]
+        tw = sum(w for _, w in vals)
+        return sum(x * w for x, w in vals) / tw if tw else 0.0
+    wins_all = [(t["pnl_pct"], w) for t, w in rows if t["pnl_pct"] > 0]
+    loss_all = [(t["pnl_pct"], w) for t, w in rows if t["pnl_pct"] <= 0]
+    base_p = W(wins_all) / W(rows) if W(rows) >= 10 else 0.4
     swing = f0["style"] == "swing"
-    avg_win = st.mean(wins_all) if len(wins_all) >= 3 else (float(cfg.get("swing_trail_pct", 8)) if swing else float(cfg.get("partial_tp_pct") or 5) * 0.8)
-    avg_loss = st.mean(loss_all) if len(loss_all) >= 3 else -float(cfg.get("swing_stop_pct", 6) if swing else cfg.get("stop_loss_pct", 3))
+    avg_win = wmean(wins_all) if W(wins_all) >= 3 else (float(cfg.get("swing_trail_pct", 8)) if swing else float(cfg.get("partial_tp_pct") or 5) * 0.8)
+    avg_loss = wmean(loss_all) if W(loss_all) >= 3 else -float(cfg.get("swing_stop_pct", 6) if swing else cfg.get("stop_loss_pct", 3))
     k = _key(f0)
-    exact = [t for t in ts if _tkey(t) == k]
-    part = [t for t in ts if _tkey(t)[:3] == k[:3] and _tkey(t)[-1] == k[-1]]   # 같은 시장·종류·(프리장/구간 하나) 묶음
-    sample = exact if len(exact) >= 5 else (part if len(part) >= 5 else exact)
-    n = len(sample)
-    w = sum(1 for t in sample if t["pnl_pct"] > 0)
+    exact = [(t, w) for t, w in rows if _tkey(t) == k]
+    if swing:   # 스윙: 같은 시장·종류·20일 수익률 구간 (RSI 는 무시) — 예전엔 exact 와 같아서 넓혀지지 않았음
+        part = [(t, w) for t, w in rows if _tkey(t)[:3] == k[:3]]
+    else:
+        part = [(t, w) for t, w in rows if _tkey(t)[:3] == k[:3] and _tkey(t)[-1] == k[-1]]   # 같은 시장·종류·(프리장/구간 하나) 묶음
+    sample = exact if W(exact) >= 5 else (part if W(part) >= 5 else exact)
+    n = round(W(sample), 1)
+    n = int(n) if float(n).is_integer() else n
+    n_sh = sum(1 for _, w in sample if w < 1)
+    w = W([(t, w_) for t, w_ in sample if t["pnl_pct"] > 0])
     prior = 4.0
     p = (w + base_p * prior) / (n + prior)
     if n >= 3:
-        sw = [t["pnl_pct"] for t in sample if t["pnl_pct"] > 0]
-        sl = [t["pnl_pct"] for t in sample if t["pnl_pct"] <= 0]
-        avg_win = st.mean(sw) if sw else avg_win
-        avg_loss = st.mean(sl) if sl else avg_loss
+        sw = [(t["pnl_pct"], w_) for t, w_ in sample if t["pnl_pct"] > 0]
+        sl = [(t["pnl_pct"], w_) for t, w_ in sample if t["pnl_pct"] <= 0]
+        avg_win = wmean(sw) if sw else avg_win
+        avg_loss = wmean(sl) if sl else avg_loss
     ev = p * avg_win + (1 - p) * avg_loss
-    basis = ("같은 조건" if sample is exact else "비슷한 조건") + f" {n}건" if n else f"기록 없음 → 기본 {base_p * 100:.0f}%"
+    basis = (("같은 조건" if sample is exact else "비슷한 조건") + f" {n}건" + (f"(그림자 {n_sh}건×{SHADOW_W:g} 포함)" if n_sh else "")) \
+        if n else f"기록 없음 → 기본 {base_p * 100:.0f}%"
     return {"p": round(p, 3), "n": n, "ev": round(ev, 2), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "basis": basis}
 
 
@@ -535,6 +603,60 @@ def day_sums(mode: str, n: int = 5, market: str | None = None) -> list[float]:
 def trades_since(mode: str, since: str, market: str | None = None) -> list[dict]:
     with _lock:
         return [t for t in _load()["trades"] if t["mode"] == mode and t["closed"] and t["entry_time"] >= since and (not market or _tm(t) == market)]
+
+
+# ── 🚀 30% 초과 급등주 전략만의 실전 성적 ──
+def hot_stats(market: str, mode: str = "live") -> dict:
+    """누적 수익률 = 실현 손익 합 ÷ 투입 원금 합 (수수료·세금 포함), 건수, 승률, 최고점 대비 최대 하락(누적 수익률 곡선, %p)"""
+    with _lock:
+        ts = [t for t in _load()["trades"] if t["mode"] == mode and t["closed"] and _tm(t) == market
+              and (t.get("strategy") or _strategy(t)) == HOT_TAG]
+    ts.sort(key=lambda t: (t["exits"][-1]["t"] if t.get("exits") else t["entry_time"]))
+    inv = rl = peak = mdd = 0.0
+    wins = 0
+    for t in ts:
+        i = t.get("invested")
+        if i is None:   # 예전 기록: 원금·실현 손익을 수익률로 추정
+            i = t["entry_px"] * t["qty_in"]
+        r = t.get("realized")
+        if r is None:
+            r = i * t.get("pnl_pct", 0) / 100
+        inv += i; rl += r; wins += r > 0
+        cur = rl / inv * 100 if inv else 0.0
+        peak = max(peak, cur)
+        mdd = max(mdd, peak - cur)
+    n = len(ts)
+    ret = round(rl / inv * 100, 2) if inv else 0.0
+    return {"n": n, "ret_pct": ret, "win_rate": round(wins / n * 100) if n else 0, "mdd_pct": round(mdd, 2),
+            "realized": round(rl, 2), "invested": round(inv, 2), "goal": n >= HOT_GOAL_N and ret > HOT_GOAL_PCT}
+
+
+def hot_text(market: str) -> str:
+    s = hot_stats(market)
+    if not s["n"]:
+        return "🚀 30%초과 급등 전략(실전): 끝난 거래 없음"
+    return (f"🚀 30%초과 급등 전략(실전): {s['n']}건 · 누적 {s['ret_pct']:+.2f}% · 승률 {s['win_rate']}% · 최대 하락 {s['mdd_pct']:.2f}%p"
+            f" (확대 조건 {HOT_GOAL_N}건·+{HOT_GOAL_PCT:g}% {'도달 ✅' if s['goal'] else '미달'})")
+
+
+def hot_goal_check(market: str) -> str:
+    """확대 조건에 새로 도달했으면 보고문 (한 번만 · 조건이 깨지면 다시 보고 가능). 비중은 안 바꿈"""
+    s = hot_stats(market)
+    with _lock:
+        d = _load()
+        g = d.setdefault("hot_goal", {})
+        if not isinstance(g, dict):
+            g = d["hot_goal"] = {}
+        was = bool(g.get(market))
+        if was == s["goal"]:
+            return ""
+        g[market] = s["goal"]
+        _save(d)
+    if not s["goal"]:
+        return ""
+    return (f"🚀 확대 조건 도달: 30% 초과 급등 전략 실전 {s['n']}건 · 누적 {s['ret_pct']:+.2f}% "
+            f"(실현 {s['realized']:+,.2f} ÷ 원금 {s['invested']:,.2f}, 수수료·세금 포함) · 승률 {s['win_rate']}% · 최대 하락 {s['mdd_pct']:.2f}%p"
+            "\n※ 비중 확대는 자동으로 하지 않아요 — 사장님이 직접 정해 주세요")
 
 
 def last_review_text(mode: str, market: str | None = None) -> str:

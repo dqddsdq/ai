@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import re
 import threading
 import time
@@ -80,6 +81,8 @@ DEFAULTS = {
     "rsi_max_buy": 68,             # 추세(스윙): 과열 기준
     "swing_stop_pct": 6.0,         # 스윙 손절 (며칠 들고 가니 단타보다 넓게)
     "swing_trail_pct": 8.0,        # 스윙: 최고 수익이 이만큼 난 뒤 고점 대비 이만큼 빠지면 팔기
+    "swing_trail_vol": False,      # 스윙 고점 대비 기준을 종목 변동성으로 자동 계산 (3~8% 밖이면 swing_trail_pct · 그림자로 비교)
+    "swing_trail_vol_mult": 0.7,   #   하루 변동성(최근 20일) × 이 값 = 기준(%) (연 88%→약 3.9%, 182%→약 8%)
     "swing_max_days": 15,          # 스윙 최대 보유 일수
     "interval_min": 1,             # 급등 종목 찾기 간격 (보유 종목 손절 확인은 따로 20초마다)
     "exit_check_sec": 10,
@@ -98,9 +101,9 @@ DEFAULTS = {
     "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
     "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
     "auto_promote": True,          #   확실히 나은 조합을 실전 규칙으로 자동 교체 (매일 복기 뒤)
-    "promote_min_trades": 15,      #   교체하려면 그 조합 거래가 최소 이만큼
-    "promote_margin_pct": 1.0,     #   '현재'보다 총수익률이 이만큼(%p) 이상 높아야
-    "promote_window_days": 14,     #   비교 기간(일)
+    "promote_min_trades": 15,      #   교체하려면 그 조합 거래가 최소 이만큼 (20 보다 작아도 20건 적용 · shadow.PROMOTE_N)
+    "promote_margin_pct": 1.0,     #   (예전 기준·지금은 안 씀) 교체는 앞 70% 선정 → 뒤 30% 검증 방식
+    "promote_window_days": 14,     #   화면 표시용 최근 기간(일)
     "backtest_on": True,           # 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로
     "ai_take_profit": "test",      # 🤖 익절을 AI 에게: off=규칙대로 · test=규칙대로 팔되 'AI 였으면?'을 따로 비교 · on=익절 규칙 대신 AI 가 판단
     "ai_tp_guard_peak": 3,         #    on 일 때 안전장치: 최고 수익이 +이 % 이상이었다가
@@ -136,7 +139,7 @@ NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 20), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 20), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
 CHOICES = {"ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -259,7 +262,7 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
     for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check", "prob_sizing",
-              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode", "shadow_on", "auto_promote", "backtest_on", "ai_decide"):
+              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode", "shadow_on", "auto_promote", "backtest_on", "ai_decide", "swing_trail_vol"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -292,14 +295,15 @@ def _fresh_day(s: dict, market: str) -> dict:
     if s.get("day") != day:  # 장(현지 날짜)이 바뀌면 하루 카운트·정지·손익 초기화 (스윙 종목의 최고가는 유지)
         keep = {k: v for k, v in (s.get("highs") or {}).items() if (s.get("style") or {}).get(k) == "swing"}
         s.update(day=day, orders_today=0, halted_today="", realized_today=0.0, highs=keep, day_budget=0.0, explore_today=0)
-        s["no_rebuy"] = {k: v for k, v in (s.get("no_rebuy") or {}).items() if v >= day}   # 기한 지난 재진입 금지는 풀기
+        nr = s.get("no_rebuy")
+        s["no_rebuy"] = {k: v for k, v in (nr if isinstance(nr, dict) else {}).items() if str(v or "") >= day}   # 기한 지난 재진입 금지는 풀기
     return s
 
 
 def state() -> dict:
     with _lock:
         s = store.load(_state_path())   # 메모리 보관 · 깨지면 백업에서 복구
-        for k, v in (("events", []), ("orders", []), ("bot_pos", {}), ("picks", {}), ("swing", {}), ("style", {}), ("buy_day", {}), ("highs", {}), ("realized_today", 0.0), ("month", {}), ("partial", {}), ("trail_mode", {}), ("hold_log", {})):
+        for k, v in (("events", []), ("orders", []), ("bot_pos", {}), ("picks", {}), ("swing", {}), ("style", {}), ("buy_day", {}), ("highs", {}), ("realized_today", 0.0), ("month", {}), ("partial", {}), ("trail_mode", {}), ("hold_log", {}), ("no_rebuy", {})):
             s.setdefault(k, v)
         if "paper" not in s:
             s["paper"] = {"cash": config()["paper_cash_krw"], "positions": {}, "realized": 0}
@@ -329,7 +333,7 @@ def event(kind: str, text: str, **extra) -> None:
 
 
 NOTIFY_KINDS = {"익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
-                "휴장", "오류", "복구", "AI 판단", "백테스트"}   # 🔔 텔레그램으로 보낼 기록 종류
+                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 
 def _mkt(sym: str) -> str:
@@ -389,6 +393,46 @@ def _rsi(xs: list[float], n: int = 14) -> float | None:
     return 100.0 if l == 0 else 100 - 100 / (1 + g / l)
 
 
+def swing_feats(sym: str, price: float, fx: float, day: str | None = None) -> dict:
+    """스윙 진입 조건 (일지·학습용, 매수 판단엔 안 씀): 20일·60일 등락률, RSI, 20일 평균 거래대금(원), 변동성(연율 %),
+    당일 등락률, 거래량 배수(당일 ÷ 20일 평균). day(장 날짜)를 주면 그날 기준으로 계산 (예전 기록 보충용)"""
+    closes, vols, dates = toss.daily(sym, 100)
+    d0 = day or picker.session_date(_mkt(sym))
+    prev = [i for i, d in enumerate(dates) if str(d)[:10] < d0]   # 그날 전까지의 일봉
+    if len(prev) < 61 or not price:
+        return {}
+    pc, pv = [closes[i] for i in prev], [vols[i] for i in prev]
+    today_vol = next((vols[i] for i, d in enumerate(dates) if str(d)[:10] == d0), 0.0)
+    series = pc + [price]
+    rets = [math.log(b / a) for a, b in zip(series[-21:-1], series[-20:]) if a > 0 and b > 0]
+    rsi = _rsi(series)
+    v20 = sum(pv[-20:]) / 20
+    return {"r20": round((price / series[-21] - 1) * 100, 1), "r60": round((price / series[-61] - 1) * 100, 1),
+            "rsi": round(rsi) if rsi is not None else None,
+            "value20": round(sum(c_ * v for c_, v in zip(pc[-20:], pv[-20:])) / 20 * (1 if _mkt(sym) == "KR" else fx)),
+            "volat": round((sum(x * x for x in rets) / max(len(rets), 1)) ** 0.5 * math.sqrt(252) * 100, 1),
+            "chg1d": round((price / pc[-1] - 1) * 100, 1) if pc[-1] else None,
+            "vratio": round(today_vol / v20, 2) if today_vol and v20 else None}
+
+
+_bf_done: set[str] = set()   # 보충을 시도한 거래 id
+
+
+def _backfill_swing(mode_key: str, market: str, fx: float, limit: int = 3) -> list[str]:
+    """보유 중 스윙 거래의 빈 진입 조건을 산 날 차트로 채움 (한 바퀴에 몇 개씩, 실패하면 다음 바퀴에 다시)"""
+    out = []
+    for t in [x for x in tl.swing_missing(mode_key, market) if x["id"] not in _bf_done][:limit]:
+        try:
+            dt = datetime.strptime(t["entry_time"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+            f = swing_feats(t["sym"], float(t["entry_px"]), fx, picker.session_date(market, dt))
+        except (toss.TossError, ValueError, OSError):
+            continue   # 조회 실패 → 다음 바퀴에 다시
+        _bf_done.add(t["id"])   # 차트를 받았으면 이번 실행에선 다시 안 함 (데이터가 모자라 빈 값이 남아도)
+        if f and tl.fill_features(t["id"], f, "산 날 일봉으로 보충 (거래량 배수는 그날 하루 전체 기준)"):
+            out.append(f"📚 {t['sym']} 스윙 진입 조건 보충 (20일 {f.get('r20')}% · RSI {f.get('rsi')})")
+    return out
+
+
 def signal_trend(closes: list[float], price: float, qty: float, avg: float, c: dict) -> tuple[str, str]:
     series = closes + [price]
     ma20, ma60, rsi = _ma(series, 20), _ma(series, 60), _rsi(series)
@@ -408,16 +452,36 @@ def signal_trend(closes: list[float], price: float, qty: float, avg: float, c: d
     return "HOLD", f"조건 안 맞음 (RSI {rsi:.0f})"
 
 
+VOL_TRAIL_MIN, VOL_TRAIL_MAX = 3.0, 8.0   # 변동성 기준 허용 범위(%) — 밖이면 swing_trail_pct
+
+
+def swing_trail_for(closes: list[float], price: float, c: dict) -> tuple[float, str]:
+    """스윙 고점 대비 기준(%): swing_trail_vol 켜면 최근 20일 하루 변동성 × 배수, 3~8% 밖·데이터 부족이면 swing_trail_pct"""
+    base = float(c["swing_trail_pct"])
+    if not c.get("swing_trail_vol"):
+        return base, ""
+    s = [x for x in (list(closes or [])[-20:] + [price]) if x and x > 0]
+    rets = [math.log(b / a) for a, b in zip(s[:-1], s[1:])]
+    if len(rets) < 10:
+        return base, " · 변동성 데이터 부족→기본"
+    dv = (sum(x * x for x in rets) / len(rets)) ** 0.5 * 100   # 하루 변동성(%)
+    t = round(dv * float(c.get("swing_trail_vol_mult", 0.7)), 1)
+    if VOL_TRAIL_MIN <= t <= VOL_TRAIL_MAX:
+        return t, f" · 변동성 연 {dv * math.sqrt(252):.0f}%"
+    return base, f" · 변동성 기준 {t:g}% 범위 밖→기본"
+
+
 def signal_swing(closes: list[float], price: float, qty: float, avg: float, high: float, days: int, c: dict) -> tuple[str, str]:
     """스윙(며칠 보유) 매도: 손절 · 고점 대비 하락(최고 수익이 기준 이상 난 뒤) · 20일선 이탈 · 최대 보유 일수. 밤새 들고 감"""
     pnl = (price / avg - 1) * 100
     high = max(high or price, price)
     peak, drop = (high / avg - 1) * 100, (price / high - 1) * 100
     ma20 = _ma(closes + [price], 20)
+    trail, tnote = swing_trail_for(closes, price, c)
     if pnl <= -c["swing_stop_pct"]:
         return "SELL", f"[스윙] 손절: 평단 대비 {pnl:.1f}% (기준 -{c['swing_stop_pct']:g}%)"
-    if peak >= c["swing_trail_pct"] and drop <= -c["swing_trail_pct"]:
-        return "SELL", f"[스윙] 고점 대비 {drop:.1f}% 하락 (최고 +{peak:.1f}%) → 수익 지키기 (평단 대비 {pnl:+.1f}%)"
+    if peak >= trail and drop <= -trail:
+        return "SELL", f"[스윙] 고점 대비 {drop:.1f}% 하락 (기준 -{trail:g}%{tnote}, 최고 +{peak:.1f}%) → 수익 지키기 (평단 대비 {pnl:+.1f}%)"
     if ma20 and price < ma20 * 0.98:
         return "SELL", f"[스윙] 추세 이탈: 20일선({ma20:,.2f}) 아래 (평단 대비 {pnl:+.1f}%)"
     if days >= c["swing_max_days"]:
@@ -439,7 +503,7 @@ def _seen_news_block(sym: str) -> bool:
 def _no_tp(c: dict) -> dict:
     """익절 규칙(나눠 팔기·전부 익절·고점 대비 하락)만 끈 설정 — 손절·마감 정리·본전 정리·20일선·최대 일수는 그대로"""
     return {**c, "partial_tp_pct": 0, "take_profit_pct": 0, "trail_pct": 1e9, "trail_wide_pct": 1e9, "trail_wide_after_pct": 0,
-            "swing_trail_pct": 1e9}
+            "swing_trail_pct": 1e9, "swing_trail_vol": False}
 
 
 def tp_guard(avg: float, high: float, price: float, c: dict) -> str:
@@ -553,7 +617,7 @@ def trail_for(avg: float, high: float, c: dict) -> float:
 def signal_surge(price: float, qty: float, avg: float, high: float, minutes: int | None, picked: bool, c: dict,
                  partial_done: bool = False) -> tuple[str, str]:
     """('BUY'|'SELL'|'SELL_PART'|'HOLD', 이유)
-    매도 순서: 마감 정리 → 손절 → (나눠 판 뒤) 본전 정리 → 나눠 팔기 → 고점 대비 하락 → (나눠 팔기 안 쓸 때만) 전부 익절"""
+    매도 순서: 마감 정리 → 손절 → (나눠 판 뒤) 본전 정리 → 나눠 팔기 → (나눠 판 뒤 또는 안 쓸 때) 전부 익절 → 고점 대비 하락"""
     if qty > 0 and avg > 0:
         pnl = (price / avg - 1) * 100
         high = max(high or price, price)
@@ -568,14 +632,17 @@ def signal_surge(price: float, qty: float, avg: float, high: float, minutes: int
             return "SELL", f"나눠 팔기 후 본전 도달 → 남은 물량 정리 (평단 대비 {pnl:+.1f}%)"
         if not partial_done and c.get("partial_tp_pct") and pnl >= c["partial_tp_pct"]:
             return "SELL_PART", f"나눠 팔기: 평단 대비 +{pnl:.1f}% → {int(c['partial_tp_ratio'] * 100)}% 먼저 익절"
+        # 남은 물량 전부 익절: 나눠 판 뒤에도 작동 (예전엔 나눠 팔기를 쓰면 익절이 영영 안 돼서 고점 대비 하락만 기다리던 버그)
+        if c.get("take_profit_pct") and pnl >= c["take_profit_pct"] and (partial_done or not c.get("partial_tp_pct")):
+            return "SELL", f"익절: 평단 대비 +{pnl:.1f}% (기준 +{c['take_profit_pct']:g}%{' · 나눠 판 뒤 남은 물량' if partial_done else ''})"
         # 고점 대비 하락: 최고 수익이 기준(trail) 이상 났으면 '무장' → 그 뒤엔 평단 아래로 살짝 내려가도 팔기
         # (예전엔 '지금 수익 중'일 때만 팔아서, +4.4% → 평단 아래로 빠르게 밀리면 손절(-3%)까지 기다리던 문제 수정)
         if peak >= trail and drop <= -trail:
             return "SELL", f"고점 대비 {drop:.1f}% 하락 (기준 -{trail:g}%, 최고 +{peak:.1f}%) → 수익 지키기 (평단 대비 {pnl:+.1f}%)"
-        if not c.get("partial_tp_pct") and c.get("take_profit_pct") and pnl >= c["take_profit_pct"]:
-            return "SELL", f"익절: 평단 대비 +{pnl:.1f}%"
         armed = "작동 중" if peak >= trail else f"최고 +{peak:.1f}% < {trail:g}% 라 아직 대기"
-        return "HOLD", f"보유 유지 (평단 대비 {pnl:+.1f}% · 최고 +{peak:.1f}% · 고점 대비 {drop:.1f}% / 기준 -{trail:g}% {armed})"
+        note = f" · 이미 나눠 팔았음 → 남은 물량은 +{c['take_profit_pct']:g}%에서 익절" \
+            if partial_done and c.get("partial_tp_pct") and pnl >= c["partial_tp_pct"] else ""
+        return "HOLD", f"보유 유지 (평단 대비 {pnl:+.1f}% · 최고 +{peak:.1f}% · 고점 대비 {drop:.1f}% / 기준 -{trail:g}% {armed}{note})"
     if not picked:
         return "HOLD", "선택 종목 아님"
     if minutes is None or minutes > 360:
@@ -603,6 +670,46 @@ def _note_hold(sym: str, avg: float, high: float, price: float, side: str, reaso
               f"{'≥' if new == c['trail_wide_pct'] else '<'} {c['trail_wide_after_pct']:g}%)", symbol=sym)
     if log_due:
         event("보유 확인", f"{sym} {reason}", symbol=sym)
+
+
+def _filled(o: dict) -> bool:
+    return o.get("status") == "paper_filled" or float(o.get("counted") or 0) > 0
+
+
+def _partial_done(sym: str) -> bool:
+    """'이미 나눠 팔았음' 확인 — 마지막 매수 뒤 실제 체결된 나눠 팔기 주문이 없으면 잘못 남은 표시라 지움 (재시작·예전 기록)"""
+    with _lock:
+        s = state()
+        flag = s["partial"].get(sym)
+        if not flag:
+            return False
+        if flag == "one":   # 1주라 못 나눈 경우 (주문 없음)
+            return True
+        bought = sold = False
+        for o in s["orders"]:
+            if o.get("symbol") != sym or not _filled(o):
+                continue
+            if o.get("side") == "BUY":
+                bought, sold = True, False
+            elif o.get("partial"):
+                sold = True
+        if not bought or sold:   # 매수 기록이 잘려서 모르면 그대로 둠
+            return True
+        s["partial"].pop(sym, None); _save(s)
+    event("기록 정리", f"{sym} '이미 나눠 팔았음' 표시가 남아 있었지만 이번 매수 뒤 나눠 판 체결이 없어서 지움 → 나눠 팔기·익절 다시 작동", symbol=sym)
+    return False
+
+
+_skip_seen: dict[tuple, float] = {}
+
+
+def _note_skip(sym: str, why: str) -> None:
+    """규칙 기준(나눠 팔기·익절)을 넘었는데 안 팔고 보유할 때 이유 기록 (같은 이유는 5분에 한 번)"""
+    k = (sym, why[:40])
+    if time.time() - _skip_seen.get(k, 0) < 300:
+        return
+    _skip_seen[k] = time.time()
+    event("보유 유지", f"{sym} 규칙 기준을 넘었지만 안 팖 — {why}", symbol=sym)
 
 
 def _ai_ok(sym: str, side: str, reason: str, price: float) -> tuple[bool, str]:
@@ -688,6 +795,40 @@ def prepare_now() -> dict:
 scan_now = prepare_now   # 예전 이름 호환
 
 
+# ── 체결 알림 문구 (매매 로직과 무관, 보여주기만) ──
+def _px_text(px: float, us: bool, fx: float) -> str:
+    return f"${px:,.2f} (≈{px * fx:,.0f}원)" if us else f"{px:,.0f}원"
+
+
+def _sell_kind(reason: str) -> str:
+    """매도 이유 → 짧은 분류"""
+    r = reason or ""
+    for key, label in (("AI 판단", "🤖 AI 판단"), ("안전장치", "AI 익절 안전장치"), ("손절", "손절"), ("나눠 팔기", "나눠 익절"),
+                       ("익절", "익절"), ("고점", "고점 대비 하락"), ("본전", "본전 정리"), ("마감", "마감 정리"),
+                       ("20일선", "20일선 이탈"), ("보유 일수", "최대 보유 일수"), ("공시", "공시 악재")):
+        if key in r:
+            return label
+    return r.split(":")[0][:30] or "기타"
+
+
+def _fill_text(rec: dict, delta: float, fill_px: float, bp: dict, fx: float, gain: float, today: float) -> str:
+    sym = rec["symbol"]; us = _mkt(sym) == "US"   # 시장 깃발은 event() 가 앞에 붙임
+    first = (rec.get("reason") or "").splitlines()[0][:80] if rec.get("reason") else ""
+    if rec["side"] == "BUY":
+        style = "스윙" if (rec.get("features") or {}).get("style") == "swing" else "단타"
+        return (f"🟢 매수 체결 {sym} {delta:g}주 @ {_px_text(fill_px, us, fx)} · {style}"
+                + (f"\n이유: {first}" if first else ""))
+    f = fx if us else 1
+    cost = bp["avg"] * (1 + tl.side_cost(config(), _mkt(sym), "BUY") / 100) * delta * f   # 수수료 포함 산 금액(원)
+    pct = gain / cost * 100 if cost > 0 else 0.0
+    mark = "🔵 이익" if gain >= 0 else "🔴 손해"
+    amt = f"{gain:+,.0f}원" + (f" (${gain / fx:+,.2f})" if us and fx else "")
+    return (f"{mark} 매도 체결 {sym} {delta:g}주 @ {_px_text(fill_px, us, fx)} · 평단 {_px_text(bp['avg'], us, fx)}"
+            f"\n손익(수수료·세금 뺌): {pct:+.2f}% · {amt}"
+            f"\n사유: {_sell_kind(rec.get('reason', ''))}" + (f" — {first}" if first else "")
+            + f"\n오늘 누적 실현: {today:+,.0f}원")
+
+
 # ── 체결 확인 ──
 def _reconcile(fx: float) -> None:
     with _lock:
@@ -700,15 +841,17 @@ def _reconcile(fx: float) -> None:
         ex = r.get("execution") or {}
         filled = float(ex.get("filledQuantity") or 0)
         fill_px = float(ex.get("averageFilledPrice") or o["price"])
+        msg = ""
         with _lock:
             s = state()
             rec = next((x for x in s["orders"] if x.get("order_id") == o["order_id"]), None)
             if not rec:
                 continue
-            delta = filled - float(rec.get("counted", 0))
+            delta = filled - float(rec.get("counted", 0))   # 새로 체결된 수량만 (같은 체결 두 번 안 셈·안 보냄)
             if delta > 0:
                 bp = s["bot_pos"].get(rec["symbol"], {"qty": 0.0, "avg": 0.0})
                 f = 1 if _mkt(rec["symbol"]) == "KR" else fx
+                gain = 0.0
                 if rec["side"] == "BUY":
                     tot = bp["qty"] + delta
                     s["bot_pos"][rec["symbol"]] = {"qty": tot, "avg": (bp["avg"] * bp["qty"] + fill_px * delta) / tot}
@@ -732,6 +875,10 @@ def _reconcile(fx: float) -> None:
                         s["trail_mode"].pop(rec["symbol"], None); s["hold_log"].pop(rec["symbol"], None)
                         s["style"].pop(rec["symbol"], None); s["buy_day"].pop(rec["symbol"], None)
                 rec["counted"] = filled
+                try:   # 알림 문구 만들다 실패해도 체결 기록은 그대로
+                    msg = _fill_text(rec, delta, fill_px, bp, fx, gain, float(s.get("realized_today", 0)))
+                except Exception:
+                    msg = ""
             st = r.get("status") or ""
             if st:
                 rec["status"] = st.lower()
@@ -739,7 +886,14 @@ def _reconcile(fx: float) -> None:
                 rec["final"] = True
             _save(s)
         if delta > 0:
-            event("체결", f"{o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {delta:g}주 @ {fill_px:g}", symbol=o["symbol"])
+            event("체결", msg or f"{o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {delta:g}주 @ {fill_px:g}", symbol=o["symbol"])
+            if o["side"] != "BUY":   # 🚀 급등 전략 확대 조건 도달 보고 (보고만, 비중은 안 바꿈)
+                try:
+                    gm = tl.hot_goal_check(_mkt(o["symbol"]))
+                    if gm:
+                        event("확대 조건", gm)
+                except Exception as e:
+                    _log_fn(f"🤖 [오류] 급등 전략 집계: {type(e).__name__}: {e}")
 
 
 def _bot_order_ids() -> set[str]:
@@ -802,6 +956,13 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             pos = {k: {"qty": v["qty"], "avg": v["avg"]} for k, v in p["positions"].items()}
             pending, cash_local = set(), p["cash"] / fx
         pos = {k: v for k, v in pos.items() if _mkt(k) == market and v["qty"] > 0}
+        with _lock:   # 안 들고 있는 종목의 '이미 나눠 팔았음' 표시는 지움 (다음에 다시 사면 처음부터)
+            s_p = state()
+            gone = [k for k in s_p["partial"] if _mkt(k) == market and k not in pos]
+            if gone:
+                for k in gone:
+                    s_p["partial"].pop(k, None)
+                _save(s_p)
         held_syms = list(pos)
         quotes = toss.prices(held_syms) if held_syms else {}
         invested = sum(v["qty"] * quotes.get(k, {}).get("price", v["avg"]) * fx for k, v in pos.items())
@@ -898,13 +1059,20 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     if cands:
         with _lock:
             s2 = state(); s2["cands"] = {k: {"style": v["style"], "reason": v["reason"], "ev": v["est"]["ev"], "p": v["est"]["p"]} for k, v in cands.items()}; _save(s2)
+    hot: dict = {}   # 🚀 30% 초과 급등 후보 (그림자 검증 조합 전용 · 실전은 안 삼)
+    if c["shadow_on"] and not dry and not exits_only and not halted and c["auto_pick"] and strat in ("surge", "auto") \
+            and picker.base_ready(market) and minutes is not None and first + 5 <= minutes <= 360:
+        try:
+            hot = shadow.hot_cands(c, market, fx, log=_log_fn)
+        except Exception as e:
+            results.append(f"🧪 급등 검증 후보 찾기 오류: {type(e).__name__}: {e}")
 
     symbols = list(dict.fromkeys(held_syms + picked))
     if not symbols:
         if c["shadow_on"] and not dry:   # 실전에 살 게 없어도 그림자 조합들의 매도는 계속
             try:
                 shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
-                            lambda x: toss.daily(x, 60)[0], s["day"])
+                            lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
             except Exception as e:
                 results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
         return {"ok": True, "mode": mode, "results": results + ["지금 살 종목이 없어요"]}
@@ -926,6 +1094,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                      {k: v["price"] for k, v in quotes.items()})
     except (toss.TossError, OSError) as e:
         results.append(f"📚 학습 기록 일부 실패: {e}")
+    if not exits_only:   # 📚 예전 스윙 일지의 빈 진입 조건 보충 (기록만, 매매엔 영향 없음)
+        try:
+            results += _backfill_swing(mode_key, market, fx)
+        except Exception as e:
+            results.append(f"📚 스윙 진입 조건 보충 실패: {type(e).__name__}: {e}")
     stop_why = tl.guard(wday, bool(minutes is not None and minutes < 0))
 
     for sym in symbols:
@@ -951,9 +1124,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             days = (datetime.now(KST).date() - datetime.strptime(bought, "%Y-%m-%d").date()).days if bought else 0
             side, reason = signal_swing(closes, price, held["qty"], held["avg"], high, days, c)
         elif held["qty"] > 0:
-            side, reason = signal_surge(price, held["qty"], held["avg"], high, minutes, False, c,
-                                        partial_done=bool(state()["partial"].get(sym)))
+            p_done = _partial_done(sym)
+            side, reason = signal_surge(price, held["qty"], held["avg"], high, minutes, False, c, partial_done=p_done)
             _note_hold(sym, held["avg"], max(high, price), price, side, reason, c)
+            if side == "HOLD" and p_done and c.get("partial_tp_pct") and held["avg"] and \
+                    (price / held["avg"] - 1) * 100 >= c["partial_tp_pct"]:
+                _note_skip(sym, f"이미 나눠 팔았음 (평단 대비 {(price / held['avg'] - 1) * 100:+.1f}%) → 남은 물량은 +{c['take_profit_pct']:g}% 익절·고점 대비 하락 대기")
         elif sym in cands:
             side, reason = ("BUY", cands[sym]["reason"]) if (style == "swing" or (minutes is not None and minutes <= 360)) \
                 else ("HOLD", "마감 30분 전부터는 새로 안 삼")
@@ -966,9 +1142,10 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     side_r = signal_swing(closes, price, held["qty"], held["avg"], high, days, nt)[0]
                 else:
                     side_r = signal_surge(price, held["qty"], held["avg"], high, minutes, False, nt,
-                                          partial_done=bool(state()["partial"].get(sym)))[0]
+                                          partial_done=_partial_done(sym))[0]
                 if side_r == "HOLD":   # 이 매도는 익절 규칙이 낸 것
                     if c["ai_take_profit"] == "on" and _ai_room(c):
+                        _note_skip(sym, f"AI 익절 모드(on)라 AI 가 판단 — 규칙이었으면: {reason[:60]}")
                         side, reason = "HOLD", f"🤖 익절은 AI 가 판단 (규칙이었으면: {reason[:60]})"
                     elif c["ai_take_profit"] == "test":
                         tp_by_rule = (dict(held), high, style, bought)
@@ -991,8 +1168,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         if dry:
             results.append(f"{sym}: {('매수' if side == 'BUY' else '매도')} 신호 (꺼져 있어서 주문 안 함) — {reason}"); continue
         if not market_open(sym, side):
+            if side != "BUY":
+                _note_skip(sym, f"매매 시간이 아님 — {reason[:60]}")
             results.append(f"{sym}: 신호는 있지만 매매 시간이 아님 — {reason}"); continue
         if sym in pending:
+            if side != "BUY":
+                _note_skip(sym, f"미체결 주문이 있어서 대기 — {reason[:60]}")
             results.append(f"{sym}: 미체결 주문이 있어서 대기"); continue
         f = 1 if _mkt(sym) == "KR" else fx
         if side == "BUY":
@@ -1004,8 +1185,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 이번 달 목표 달성 → 새로 안 삼"); continue
             if stop_why and style == "surge":
                 results.append(f"{sym}: 📚 장중 학습 — {stop_why}"); continue
-            nr = (state().get("no_rebuy") or {}).get(sym)
-            if c["no_rebuy_after_loss"] and nr and nr >= state()["day"]:
+            try:   # 재진입 금지 기록이 없거나 깨져도 오류 없이 넘어감
+                nr_all = state().get("no_rebuy")
+                nr = str((nr_all if isinstance(nr_all, dict) else {}).get(sym) or "")
+            except Exception:
+                nr = ""
+            if c.get("no_rebuy_after_loss", True) and nr and nr >= str(state().get("day") or ""):
                 results.append(f"{sym}: 🔁 손해 보고 판 종목이라 {nr}까지 다시 안 삼"); continue
             if state()["orders_today"] >= c["max_orders_per_day"]:
                 results.append(f"{sym}: 오늘 매수 횟수 한도({c['max_orders_per_day']}) 도달"); continue
@@ -1080,6 +1265,13 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 if not ok:
                     event("AI 반대", f"{sym} 매수 보류 — {why2}", symbol=sym); results.append(f"{sym}: AI 반대 — {why2}"); continue
             feat = dict(cands[sym]["features"])
+            if style == "swing":   # 📚 스윙 진입 조건 기록 (기록용 · 이미 판단 끝난 뒤라 매수엔 영향 없음)
+                try:
+                    for k_, v_ in swing_feats(sym, price, fx).items():
+                        if feat.get(k_) is None:
+                            feat[k_] = v_
+                except Exception as e:
+                    results.append(f"{sym}: 📚 스윙 진입 조건 기록 실패 — {type(e).__name__}: {e}")
             if c["ai_decide"] and why:
                 feat["ai_decide"] = "산다"
             nnote = news.note(nw)
@@ -1094,7 +1286,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             qty = int(held["qty"] * c["partial_tp_ratio"]) if part else int(held["qty"])
             if part and (qty < 1 or qty >= int(held["qty"])):   # 1주뿐이라 나눌 수 없으면 나눠 팔기 대신 계속 보유
                 with _lock:
-                    s4 = state(); s4["partial"][sym] = True; _save(s4)
+                    s4 = state(); s4["partial"][sym] = "one"; _save(s4)   # 'one' = 주문 없이 나눠 팔기만 끝난 것으로 표시
+                _note_skip(sym, f"나눠 팔 수량이 안 됨(보유 {held['qty']:g}주) → 손절선은 본전으로, 남은 물량은 +{c['take_profit_pct']:g}% 익절 대기")
                 results.append(f"{sym}: 나눠 팔 수량이 안 돼서(보유 {held['qty']:g}주) 계속 보유 — 손절선은 본전으로"); continue
             if live and qty >= 1:   # 🔒 잠긴 봇 장부 기준 수량까지만 (사장님 주식 보호)
                 try:
@@ -1105,17 +1298,30 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     results.append(f"{sym}: 봇 장부상 팔 수 있는 건 {can}주 → {can}주만")
                     qty = can
             if qty < 1:
+                _note_skip(sym, f"봇 장부상 팔 수 있는 수량이 없음 — {reason[:60]}")
                 results.append(f"{sym}: 팔 수량 없음"); continue
             sell_px = price * (1 - c["limit_slip_pct"] / 100) if style == "surge" else price
-            if not part and c["no_rebuy_after_loss"] and held["avg"] and \
-                    (price / held["avg"] - 1) * 100 < tl.rt_cost(c, market):   # 수수료 빼고 손해로 파는 거면 재진입 금지
-                until = state()["day"] if style != "swing" else \
-                    (datetime.now(KST) + timedelta(days=int(c["no_rebuy_swing_days"]))).strftime("%Y-%m-%d")
-                with _lock:
-                    s_n = state(); s_n.setdefault("no_rebuy", {})[sym] = max(until, s_n["no_rebuy"].get(sym, "")); _save(s_n)
-            if tp_by_rule:
-                _ghost_open(sym, tp_by_rule[0], tp_by_rule[1], price, tp_by_rule[2], tp_by_rule[3])
-            results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part, quote=price))
+            try:   # 매도 주문이 먼저 (기록 오류로 매도가 막히면 안 됨)
+                results.append(_execute(sym, "SELL", qty, sell_px, reason, live, fx, partial=part, quote=price))
+            except Exception as e:
+                with _lock:   # 실패하면 다음 바퀴에 AI 가 다시 판단
+                    s_f = state(); s_f.setdefault("ai_hold_at", {}).pop(sym, None); _save(s_f)
+                event("매도 오류", f"{sym} 매도 실패 — {type(e).__name__}: {e} (다음 바퀴에 다시 판단)", symbol=sym)
+                results.append(f"{sym}: 매도 오류 — {type(e).__name__}: {e} (다음 바퀴에 다시 판단)"); continue
+            try:   # 재진입 금지·익절 비교 기록 (오류 나도 매도엔 영향 없음)
+                if not part and c.get("no_rebuy_after_loss", True) and held.get("avg") and \
+                        (price / held["avg"] - 1) * 100 < tl.rt_cost(c, market):   # 수수료 빼고 손해로 파는 거면 재진입 금지
+                    until = str(state().get("day") or picker.session_date(market)) if style != "swing" else \
+                        (datetime.now(KST) + timedelta(days=int(c.get("no_rebuy_swing_days", 3)))).strftime("%Y-%m-%d")
+                    with _lock:
+                        s_n = state(); nr_ = s_n.get("no_rebuy")
+                        if not isinstance(nr_, dict):
+                            nr_ = s_n["no_rebuy"] = {}
+                        nr_[sym] = max(until, str(nr_.get(sym) or "")); _save(s_n)
+                if tp_by_rule:
+                    _ghost_open(sym, tp_by_rule[0], tp_by_rule[1], price, tp_by_rule[2], tp_by_rule[3])
+            except Exception as e:
+                results.append(f"{sym}: 매도 후 기록 오류 — {type(e).__name__}: {e}")
     if c["ai_take_profit"] == "test" and c["ai_decide"] and not dry:
         try:
             results += _ghost_step(c, market, minutes)
@@ -1124,7 +1330,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     if c["shadow_on"] and not dry:   # 🧪 같은 후보·시세로 규칙 조합들을 가상으로
         try:
             shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
-                        lambda x: toss.daily(x, 60)[0], s["day"])
+                        lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
         except Exception as e:
             results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
     return {"ok": True, "mode": mode, "results": results}
@@ -1282,6 +1488,13 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
                 event("규칙 교체", msg)
     except Exception as e:
         event("오류", f"규칙 교체 실패: {type(e).__name__}: {e}")
+    try:   # 🧪 20건↑ 조합 중 하위 25% 정리 → 새 조합으로 채워 20개 안팎 유지
+        if c2["shadow_on"]:
+            pm = shadow.prune(config(), c2["market"])
+            if pm:
+                _log_fn(f"🧪 그림자 조합 정리: {pm}")
+    except Exception as e:
+        event("오류", f"그림자 조합 정리 실패: {type(e).__name__}: {e}")
     if c2["backtest_on"] and toss.enabled():
         backtest_now(wait=True)
 
@@ -1315,6 +1528,118 @@ def _next_open(c: dict) -> str:
             day = "오늘" if t.date() == now.date() else ("내일" if t.date() == (now + timedelta(days=1)).date() else t.strftime("%m/%d"))
             return "지금" if step == 0 else f"{day} {t:%H:%M}"
     return ""
+
+
+# ── 1시간 장 상황 요약 (텔레그램, 읽기 전용) ──
+_hourly_sent = [""]                       # 마지막으로 보낸 시각 (KST 'YYYY-mm-dd HH')
+_save_fails: list[tuple[float, str]] = []  # 저장 실패 기록 (요약용)
+
+
+def _ago_sec(t: str) -> float | None:
+    """'mm-dd HH:MM:SS'(KST) → 지금부터 몇 초 전 (연도는 올해, 미래면 작년)"""
+    try:
+        now = datetime.now(KST)
+        dt = datetime.strptime(f"{now.year}-{t}", "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+        if dt > now + timedelta(minutes=1):
+            dt = dt.replace(year=now.year - 1)
+        return (now - dt).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
+def _in_session(m: str) -> bool:
+    """정규장(미장은 프리장 포함) 중이고 오늘 휴장이 아님"""
+    if picker.session_minutes(m, extended=(m == "US")) is None:
+        return False
+    with in_market(m):
+        pf = state().get("preflight") or {}
+    return not (pf.get("day") == picker.session_date(m) and pf.get("closed"))
+
+
+def hourly_text() -> str:
+    """시장별 모드·장 상태·보유·손익·매매 횟수·지난 1시간 문제 (아무것도 바꾸지 않음)"""
+    lines = [f"⏰ {datetime.now(KST):%H:%M} 장 상황 요약"]
+    for m in markets():
+        with in_market(m):
+            c, s = config(), state()
+            flag = "🇺🇸 미장" if m == "US" else "🇰🇷 국장"
+            mode = dict(off="꺼짐", paper="가상", live="🔴 실전")[c["mode"]] + (" (자동 가상 전환)" if s.get("auto_paper") and c["mode"] == "paper" else "")
+            mins = picker.session_minutes(m, extended=(m == "US"))
+            st = "장 닫힘" if mins is None else ("프리장" if mins < 0 else "정규장")
+            if mins is not None and not _in_session(m):
+                st = "휴장"
+            lines.append(f"\n{flag} · {mode} · {st} (현지 {picker.mnow(m):%H:%M})" + (f"\n  ⛔ 오늘 정지: {s['halted_today'][:60]}" if s.get("halted_today") else ""))
+            # 보유 종목 (자동매매 것만)
+            pos = s["bot_pos"] if c["mode"] == "live" else s["paper"]["positions"]
+            pos = {k: v for k, v in pos.items() if _mkt(k) == m and float(v.get("qty") or 0) > 0}
+            quotes = {}
+            if pos and toss.enabled():
+                try:
+                    quotes = toss.prices(list(pos))
+                except Exception:
+                    quotes = {}
+            if pos:
+                for k, v in pos.items():
+                    px, avg = (quotes.get(k) or {}).get("price"), float(v.get("avg") or 0)
+                    pct = f" {(px - avg) / avg * 100:+.1f}%" if px and avg else " (시세 없음)"
+                    lines.append(f"  • {k} {float(v['qty']):g}주 평단 {avg:g}{pct}")
+            else:
+                lines.append("  보유 없음")
+            # 손익
+            lines.append(f"  오늘 실현 {float(s.get('realized_today', 0)):+,.0f}원")
+            mo = s.get("month") or {}
+            if mo.get("start"):
+                pct = float(mo.get("realized", 0)) / mo["start"] * 100
+                lines.append(f"  이번 달 {float(mo.get('realized', 0)):+,.0f}원 ({pct:+.1f}% / 목표 {c['monthly_target_pct']:g}%)")
+            # 오늘 매수·매도·손절 (자동매매 주문, 거절 제외)
+            mk = "live" if c["mode"] == "live" else "paper"
+            buy = sell = stop = 0
+            for o in s["orders"]:
+                if o.get("mode") != mk or o.get("status") == "rejected" or _mkt(o.get("symbol", "")) != m:
+                    continue
+                ago = _ago_sec(o.get("t", ""))
+                if ago is None or picker.session_date(m, datetime.now(KST) - timedelta(seconds=ago)) != s["day"]:
+                    continue
+                if o.get("side") == "BUY":
+                    buy += 1
+                else:
+                    sell += 1
+                    stop += "손절" in str(o.get("reason", ""))
+            lines.append(f"  오늘 매수 {buy} · 매도 {sell} (손절 {stop})")
+            try:
+                lines.append("  " + tl.hot_text(m))
+            except Exception:
+                pass
+            # 지난 1시간 오류·정지
+            bad = [e for e in s["events"] if e.get("kind") in ("오류", "정지", "긴급 정지", "주문 거절")
+                   and (_ago_sec(e.get("t", "")) if _ago_sec(e.get("t", "")) is not None else 1e9) <= 3600]
+            if bad:
+                lines.append(f"  ⚠️ 지난 1시간 {len(bad)}건: " + " / ".join(f"[{e['kind']}] {str(e.get('text', ''))[:50]}" for e in bad[-3:]))
+    cut = time.time() - 3600
+    fails = [msg for t, msg in _save_fails if t >= cut]
+    _save_fails[:] = [(t, msg) for t, msg in _save_fails if t >= cut]
+    lines.append(f"\n💾 지난 1시간 저장 실패 {len(fails)}건" + (f": {fails[-1][:60]}" if fails else ""))
+    return "\n".join(lines)
+
+
+def _hourly_check() -> None:
+    """매시 정각(~5분 안)에 장중 시장이 하나라도 있으면 요약 보내기 (자동매매를 기다리게 하지 않게 따로)"""
+    now = datetime.now(KST)
+    key = now.strftime("%Y-%m-%d %H")
+    if now.minute >= 5 or _hourly_sent[0] == key:
+        return
+    if not any(_in_session(m) for m in markets()):
+        return
+    _hourly_sent[0] = key
+
+    def job():
+        try:
+            from . import notify
+            notify.send(hourly_text())
+        except Exception as e:
+            _log_fn(f"🤖 [오류] 1시간 요약 실패: {type(e).__name__}: {e}")
+
+    threading.Thread(target=job, daemon=True, name="hourly").start()
 
 
 # ── 백그라운드 ──
@@ -1383,6 +1708,10 @@ def start(log_fn=print) -> None:
                 return
             if config()["mode"] == "off":
                 continue
+            try:
+                _hourly_check()   # ⏰ 1시간 장 상황 요약 (읽기 전용)
+            except Exception as e:
+                _log_fn(f"🤖 [오류] 1시간 요약: {type(e).__name__}: {e}")
             for m in markets():   # 국장·미장을 각자 시간에 맞춰
                 with in_market(m):
                     try:
@@ -1393,6 +1722,8 @@ def start(log_fn=print) -> None:
                         except Exception:   # 오류 기록조차 실패해도 자동매매는 계속
                             _log_fn(f"🤖 [오류] {type(e).__name__}: {e}")
                     for msg in store.errors():
+                        _save_fails.append((time.time(), msg))   # 1시간 요약용
+                        del _save_fails[:-50]
                         _log_fn("💾 " + msg)
 
     _thread = threading.Thread(target=loop, daemon=True, name="autotrade")
@@ -1452,7 +1783,7 @@ LABELS = {"no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy
           "us_premarket": "프리장 매매", "stop_at_target": "목표 달성 시 쉬기", "ai_check": "주문 전 AI 검토", "auto_pick": "종목 알아서 고르기",
           "market": "시장", "strategy": "전략", "budget_mode": "예산 방식", "mode": "모드",
           "stop_min": "손절 자동 최소(%)", "stop_max": "손절 자동 최대(%)", "limit_min_mult": "한도 자동 최소 배수", "limit_max_mult": "한도 자동 최대 배수",
-          "swing_stop_pct": "스윙 손절(%)", "swing_trail_pct": "스윙 고점 대비(%)", "swing_max_days": "스윙 최대 보유일",
+          "swing_stop_pct": "스윙 손절(%)", "swing_trail_pct": "스윙 고점 대비(%)", "swing_trail_vol": "스윙 고점 대비 변동성 자동", "swing_trail_vol_mult": "스윙 변동성 배수","swing_max_days": "스윙 최대 보유일",
           "ai_decide": "거래마다 AI 판단", "shadow_on": "그림자 가상 매매", "auto_promote": "규칙 자동 교체", "backtest_on": "백테스트",
           "loss_pct_min": "손실 한도 자동 최소(%)", "loss_pct_max": "손실 한도 자동 최대(%)", "auto_tune": "자동 조절", "auto_mode": "실전↔가상 자동"}
 TRADE_GUIDE = """[자동매매 행동 태그 — 사장님이 원할 때만, 답 맨 아래에]
@@ -1503,15 +1834,30 @@ def _engine_one() -> str:
     if g.get("pause_until") or g.get("no_premarket"):
         line += f" · 조심 규칙: {g.get('pause_why') or ''} {g.get('no_premarket') or ''}"
     lines.append(line)
+    try:
+        lines.append(tl.hot_text(c["market"]))
+    except Exception:
+        pass
     for t in L["trades"][:10]:
         f = t.get("features") or {}
         lines.append(f"- 일지 {t['entry_time'][5:16]} {t['sym']} " + (f"{t.get('pnl_pct', 0):+.2f}% {t.get('exit_kind', '')}" if t["closed"] else "보유 중")
-                     + f" · 최대 {t['mfe']:+.1f}% 최저 {t['mae']:+.1f}% · 살 때 {f.get('change')}% 거래량 {f.get('ratio')}배{' 프리장' if f.get('pre') else ''}")
+                     + f" · 최대 {t['mfe']:+.1f}% 최저 {t['mae']:+.1f}% · " + _entry_text(f))
     if L["proposals"]:
         lines.append("학습 제안: " + " / ".join(f"{p['label']} {p['from']}→{p['to']}({'적용됨' if p['status'] == 'applied' else '대기'}: {p['why']})"
                                               for p in L["proposals"][:6]))
     lines.append("</engine>")
     return "\n".join(lines)
+
+
+def _entry_text(f: dict) -> str:
+    """일지의 '살 때 조건' 문구 (스윙/단타 따로, 값 없으면 '-')"""
+    def v(k, fmt="{:g}"):
+        return fmt.format(f[k]) if isinstance(f.get(k), (int, float)) else "-"
+    if f.get("style") == "swing":
+        val = f"{f['value20'] / 1e8:,.0f}억원" if isinstance(f.get("value20"), (int, float)) else "-"
+        return (f"살 때 [스윙] 20일 {v('r20', '{:+.1f}')}% · 60일 {v('r60', '{:+.1f}')}% · RSI {v('rsi', '{:.0f}')} · 거래대금 {val}/일"
+                f" · 변동성 {v('volat', '{:.0f}')}% · 당일 {v('chg1d', '{:+.1f}')}% · 거래량 {v('vratio')}배")
+    return f"살 때 {v('change')}% 거래량 {v('ratio')}배{' 프리장' if f.get('pre') else ''}"
 
 
 _ACT = re.compile(r"\[\[TRADE_(SET|MODE|STOP|EXCLUDE|INCLUDE):\s*([^\]|]*?)\s*(?:\|\s*([^\]]*?))?\s*\]\]")
@@ -1940,6 +2286,8 @@ def _apply_params(params: dict, why: str, evidence: str) -> bool:
     new = {k: v for k, v in params.items() if k in shadow.TUNE_KEYS and c.get(k) != v}
     if "stop_loss_pct" in new:
         new["stop_loss_pct"] = min(c["stop_max"], max(c["stop_min"], float(new["stop_loss_pct"])))
+    if "surge_max_change_pct" in new:   # 급등 최대 상승률은 좁히기만 (넓히기 금지)
+        new["surge_max_change_pct"] = min(float(c["surge_max_change_pct"]), float(new["surge_max_change_pct"]))
     new = {k: v for k, v in new.items() if c.get(k) != v}
     if not new:
         return False

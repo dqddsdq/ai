@@ -1482,8 +1482,13 @@ function tradeActionCard(a, container) {
 function renderLab(L) {
   const sh = L.shadow || {}, b = L.backtest || {};
   const vs = sh.variants || [];
-  $("#lab-shadow").innerHTML = vs.length ? `<div><b>그림자 가상 매매 (최근 기간 총수익률 순)</b></div>` + vs.map((v, i) =>
-    `<div>${i === 0 ? "🥇" : ""} <b>${esc(v.name)}</b> <span class="muted">(${esc(v.origin)})</span> · 총 ${v.ret_pct > 0 ? "+" : ""}${v.ret_pct}% · ${v.n}건 · 승률 ${v.win_rate}% · 보유 ${v.holding}<br><span class="muted">${esc(v.diff)}</span></div>`).join("")
+  const allS = v => v.n_all !== undefined ? `전체 ${v.n_all}건 · 승률 ${v.win_all}% · 평균 ${pctS(v.avg_all)} · 최대 손실 ${pctS(v.worst)}` : `${v.n}건 · 승률 ${v.win_rate}%`;
+  $("#lab-shadow").innerHTML = vs.length ? `<div><b>그림자 가상 매매 · 조합 ${vs.length}개</b> <span class="muted">(현재 먼저, 그다음 20건↑ 평균 순 · 수수료 뺀 값)</span></div>`
+    + (sh.rule ? `<div class="muted">${esc(sh.rule)}</div>` : "") + vs.map(v =>
+    `<div>${v.name === "현재" ? "📌" : ""} <b>${esc(v.name)}</b> <span class="muted">(${esc(v.origin)})</span> · ${allS(v)} · 최근 총 ${v.ret_pct > 0 ? "+" : ""}${v.ret_pct}% · 보유 ${v.holding}<br><span class="muted">${esc(v.diff)}</span></div>`).join("")
+    + ((sh.hot || []).length ? `<div style="margin-top:6px"><b>🚀 30% 초과 급등 검증 (따로 보관 · 교체 안 함)</b>${sh.hot.map(v => `<div>${esc(v.name)} · ${allS(v)}</div>`).join("")}</div>` : "")
+    + ((sh.flash || []).length ? `<div style="margin-top:6px"><b>📉 급락 신호 검증 (따로 보관 · 교체 안 함)</b>${sh.flash.map(v => `<div>${esc(v.name)} · ${allS(v)} · 신호 ${v.signals}건 · 보유 ${v.holding}</div>`).join("")}</div>` : "")
+    + ((sh.pruned || []).length ? `<div style="margin-top:6px"><b>정리된 조합</b>${sh.pruned.map(p => `<div class="muted">${esc(p.t)} · ${esc(p.name)} · ${p.n_all}건 평균 ${pctS(p.avg_all)}</div>`).join("")}</div>` : "")
     + ((sh.promotions || []).length ? `<div style="margin-top:6px"><b>자동 교체 기록</b>${sh.promotions.map(p => `<div class="muted">${esc(p.t)} · ${esc(p.name)}: ${esc(p.diff)} — ${esc(p.evidence)}</div>`).join("")}</div>` : "")
     : `<span class="muted">그림자 매매 조합이 아직 없어요 — 자동매매가 켜져 있으면 장중에 자동으로 시작해요</span>`;
   const top = b.top || [];
@@ -1523,7 +1528,7 @@ function renderLearn(L) {
       (rv.missed && rv.missed.n ? `<div><b>골랐지만 못 산 종목</b> ${rv.missed.n}개 · 그 뒤 최대 상승 평균 ${pctS(rv.missed.avg_max_up)}</div>` : "");
   } else $("#learn-review").innerHTML = "<span class='muted'>아직 복기가 없어요 — 장이 끝나면 자동으로 해요</span>";
   const tr = L.trades || [];
-  $("#learn-trades").innerHTML = tr.length ? tr.map(x => `<div>${esc(x.entry_time.slice(5, 16))} <b>${esc(x.sym)}</b> ${x.closed ? `${pctS(x.pnl_pct)} · ${esc(x.exit_kind || "")}` : "보유 중"} · 최대 ${pctS(x.mfe)} / 최저 ${pctS(x.mae)}${x.features && x.features.change != null ? ` · 살 때 ${pctS(x.features.change)}, 거래량 ${x.features.ratio}배${x.features.pre ? " (프리장)" : ""}` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
+  $("#learn-trades").innerHTML = tr.length ? tr.map(x => `<div>${esc(x.entry_time.slice(5, 16))} <b>${esc(x.sym)}</b> ${x.closed ? `${pctS(x.pnl_pct)} · ${esc(x.exit_kind || "")}` : "보유 중"} · 최대 ${pctS(x.mfe)} / 최저 ${pctS(x.mae)}${x.features && x.features.style === "swing" && x.features.r20 != null ? ` · 살 때 [스윙] 20일 ${pctS(x.features.r20)} · 60일 ${x.features.r60 != null ? pctS(x.features.r60) : "-"} · RSI ${x.features.rsi ?? "-"} · 당일 ${x.features.chg1d != null ? pctS(x.features.chg1d) : "-"} · 거래량 ${x.features.vratio ?? "-"}배 · 변동성 ${x.features.volat ?? "-"}%` : ""}${x.features && x.features.style !== "swing" && x.features.change != null ? ` · 살 때 ${pctS(x.features.change)}, 거래량 ${x.features.ratio}배${x.features.pre ? " (프리장)" : ""}` : ""}</div>`).join("") : "<span class='muted'>아직 없어요</span>";
 }
 // ── 차트 화면 (탭 / 여러 개) ──
 const cv = {

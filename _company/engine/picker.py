@@ -326,6 +326,65 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
     return {"day": session_date(market), "time": t.strftime("%H:%M"), "picks": out, "note": note, "strategy": "surge", "market": market}
 
 
+# ── 급락 신호 (그림자 검증 전용 · 1분봉 계산만, 조회 없음) ──
+FLASH_VOL_DRY = 0.5       # 거래량 급감: 직전 평균의 50% 이하
+FLASH_EXIT_DROP = -2.0    # 1분 안에 -2% 이상 급락
+FLASH_CRASH_PCT = -5.0    # 반등 진입: 1~3분 안에 -5% 이상 급락
+FLASH_CRASH_VOL = 3.0     #   그때 거래량 직전 평균의 3배 이상
+FLASH_HOLD_VOL = 0.5      #   반등 1분봉 거래량이 급락 때 최대의 50% 이상 (거래량 유지)
+
+
+def _vbase(bars: list[dict]) -> float | None:
+    """직전 10~20개 1분봉 평균 거래량 (10개 미만이면 None)"""
+    b = bars[-20:]
+    if len(b) < 10:
+        return None
+    m = sum(x["v"] for x in b) / len(b)
+    return m if m > 0 else None
+
+
+def flash_exit_signal(bars: list[dict], price: float) -> str:
+    """보유 중 청산 신호. bars = 다 끝난 1분봉(오래된→최신). 신호면 이유, 아니면 ''
+    (호가 잔량 급감은 toss.py 에 호가 조회 함수가 없어서 안 씀)"""
+    if len(bars) < 11 or not price:
+        return ""
+    last = bars[-1]
+    base = _vbase(bars[:-1])
+    if base and last["v"] <= base * FLASH_VOL_DRY:
+        return f"거래량 급감 {last['v'] / base * 100:.0f}% (직전 평균 대비)"
+    d1 = (price / last["c"] - 1) * 100 if last["c"] else 0
+    d0 = (last["c"] / last["o"] - 1) * 100 if last["o"] else 0
+    if min(d1, d0) <= FLASH_EXIT_DROP:
+        return f"1분 급락 {min(d1, d0):+.1f}%"
+    return ""
+
+
+def flash_rebound_signal(bars: list[dict], price: float) -> dict | None:
+    """급락 반등 진입: 1~3분 안에 -5%↓ + 거래량 3배↑ → 바로 다음 1분봉이 양봉 반등 + 거래량 유지.
+    bars = 다 끝난 1분봉 (마지막 = 반등 봉). 신호면 {low, crash_t, drop, vol, why}"""
+    if len(bars) < 13 or not price:
+        return None
+    reb = bars[-1]
+    for w in (1, 2, 3):
+        win = bars[-1 - w:-1]
+        if len(bars) < w + 12:
+            break
+        ref = bars[-2 - w]["c"]
+        base = _vbase(bars[:-1 - w])
+        if not ref or not base:
+            continue
+        low = min(x["l"] for x in win)
+        drop = (low / ref - 1) * 100
+        vmax = max(x["v"] for x in win)
+        if drop > FLASH_CRASH_PCT or vmax < base * FLASH_CRASH_VOL:
+            continue
+        if not (reb["c"] > reb["o"] and reb["c"] > win[-1]["c"] and reb["v"] >= vmax * FLASH_HOLD_VOL and price > low):
+            continue
+        return {"low": low, "crash_t": win[-1]["t"], "drop": round(drop, 1), "vol": round(vmax / base, 1),
+                "why": f"{w}분 {drop:+.1f}%·거래량 {vmax / base:.1f}배 → 반등"}
+    return None
+
+
 # ── 추세 (국장, 하루 한 번) ──
 def _rsi(xs: list[float], n: int = 14) -> float | None:
     if len(xs) <= n:

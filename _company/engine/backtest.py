@@ -23,6 +23,8 @@ SURGE_GRID = {"stop_loss_pct": [2, 3, 4, 5], "partial_tp_pct": [0, 3, 4, 6], "tr
               "surge_min_change_pct": [5, 8, 12], "vol": [0, 1, 2]}        # vol: 거래량 기준 단계 (낮음/보통/높음)
 VOL_STEPS = {False: [2, 3, 6], True: [0.1, 0.2, 0.5]}                        # 정규장 배수 / 프리장 비율
 SWING_GRID = {"swing_stop_pct": [4, 6, 8], "swing_trail_pct": [5, 8, 12]}
+TP_STEPS = [8, 10, 15, 20]          # 2단계: 남은 물량 전부 익절(%)
+MAX_STEPS = [15, 20, 25, 30]        # 2단계: 급등 최대 상승률(%) — 실전 상한보다 큰 값은 안 씀
 
 
 def _file(m: str):
@@ -141,30 +143,54 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
             p = []
         if p:
             paths.append((s, p))
+    def _rets(prm):   # 이 조합의 진입 기준(최소·최대 상승률·거래량)으로 거른 표본의 수익률 (수수료·세금 빼고)
+        out_ = []
+        hi = prm.get("surge_max_change_pct", cfg.get("surge_max_change_pct", 1e9))
+        for s, path in paths:
+            if s["change"] < prm["surge_min_change_pct"] or s["change"] > hi:
+                continue
+            need = prm["pre_volume_ratio"] if s["pre"] else prm["surge_volume_ratio"]
+            if s.get("ratio") is not None and s["ratio"] < need:
+                continue
+            r = _sim_surge(path, s["px"], prm, cfg, signal_surge, market)
+            if r is not None:
+                out_.append(r - cost)
+        return out_
+
     results = []
+    min_n = max(5, len(paths) // 3)
     if paths:
         keys = list(SURGE_GRID)
         for combo in itertools.product(*SURGE_GRID.values()):
             prm = dict(zip(keys, combo))
             vol_i = prm.pop("vol")
             prm["surge_volume_ratio"], prm["pre_volume_ratio"] = VOL_STEPS[False][vol_i], VOL_STEPS[True][vol_i]
-            rets = []
-            for s, path in paths:
-                if s["change"] < prm["surge_min_change_pct"]:
-                    continue
-                need = prm["pre_volume_ratio"] if s["pre"] else prm["surge_volume_ratio"]
-                if s.get("ratio") is not None and s["ratio"] < need:
-                    continue
-                r = _sim_surge(path, s["px"], prm, cfg, signal_surge, market)
-                if r is not None:
-                    rets.append(r - cost)   # 수수료·세금 빼고
-            if len(rets) >= max(5, len(paths) // 3):
+            rets = _rets(prm)
+            if len(rets) >= min_n:
                 results.append({"params": prm, **_score(rets, len(paths))})
+        results.sort(key=lambda r: (r["avg"], r["n"]), reverse=True)
+        # 2단계: 상위 조합만 전부 익절·급등 최대(실전 상한 이하)를 바꿔 봄 (조합 수 폭증 방지)
+        cap = float(cfg.get("surge_max_change_pct", 40))
+        tps = [x for x in TP_STEPS if x > 0] + [cfg.get("take_profit_pct")]
+        mxs = sorted({x for x in MAX_STEPS if x <= cap} | {cap})
+        seen = {json.dumps(r["params"], sort_keys=True) for r in results}
+        for r0 in results[:10]:
+            for tp, mx in itertools.product(dict.fromkeys(tps), mxs):
+                prm = {**r0["params"], "take_profit_pct": tp, "surge_max_change_pct": mx}
+                if prm["partial_tp_pct"] and tp <= prm["partial_tp_pct"] or mx < prm["surge_min_change_pct"] + 3:
+                    continue
+                key = json.dumps(prm, sort_keys=True)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rets = _rets(prm)
+                if len(rets) >= min_n:
+                    results.append({"params": prm, **_score(rets, len(paths))})
     results.sort(key=lambda r: (r["avg"], r["n"]), reverse=True)
-    # 현재 규칙 기준선
-    cur = {k: cfg[k] for k in ("stop_loss_pct", "partial_tp_pct", "trail_pct", "surge_min_change_pct", "surge_volume_ratio", "pre_volume_ratio")}
-    base_rets = [r - cost for r in (_sim_surge(p, s["px"], cur, cfg, signal_surge, market) for s, p in paths
-                                    if s["change"] >= cur["surge_min_change_pct"]) if r is not None]
+    # 현재 규칙 기준선 (같은 진입 기준으로 거름)
+    cur = {k: cfg[k] for k in ("stop_loss_pct", "partial_tp_pct", "take_profit_pct", "trail_pct", "surge_min_change_pct",
+                               "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio")}
+    base_rets = _rets(cur) if paths else []
     # 스윙
     sw_results = []
     sw_samples = [h for h in swing_hist if h.get("day", "") >= since_day][-20:]
@@ -196,7 +222,7 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
                 sw_results.append({"params": prm, **_score(rets, len(rets))})
         sw_results.sort(key=lambda r: (r["avg"], r["n"]), reverse=True)
     out = {"day": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "market": market, "surge_samples": len(paths),
-           "baseline": _score(base_rets, len(paths)) if paths else {}, "top": results[:5],
+           "baseline": _score(base_rets, len(paths)) if paths else {}, "top": results[:8],
            "swing_samples": len(sw_samples), "swing_top": sw_results[:3],
            "note": (f"단타 표본 {len(paths)}개 · 조합 {len(results)}개 비교" if paths else "단타 표본이 아직 없어요 (며칠 돌리면 쌓여요)")
                    + (f" · 스윙 표본 {len(sw_samples)}일" if sw_samples else "")}
@@ -206,9 +232,9 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
 
 
 def seeds(market: str) -> list[dict]:
-    """그림자 가상 매매로 넘길 추천 조합 (단타 상위 2 + 스윙 상위 1을 합쳐서)"""
+    """그림자 가상 매매로 넘길 추천 조합 (단타 상위 6 + 스윙 상위 1을 합쳐서)"""
     b = load(market)
-    out = [dict(r["params"]) for r in (b.get("top") or [])[:2]]
+    out = [dict(r["params"]) for r in (b.get("top") or [])[:6]]
     if b.get("swing_top"):
         sw = b["swing_top"][0]["params"]
         out = [{**o, **sw} for o in out] or [dict(sw)]
