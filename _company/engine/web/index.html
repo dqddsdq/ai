@@ -387,11 +387,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
 </head>
 <body>
 <aside id="sidebar">
-  <div class="brand"><span class="brand-mark">✳</span><span id="company">1인 기업 AI</span></div>
+  <div class="brand"><span class="brand-mark">✳</span><span id="company">자동매매 AI</span></div>
   <button class="side-btn primary" id="new-chat"><span class="ico">＋</span>새 대화</button>
   <button class="side-btn nav" data-view="chat"><span class="ico">💬</span>채팅</button>
-  <button class="side-btn nav" data-view="learn"><span class="ico">📚</span>공부 노트</button>
-  <button class="side-btn nav" data-view="sim"><span class="ico">🎲</span>시뮬레이션</button>
   <button class="side-btn nav" data-view="tools"><span class="ico">🧰</span>도구 <span class="tb wait" id="tools-badge" hidden></span></button>
   <button class="side-btn nav" data-view="charts"><span class="ico">📊</span>차트</button>
   <button class="side-btn nav" data-view="trade"><span class="ico">🤖</span>자동매매 <span class="tb" id="trade-badge" hidden></span></button>
@@ -415,17 +413,13 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
     <div class="composer-wrap" id="composer-home">
       <div class="composer" id="composer">
         <div class="attach-row" id="attach-row"></div>
-        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요. 🖥️ 로 토스 화면을 공유하면 질문할 때 같이 봐요."></textarea>
+        <textarea id="input" rows="1" placeholder="자동매매에 물어보세요 — 오늘 뭐 샀어? 왜 팔았어? 성적 어때? 손절 4%로 바꿔줘"></textarea>
         <div class="composer-row">
           <button class="tool-btn" id="attach-btn" title="이미지 첨부 (Ctrl+V 붙여넣기, 끌어다 놓기도 돼요)">📎</button>
           <button class="tool-btn share-btn" id="share-btn" title="화면 공유 (디스코드 방송처럼) — 토스 창이나 탭을 고르면, 질문할 때마다 그 화면이 자동으로 같이 가요">🖥️</button>
           <input type="file" id="file-input" accept="image/*" multiple hidden>
-          <select id="agent-select" title="담당 에이전트"></select>
+          <select id="agent-select" hidden><option value="trader" selected>자동매매</option></select>
           <select id="model-select" title="AI 모델"></select>
-          <label class="toggle" title="00_Raw, 10_Wiki 자료를 찾아서 참고"><input type="checkbox" id="kn-toggle" checked>📚 자료</label>
-          <select id="team-mode" title="팀 비교: 팀원들이 각자 답하고 비교해서 최고 답을 드려요 (시간·사용량 늘어남)">
-            <option value="auto">👥 팀 검토: 자동</option><option value="on">👥 팀 검토: 항상</option><option value="off">👥 팀 검토: 끄기</option>
-          </select>
           <div class="spacer"></div>
           <button class="send" id="send-btn" disabled title="보내기 (Enter)">↑</button>
         </div>
@@ -435,26 +429,6 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
   </section>
 
   <!-- 공부 노트 -->
-  <section class="view" id="view-learn">
-    <div class="scroll"><div class="column">
-      <div class="page-head">공부 노트</div>
-      <p class="page-sub">AI가 스스로 검색하고 읽어서 정리한 노트예요. 채팅할 때 자동으로 참고해요.</p>
-      <div class="card">
-        <div class="row">
-          <input class="field" id="learn-topic" placeholder="공부할 주제 (예: 블로그 애드센스 승인 조건)" style="flex:1;min-width:200px">
-          <button class="btn primary" id="learn-btn">공부시키기</button>
-          <button class="btn" id="learn-auto">주제 알아서 고르기</button>
-        </div>
-        <div class="log" id="learn-log" hidden></div>
-      </div>
-      <div id="note-view" hidden class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px">
-        <span class="muted" id="note-path"></span><button class="icon-btn" id="note-close">닫기 ✕</button></div>
-        <div class="md" id="note-body"></div></div>
-      <div class="note-list" id="note-list"></div>
-    </div></div>
-  </section>
-
-  <!-- 도구 -->
   <section class="view" id="view-tools">
     <div class="scroll"><div class="column">
       <div class="page-head">도구</div>
@@ -639,30 +613,6 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
   </section>
 
   <!-- 시뮬레이션 -->
-  <section class="view" id="view-sim">
-    <div class="scroll"><div class="column">
-      <div class="page-head">시뮬레이션</div>
-      <p class="page-sub">원하는 걸 말하면 1만 번 가상으로 돌려서 달성 확률을 알려줘요. 예측이 아니라 "가정이 맞다면"의 결과예요.</p>
-      <div class="card">
-        <div class="tabs"><button class="tab active" data-sim="goal">사업 목표</button><button class="tab" data-sim="stock">주식</button></div>
-        <div id="sim-goal-form">
-          <textarea class="field" id="sim-goal" rows="2" placeholder="예: 애드센스 블로그로 2년 안에 월 1000만원"></textarea>
-        </div>
-        <div id="sim-stock-form" hidden class="row">
-          <input class="field" id="sim-ticker" placeholder="티커 (예: 005930.KS, AAPL)" style="flex:2;min-width:160px">
-          <input class="field" id="sim-years" type="number" step="0.5" value="1" style="flex:1;min-width:80px" title="기간(년)">
-          <input class="field" id="sim-target" type="number" value="20" style="flex:1;min-width:80px" title="목표 수익률 %">
-        </div>
-        <div class="row" style="margin-top:10px"><div class="spacer"></div><button class="btn primary" id="sim-btn">시뮬레이션 실행</button></div>
-        <div class="log" id="sim-log" hidden></div>
-      </div>
-      <div id="sim-out" hidden class="card">
-        <div id="sim-result"></div>
-        <div class="md" id="sim-explain" style="margin-top:14px"></div>
-        <div class="muted" id="sim-report" style="margin-top:10px"></div>
-      </div>
-    </div></div>
-  </section>
   <div id="work-panel" hidden>
     <div class="wp-head" id="wp-head" title="눌러서 접기/펼치기"><span class="wp-title" id="wp-title">🔄 AI 작업 중</span><span class="wp-time" id="wp-time"></span><button class="icon-btn" id="wp-big" title="크게 보기 (담당 AI · 작업 · 작업 화면)">⛶</button><button class="icon-btn" id="wp-min" title="최소화">－</button></div>
     <div class="wp-list" id="wp-list"></div>
@@ -770,7 +720,6 @@ function show(view) {
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + view));
   document.querySelectorAll(".side-btn.nav").forEach(b => b.classList.toggle("active", b.dataset.view === view));
   $("#sidebar").classList.remove("open");
-  if (view === "learn") loadNotes();
   if (view === "tools") renderToolsPage();
   if (view === "improve") renderImprovePage();
   clearInterval(tradeTimer);
@@ -791,12 +740,10 @@ async function init() {
   const as = $("#agent-select");
   as.innerHTML = `<option value="auto">🧭 자동 배정</option>` + meta.agents.map(a => `<option value="${esc(a.id)}">${esc((a.summary || "").split("`")[0].trim() || a.id)} (${a.members.length}명)</option>`).join("");
   $("#model-select").innerHTML = meta.models.map(m => `<option value="${esc(m.value)}">${esc(m.label)}</option>`).join("");
-  as.value = store.get("agent", "auto"); if (!as.value) as.value = "auto";
+  as.value = "trader";
   $("#model-select").value = store.get("model", "");
-  as.onchange = () => store.set("agent", as.value); $("#model-select").onchange = () => store.set("model", $("#model-select").value);
-  $("#team-mode").value = store.get("teamMode", meta.team_mode || "auto");
-  $("#team-mode").onchange = () => store.set("teamMode", $("#team-mode").value);
-  const ideas = ["삼성전자 지금 들어가도 될까?", "엔비디아 실적 발표 전에 사도 돼?", "100만원 어떻게 나눠서 투자할까?", "전세 보증금 못 돌려받으면 어떻게 해?", "프리랜서 계약서 볼 때 뭘 확인해?", "온라인 쇼핑몰로 1년 안에 월 300만원 가능할까?"];
+  $("#model-select").onchange = () => store.set("model", $("#model-select").value);
+  const ideas = ["오늘 뭐 샀어? 왜?", "지금 성적 어때?", "어제 복기 알려줘", "그림자 매매에서 더 나은 규칙 있어?", "손절 기준 조금 넓혀줘", "오늘은 새로 사지 마"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
   newChat(); loadConvs(); show("chat"); loadTools(); refreshImpBadge(); initPhone(); api("/api/autotrade").then(tradeBadge).catch(() => {});
@@ -1283,16 +1230,16 @@ async function send() {
     const id = await share.frameId(); if (id) images.push(id);
   }
   input.value = ""; attachments = []; renderAttachments(); autosize(); enterThread(); addUser(text || "첨부한 화면을 분석해 줘.", images);
-  const ai = addAI({ agent: $("#agent-select").value === "auto" && !state.conv ? "담당자 찾는 중" : ($("#agent-select").value === "auto" ? state.conv?.agent : $("#agent-select").value) });
+  const ai = addAI({ agent: "trader" });
   const t0 = Date.now(); let gotAny = false;
-  work.start(!state.conv && $("#agent-select").value === "auto" ? "🧭 담당 팀 고르기" : "💬 답변 준비");
-  const tick = setInterval(() => { if (!gotAny) ai.status(`${!state.conv && $("#agent-select").value === "auto" ? "CEO가 담당 팀 고르는 중" : "답변 준비 중"}... ${Math.round((Date.now() - t0) / 1000)}초`); }, 1000);
+  work.start("💬 답변 준비");
+  const tick = setInterval(() => { if (!gotAny) ai.status(`답변 준비 중... ${Math.round((Date.now() - t0) / 1000)}초`); }, 1000);
   ai.body.classList.add("cursor"); scrollDown(true);
   let raw = "", tool = null; setBusy(true); state.controller = new AbortController();
   try {
     await stream("/api/chat", {
-      conversation_id: state.conv?.id, message: text, images, agent: $("#agent-select").value,
-      model: $("#model-select").value, knowledge: $("#kn-toggle").checked, team: $("#team-mode").value,
+      conversation_id: state.conv?.id, message: text, images, agent: "trader",
+      model: $("#model-select").value,
     }, {
       "*": (ev, d) => work.event(ev, d),
       meta: (m) => { gotAny = true; ai.status(""); state.conv = { ...(state.conv || {}), id: m.conversation_id, title: m.title, agent: m.agent }; ai.setWho(m); $("#top-title").textContent = m.title; },
@@ -1767,61 +1714,6 @@ $("#imp-new").onclick = async () => {
   $("#imp-list").prepend(card); card.querySelector('[data-a="run"]')?.click();
 };
 
-// ── 공부 노트 ──
-async function loadNotes() {
-  const notes = await api("/api/wiki");
-  $("#note-list").innerHTML = notes.map(n => `<button class="note-item" data-path="${esc(n.path)}"><span>${esc(n.topic)}<br><span class="muted">${esc(n.path.split("/")[0])}</span></span><span class="status ${n.status.includes("완료") ? "done" : "todo"}">${esc(n.status || "—")}</span></button>`).join("")
-    || `<p class="muted">아직 노트가 없어요. 위에서 주제를 넣고 공부시켜 보세요.</p>`;
-  document.querySelectorAll(".note-item").forEach(b => b.onclick = () => openNote(b.dataset.path));
-}
-async function openNote(path) {
-  const n = await api("/api/wiki/" + encodeURIComponent(path)); if (n.error) return;
-  $("#note-path").textContent = n.path; $("#note-body").innerHTML = md(n.content.replace(/^---[\s\S]*?---\n/, ""));
-  $("#note-view").hidden = false; $("#note-view").scrollIntoView({ behavior: "smooth" });
-}
-$("#note-close").onclick = () => $("#note-view").hidden = true;
-async function runLearn(body) {
-  const log = $("#learn-log"); log.hidden = false; log.textContent = "";
-  const btns = [$("#learn-btn"), $("#learn-auto")]; btns.forEach(b => b.disabled = true);
-  try {
-    await stream("/api/learn", { ...body, model: $("#model-select").value }, {
-      log: (d) => { log.textContent += d.text + "\n"; log.scrollTop = log.scrollHeight; },
-      note: (d) => { loadNotes(); openNote(d.path); },
-      error: (e) => { log.textContent += "⚠️ " + e.message + "\n"; },
-      done: () => { log.textContent += "✅ 완료\n"; },
-    });
-  } catch (e) { log.textContent += "⚠️ " + e.message + "\n"; }
-  finally { btns.forEach(b => b.disabled = false); }
-}
-$("#learn-btn").onclick = () => { const t = $("#learn-topic").value.trim(); if (t) runLearn({ topic: t }); else $("#learn-topic").focus(); };
-$("#learn-topic").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) $("#learn-btn").click(); });
-$("#learn-auto").onclick = () => runLearn({ rounds: 1 });
-
-// ── 시뮬레이션 ──
-let simMode = "goal";
-document.querySelectorAll("[data-sim]").forEach(t => t.onclick = () => {
-  simMode = t.dataset.sim; document.querySelectorAll("[data-sim]").forEach(x => x.classList.toggle("active", x === t));
-  $("#sim-goal-form").hidden = simMode !== "goal"; $("#sim-stock-form").hidden = simMode !== "stock";
-});
-$("#sim-btn").onclick = async () => {
-  const body = simMode === "goal" ? { goal: $("#sim-goal").value.trim() }
-    : { stock: $("#sim-ticker").value.trim(), years: $("#sim-years").value, target: $("#sim-target").value };
-  if (simMode === "goal" && !body.goal) return $("#sim-goal").focus();
-  if (simMode === "stock" && !body.stock) return $("#sim-ticker").focus();
-  body.model = $("#model-select").value;
-  const log = $("#sim-log"); log.hidden = false; log.textContent = ""; $("#sim-out").hidden = true;
-  $("#sim-btn").disabled = true; let raw = "";
-  try {
-    await stream("/api/simulate", body, {
-      log: (d) => { log.textContent += d.text + "\n"; },
-      result: (d) => { $("#sim-out").hidden = false; $("#sim-result").innerHTML = simHTML(d.text); $("#sim-explain").innerHTML = ""; $("#sim-explain").classList.add("cursor"); $("#sim-report").textContent = ""; },
-      delta: (d) => { raw += d.text; $("#sim-explain").innerHTML = md(raw); },
-      error: (e) => { log.textContent += "⚠️ " + e.message + "\n"; },
-      done: (d) => { $("#sim-report").textContent = d.report ? "📝 보고서 저장: " + d.report : ""; log.hidden = true; },
-    });
-  } catch (e) { log.textContent += "⚠️ " + e.message + "\n"; }
-  finally { $("#sim-btn").disabled = false; $("#sim-explain").classList.remove("cursor"); }
-};
 
 init();
 </script>

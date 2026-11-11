@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 cd /d "%~dp0"
-title 1인 기업 AI
+title 자동매매 AI
 
 rem ---- 1. 파이썬 찾기 ----
 set "PY="
@@ -12,7 +12,7 @@ echo [1/3] 파이썬 확인:
 %PY% --version
 
 rem ---- 2. 필요한 패키지 확인, 없으면 자동 설치 ----
-%PY% -c "import numpy, requests, dotenv, anthropic, openai" > nul 2>&1
+%PY% -c "import requests, dotenv, anthropic, openai, PIL" > nul 2>&1
 if not errorlevel 1 goto PKGOK
 echo [2/3] 필요한 패키지를 설치하는 중입니다. 처음 한 번만, 1~3분 걸려요...
 %PY% -m pip install -r requirements.txt

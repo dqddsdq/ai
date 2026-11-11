@@ -38,7 +38,7 @@ def run() -> int:
         bad(f"Python {v.major}.{v.minor} — 너무 오래됐어요", "python.org 에서 최신 버전 설치")
 
     print("[2] 패키지")
-    for mod in ("numpy", "requests", "dotenv", "anthropic", "openai", "yfinance", "PIL"):
+    for mod in ("PIL", "requests", "dotenv", "anthropic", "openai"):
         try:
             importlib.import_module(mod)
             ok(mod)
@@ -80,39 +80,14 @@ def run() -> int:
                 fix = "PowerShell 에서 claude 를 실행해서 로그인하세요"
             bad(msg[:500], fix)
 
-    print("[5] FreeLLMAPI (선택 — 무료 AI 검토자)")
-    import os
-    if not os.getenv("FREELLM_URL"):
-        ok("설정 안 함 — 검토는 Claude만으로 진행 (정상)")
-    else:
-        url = os.getenv("FREELLM_URL")
-        if url.rstrip("/").endswith("/v1"):
-            bad(f"FREELLM_URL 이 /v1 로 끝나요: {url}", "루트 주소만 쓰세요 (예: http://localhost:3000) — 자동으로 빼고 쓰긴 해요")
-        if not pv._freellm_alive():
-            problems += 1
-            bad(f"{url} 에 연결 안 됨", "FreeLLMAPI 가 켜져 있는지, 주소·포트가 맞는지 확인하세요")
-        else:
-            ok(f"{url} 켜져 있음")
-            names = [x.strip() for x in os.getenv("FREELLM_MODELS", "").split(",") if x.strip()] or [os.getenv("FREELLM_MODEL", "auto")]
-            for name in names[:3]:
-                t = time.time()
-                try:
-                    reply = pv.chat(pv.ModelSpec("freellm", name), "짧게 답하세요.",
-                                    [{"role": "user", "content": "OK 라고만 답해"}], timeout=60)
-                    ok(f"모델 {name}: '{reply.strip()[:20]}' ({time.time() - t:.0f}초)")
-                except pv.ProviderError as e:
-                    problems += 1
-                    bad(f"모델 {name}: {str(e)[:200]}",
-                        "FREELLM_API_KEY(통합 키)와 모델 이름을 확인하세요. 계속 안 되면 .env 에 FREELLM_API=openai 로 바꿔 보세요")
-
-    print("[6] 포트 8765")
+    print("[5] 포트 8765")
     with socket.socket() as s:
         if s.connect_ex(("127.0.0.1", 8765)) == 0:
             ok("이미 AI 화면이 켜져 있어요 (정상 — 다른 창에서 실행 중)")
         else:
             ok("사용 가능")
 
-    print("[7] 토스증권 (선택 — 자동매매·실시간 시세)")
+    print("[6] 토스증권 (선택 — 자동매매·실시간 시세)")
     from . import toss
     if not toss.enabled():
         ok("키 없음 — 🧰 도구 화면에서 클라이언트 ID·시크릿 키를 넣으면 연결돼요 (정상)")
@@ -134,7 +109,7 @@ def run() -> int:
             problems += 1
             bad(str(e), "토스 개발자 화면의 클라이언트 ID·시크릿 키(같이 발급된 한 쌍)를 🧰 도구에 다시 넣어 보세요")
 
-    print("[8] 텔레그램 알림 (선택)")
+    print("[7] 텔레그램 알림 (선택)")
     from . import notify
     if not notify.enabled():
         ok("토큰 없음 — 🧰 도구에서 넣으면 폰으로 알림이 와요 (정상)")
@@ -146,7 +121,7 @@ def run() -> int:
             problems += 1
             bad(r["message"], "🧰 도구의 텔레그램 토큰을 확인하세요")
 
-    print("[9] 자체 점검 (매매·안전 규칙)")
+    print("[8] 자체 점검 (매매·안전 규칙)")
     from . import selftest
     n_ok, n_all, fails = selftest.run(verbose=False)
     if fails:

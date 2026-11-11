@@ -1,57 +1,21 @@
-# 🤖 1인 기업 AI 엔진
+# 🤖 자동매매 AI 엔진
 
-`_agents/` 폴더의 에이전트들(CEO, 유튜브, 비서, 개발자 등)을 실제로 대화하고 일하게 만드는 엔진입니다.
-여러 AI 회사 모델을 자유롭게 바꿔 쓸 수 있습니다 (중국계 모델은 차단).
+토스증권 오픈API로 국장·미장을 자동으로 사고파는 앱. 사장님의 Claude Code 로그인을 그대로 써서 AI 판단·복기·자기 개선을 해요 (API 키 불필요).
 
-## 👥 팀 (11개 팀 · 31명)
-
-| 분야 | 팀 (인원) | 팀원 모델 |
-|---|---|---|
-| 🧭 총괄 | ceo (3) | Haiku |
-| 📈 주식 | stock-kr 국내주식 (3), stock-us 미국주식 (3), portfolio 포트폴리오 (3) | Sonnet |
-| ⚖️ 법률 | legal-life 생활법률 (3), legal-biz 사업법률 (3) | Sonnet |
-| 🚀 창업 | startup-idea 창업아이템 (3), startup-money 창업자금·세금 (3) | Haiku |
-| 기타 | researcher (3), developer (2), writer (2) | Haiku |
-
-### 팀 검토 과정 (분석·판단 질문일 때)
 ```
-⓪ 🌐 공용 자료수집 3명 (리서치 팀, 동시에): 공식 출처 / 최신 뉴스·업계 / 데이터·반대 근거
-   → 홈페이지·공식 자료에서 찾은 '자료 묶음'(출처·날짜·핵심 내용·신뢰도)을 아래 모든 단계에 전달
-   → 웹 검색이 없는 팀(CEO·포트폴리오·창업자금·개발·글쓰기)도 이 자료로 일해요
-① 초안 1명 (Claude)
-② 중간 검토 최대 6명
-   - Claude 3명 (항상): 🔍 근거·출처 / 🧮 숫자·계산 / 😈 반대·리스크
-   - 다른 AI 3명 (무료 사용량이 있을 때만): 같은 3가지 역할 — FreeLLMAPI → 없으면 Gemini/GPT/Mistral 키
-   → 지적 있으면 수정 (근거 있는 지적만 반영)
-③ 최종 승인 3명 (Claude)
-   → 2명 이상 반려: ✏️ 수정 → ② 중간 검토가 반려 사유 해결 확인 → 통과할 때까지 반복 (최대 3바퀴)
-→ 🏆 최종 답
+cd _company
+python -m engine web        # 화면 열기 (AI 시작.bat 과 같음) — http://127.0.0.1:8765
+python -m engine selftest   # 자체 점검 (매매·안전 규칙, 인터넷 없이 몇 초)
+python -m engine doctor     # 문제 진단 (파이썬·패키지·Claude Code·토스·텔레그램)
 ```
-- 배지 예: `🏆 검토 완료 · 검토 6/6 통과 (다른 AI 3명 참여) · 최종 승인 3/3`
-- 무료 AI 가 사용량 제한(429)에 걸리면 그 질문에서 빠지고 **10분 쉬었다가** 다시 참여 → 그동안은 Claude 만
-- 3바퀴 후에도 지적이 남으면 `⚠️ 검토 미완료` + 남은 문제를 "확인 필요"로 표시
 
-### FreeLLMAPI 연결 (무료 AI 검토자)
-FreeLLMAPI 가 PC 에서 실행 중이고 Provider 키 등록·테스트가 끝났다면, `_company\.env` 에 아래만 넣으세요.
-**Claude Code 설정은 바꾸지 않아요** — 31명 에이전트는 계속 Claude 를 쓰고, 무료 AI 는 검토자 자리에만 들어갑니다.
-```
-FREELLM_URL=http://localhost:포트      ← 루트 주소, 뒤에 /v1 붙이지 않기
-FREELLM_API_KEY=통합키
-FREELLM_MODELS=gemini-2.5-flash,llama-3.3-70b-versatile,auto   ← FreeLLMAPI 에 등록된 모델 이름
-```
-그다음 `진단.bat` → `[5] FreeLLMAPI` 가 ✅ 인지 확인. 안 되면 `FREELLM_API=openai` 로 바꿔 보세요.
-> ⚠️ 무료 요금제는 보낸 내용이 학습에 쓰일 수 있어요. 민감한 개인정보는 질문에 넣지 마세요.
-> ⚠️ 중국계 모델(Qwen·DeepSeek 등)은 우리 엔진이 이름으로 막지만, FreeLLMAPI 의 `auto` 가 고르는 모델까지는 못 막아요. FreeLLMAPI 쪽에서도 빼 두세요.
+## 화면
+- 💬 **채팅** — 자동매매 팀과 1:1 대화: 오늘 뭐 샀는지·왜 팔았는지·성적·복기, 설정 변경([적용] 카드), 코드 개선 제안. 팀 배정·검토 없이 바로 답해서 Claude 사용량이 적어요
+- 🤖 **자동매매** — 시장별 상태·보유·주문·학습·실험실·설정 · 📊 **차트** — AI 가 보는 차트 · 🧰 **도구** — 토스·DART·텔레그램·SEC 키 · 🛠️ **개선** — 자기 개선 기록·자동 개선 켜기/끄기
 
-### 설정 (`_shared/settings.json`)
-- `max_parallel`: 동시에 돌리는 최대 인원 (사용량 아끼려면 1~2)
-- `team_mode`: auto / on / off
-- `team_style`: review (위 검토 과정) / compare (팀원이 각자 답 → 비교해서 최고 답)
-- `shared_research`: 공용 자료수집을 돌릴지 — auto(분석 질문만, 기본) / always / off
-- `max_review_rounds`: 반려 시 '수정 → 재검토' 최대 반복 횟수 (기본 3)
-- `reject_threshold`: 이 인원 이상 반려해야 재수정 (기본 2)
-- `reviewers` / `approvers`: 검토·승인 자리. `models` 는 앞에서부터 쓸 수 있는 첫 AI, `optional: true` 면 쓸 수 있을 때만 참여
-- 팀별 설정 `_agents/<팀>/team.json`: `web`(웹 검색), `market_data`(시세 자동), `member_model`
+## 폴더
+- `_shared/goals.md`·`decisions.md` — 사장님이 정한 목표·원칙 (자동매매 팀이 매번 읽음) · `_agents/trader/` — 자동매매 팀 지시문·기억
+- `_cache/` — 계좌 기록·학습 일지·봇 장부 (git 제외, 백업은 `_cache/backup/`) · `.env` — 키 (절대 공유 금지)
 
 ## 🧰 도구 요청 (AI 가 요청 → 사장님 승인)
 
@@ -221,18 +185,6 @@ AI 가 답하다가 필요한 도구가 없으면 채팅에 **요청 카드**를
 그리고 이걸 지키는 장치(`improve.py`·`selftest.py`·`guard.py`·`__init__`·`__main__`). 그 외 코드·화면·지시문은 전부 자동으로 고칠 수 있음.
 자체 점검이 계좌 규칙(토스 우회·실전 켜기·미수·사장님 주식)과 개인정보(폰 접속 PIN·같은 와이파이만·키 노출)를 매번 확인.
 
-### 예전 방식: 🛠️ 자기 개선 (AI 가 스스로 고침 → 사장님 승인)
-
-AI 가 "내 지시문·설정·코드 때문에 이걸 잘 못 한다"고 판단하면 채팅에 **개선 제안 카드**를 띄워요. 사장님이 왼쪽 **🛠️ 개선** 화면에 "이렇게 바꿔 줘"라고 직접 적어도 돼요.
-
-1. [변경안 만들기] → 개발 AI 가 **복사본**(`_cache/improve/`)에서만 고쳐요 (작업 현황 창에 어떤 파일을 읽고 고치는지 실시간 표시)
-2. 자동 검사: 보호 파일 · 매매 코드 변경 표시 · 파이썬 문법 · 앱 불러오기 · **자체 점검(돈 이동·실전 켜기·미수·정지·안전 범위)** · JSON · 화면 스크립트
-3. 바뀐 줄을 빨강/초록으로 보여 주고 쉬운 말로 요약 → 사장님이 **[적용]** 을 눌러야 실제로 바뀌어요
-4. 적용 전 원본은 자동 백업(`_cache/backups/`) → 언제든 **[되돌리기]**
-- 지시문·설정만 바뀌면 바로 적용, 코드(`engine/`)가 바뀌면 `AI 시작.bat` 을 다시 켜야 적용돼요
-- 고칠 수 있는 곳: `engine/`, `_agents/`, `_shared/` 만. **키(.env)·도구 허용 목록·도구 설치 코드·자기 개선 코드는 절대 못 고쳐요** (검사에서 막힘)
-- 변경안을 만드는 사이 원본이 바뀌었으면 덮어쓰지 않고 '충돌'로 멈춰요 → [다시 만들기]
-
 ### 💹 토스증권 오픈API (조회 전용)
 🧰 도구 화면에 **클라이언트 ID**(보통 `tsck_` 로 시작)와 **시크릿 키** 두 칸을 넣으면 연결돼요 (`engine/toss.py`).
 - 주식 분석 때 시세가 **토스 실시간 현재가 + 일봉 차트**로 바뀌어요 (국내·미국). 토스가 안 되면 자동으로 야후로
@@ -246,23 +198,6 @@ AI 가 "내 지시문·설정·코드 때문에 이걸 잘 못 한다"고 판단
 질문을 보내면 **그 순간의 화면이 자동으로 같이 갑니다.** AI가 "일봉으로 바꿔 주세요"라고 하면 토스에서 바꾸고 "바꿨어"라고 답하면 돼요.
 - 화면은 보기만 하고 아무것도 클릭하지 않아요. 공유 화면은 내 PC 안에서만 보이고, 질문할 때 한 장만 AI에게 갑니다.
 - 이미지 첨부: 📎 버튼, Ctrl+V 붙여넣기, 끌어다 놓기도 돼요.
-
-## 📈 주식 시세
-
-- 기본: 야후 파이낸스 (무료, 국내 약 15~20분 지연) → 이동평균·RSI·MACD·볼린저·거래량·수익률 자동 계산
-- 실시간: 한국투자증권 KIS Developers 앱키를 `.env` 에 넣으면 국내 주식 현재가가 실시간으로 바뀝니다
-  `KIS_APP_KEY=...`, `KIS_APP_SECRET=...` (모의투자 키면 `KIS_MOCK=1`)
-- 분석만 합니다. 주문은 넣지 않아요.
-
-## 🖥️ 화면으로 쓰기 (Claude 앱 스타일)
-
-`_company` 폴더의 **`AI 시작.bat`** 더블클릭 (맥: `./start.sh`) → 브라우저가 자동으로 열립니다.
-직접 실행: `python -m engine web` → http://127.0.0.1:8765
-
-- 채팅 (담당자 자동 배정, 모델 선택, 자료 참고 표시), 대화 목록 저장
-- 공부 노트: 주제 넣고 공부시키기 / 노트 읽기
-- 시뮬레이션: 사업 목표, 주식
-- 내 PC에서만 열립니다 (다른 기기·웹사이트 접근 차단). 끄려면 검은 창에서 Ctrl+C
 
 ## ⚡ 기본: Claude Code 로그인 그대로 사용 (API 키 불필요)
 
@@ -293,19 +228,6 @@ python -m engine models   # 어떤 AI가 준비됐는지 확인
 python -m engine chat     # 대화 시작!
 ```
 
-## 사용법
-
-| 명령 | 설명 |
-|---|---|
-| `python -m engine chat` | 대화. 첫 질문을 보고 CEO가 담당 에이전트를 자동 배정 |
-| `python -m engine chat --agent writer` | 특정 에이전트와 대화 |
-| `python -m engine ask "질문"` | 한 번만 묻고 끝 |
-| `python -m engine set-model writer-2 gemini` | 에이전트별 기본 AI 지정 |
-| `--model openai:gpt-5` | 이번 실행만 AI 바꾸기 |
-| `--effort high` | 더 깊게 생각 (Claude) |
-
-대화 중 명령: `/agent 이름`, `/model 제공자:모델`, `/remember 기억할 내용`, `/new`, `/help`, `/quit`
-
 ## 지원 AI
 
 | 제공자 | 예시 | 필요한 키 |
@@ -321,80 +243,3 @@ python -m engine chat     # 대화 시작!
 접두사 없이 `gemma4:latest`처럼 쓰면 Ollama로 처리합니다 (기존 `agent_models.json` 호환).
 새 모델이 나오면 `.env`의 `OPENAI_MODEL` 같은 값만 바꾸면 됩니다.
 
-## 에이전트가 읽는 것
-
-매 호출마다 시스템 프롬프트로 자동 주입:
-1. `_shared/decisions.md` → `identity.md` → `goals.md` (회사 공동 메모리)
-2. `_agents/<id>/prompt.md`, `goal.md`, `tools.md`
-3. `_agents/<id>/memory.md` (최근 6000자)
-
-대화 기록은 `sessions/<시각>/chat.md`에 저장됩니다.
-
-## 📚 내 자료로 똑똑하게 만들기 (학습 없이, 바로 적용)
-
-`00_Raw/` 나 `10_Wiki/` 에 `.md` 파일을 넣으면, 질문과 관련된 부분을 찾아서 에이전트가 참고합니다.
-모델을 다시 학습시킬 필요가 없고, 파일을 넣는 즉시 반영돼요.
-
-```bash
-python -m engine search 후킹 전략    # 어떤 자료가 찾아지는지 확인
-python -m engine chat --no-knowledge  # 자료 참고 끄기
-```
-
-## 🧠 내 컴퓨터에서 학습시키기 (파인튜닝)
-
-말투나 일하는 방식을 모델 자체에 새기고 싶을 때 씁니다. 지식은 위의 자료 폴더가 더 정확하고 쉬워요.
-
-1. 평소처럼 `chat` 으로 일하면 `sessions/*/chat.md` 에 기록이 쌓여요. 마음에 안 드는 답변 세션은 지우세요.
-2. 학습 데이터 만들기: `python -m engine export-training` → `training/dataset.jsonl`
-3. 최소 100~200개 대화는 모아야 효과가 있어요.
-4. 학습 (NVIDIA 16GB 기준, Windows 는 WSL2 Ubuntu 안에서):
-   ```bash
-   pip install unsloth
-   python -m engine.finetune                         # Gemma 3 12B, QLoRA
-   python -m engine.finetune --base unsloth/gemma-3-4b-it   # 작게·빠르게
-   ```
-5. 끝나면 출력되는 `ollama create my-company -f ...` 실행 → `python -m engine set-model ceo ollama:my-company`
-
-> RTX 4070 Ti SUPER 16GB 추천 실행 모델: 대화 `ollama pull gemma3:12b`, 분석·시뮬레이션 `ollama pull gpt-oss:20b`
-
-## 🌐 스스로 인터넷 공부하기
-
-AI가 직접 검색하고, 페이지를 읽고, 정리한 노트를 `10_Wiki/날짜/주제.md` 에 저장합니다.
-저장된 노트는 위의 자료 검색이 자동으로 찾아 쓰기 때문에, 공부할수록 답변이 좋아져요.
-
-```bash
-python -m engine learn "유튜브 쇼츠 수익화"       # 주제 하나 공부
-python -m engine learn --auto --rounds 3           # goals.md 보고 주제를 스스로 3개 골라 공부
-```
-
-- 검색: 기본은 무료 DuckDuckGo, `.env` 에 `BRAVE_API_KEY` 가 있으면 Brave Search (더 안정적)
-- 모델: `researcher` 에이전트의 모델 (`set-model researcher ...` 로 변경)
-
-**매일 자동으로 공부시키기**
-- 맥/리눅스: `crontab -e` 에 `0 9 * * * cd /경로/ai/_company && python -m engine learn --auto --rounds 2`
-- 윈도우: 작업 스케줄러 → 매일 → 프로그램 `python`, 인수 `-m engine learn --auto --rounds 2`, 시작 위치 `_company`
-
-**안전장치**
-- 하는 일은 검색 → 읽기 → `10_Wiki` 에 노트 쓰기 뿐. 코드 실행·게시·전송·삭제 안 함
-- 웹 페이지 안의 "지시문"은 따르지 않도록 막아둠 (프롬프트 인젝션 방지)
-- 모든 노트에 출처 URL 과 `status: 미검토` 표시 → 틀린 정보가 섞일 수 있으니 가끔 확인하고 `검토완료` 로 바꾸세요
-
-## 🎲 목표 시뮬레이션 ("이걸 원해" → 달성 확률)
-
-원하는 것을 말하면 AI가 시나리오(변수·범위·계산식)를 설계하고, 그걸 1만 번 가상으로 돌려서 달성 확률을 알려줍니다.
-
-```bash
-python -m engine simulate "애드센스 블로그로 2년 안에 월 1000만원"
-python -m engine simulate --stock 005930.KS --years 1 --target 20    # 삼성전자 1년 +20%?
-python -m engine simulate --stock AAPL --years 3 --target 50
-python -m engine simulate --stock X --csv 내가격데이터.csv --target 10
-```
-
-결과: 달성 확률, 보통/나쁜/좋은 경우 범위, **결과를 가장 크게 좌우하는 변수**, AI 해석 → `simulations/` 에 보고서 저장.
-
-- **가정 바꿔보기**: 함께 저장되는 `.json` 의 숫자를 고치고 `--scenario 파일.json` 으로 다시 실행
-- **주식**: 실제 과거 수익률을 20일 묶음으로 섞어 미래 경로를 만듭니다(블록 부트스트랩). 손실 확률·최대 낙폭도 계산
-- **안전**: AI는 JSON 설계만 하고, 계산은 사칙연산과 허용 함수만 되는 계산기가 합니다(AI가 쓴 코드 실행 없음)
-
-> ⚠️ 시뮬레이션은 "가정이 맞다면"의 결과이지 예측이 아닙니다. 주식 결과는 투자 조언이 아니며,
-> 과거 수익률이 미래에도 반복된다는 가정에 기댑니다.

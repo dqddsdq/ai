@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 > nul
 cd /d "%~dp0"
-title 1인 기업 AI - 진단
+title 자동매매 AI - 진단
 set "PY="
 py -3 --version > nul 2>&1 && set "PY=py -3"
 if not defined PY python --version > nul 2>&1 && set "PY=python"
