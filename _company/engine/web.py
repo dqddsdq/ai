@@ -57,6 +57,11 @@ def log(msg: str) -> None:
         print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
 
 
+TICKER_PROMPT = """사용자 메시지(와 대화 흐름)에서 분석 대상 주식/ETF를 찾아 티커로 바꾸세요.
+- 한국: 6자리코드 (예: 삼성전자 005930, 에코프로 086520) · 미국: 티커 그대로 (예: AAPL, NVDA, SPY)
+- 최대 3개. 종목이 없거나 자동매매 엔진 자체에 대한 질문(오늘 뭐 샀어·성적·설정)이면 빈 배열. 확실하지 않은 코드는 넣지 마세요.
+JSON 배열로만 답하세요. 예: ["005930", "NVDA"]"""
+
 BADGE_RE = re.compile(r"^\s*`?(?:🏆|⚠️ 검토)[^\n]*\n+")
 
 
@@ -403,6 +408,47 @@ class Handler(BaseHTTPRequestHandler):
         img.convert("RGB").save(buf, "PNG", optimize=True)
         return self._json({"id": self._save_image(buf.getvalue(), ".png")})
 
+    def _stock_context(self, text: str, history: list[dict]) -> str:
+        """질문에 종목이 있으면 토스 시세·일봉·1분봉 차트를 붙여줌 (빠른 모델로 종목만 뽑음 · 검토자 없음)"""
+        if not toss.enabled():
+            return ""
+        recent = "\n".join(re.sub(r"\[화면 캡처 \d+장 첨부\]", "", m["content"])[:500] for m in history[-3:])
+        try:
+            reply = pv.chat(tm.fast_spec(), TICKER_PROMPT, [{"role": "user", "content": recent}], effort="low", timeout=60)
+            m = re.search(r"\[.*?\]", reply, re.S)
+            tickers = [str(x).strip().upper() for x in (json.loads(m.group(0)) if m else [])
+                       if re.fullmatch(r"\d{6}(\.(KS|KQ))?|[A-Za-z][A-Za-z.\-]{0,9}", str(x).strip())][:3]
+        except Exception:
+            tickers = []
+        if not tickers:
+            return ""
+        self._send("status", {"text": "📈 " + ", ".join(tickers) + " 시세·차트 가져오는 중..."})
+        from . import chart
+        lines = []
+        for t in tickers:
+            sym = toss.symbol(t)
+            try:
+                q = toss.prices([sym]).get(sym) or {}
+                info = toss.stock_info(sym) or {}
+                closes, _, _ = toss.daily(sym, 60)
+                name = info.get("name") or sym
+                chg20 = (closes[-1] / closes[-21] - 1) * 100 if len(closes) > 21 else 0
+                lines.append(f"- {name}({sym}): 현재가 {q.get('price')} · 전일 대비 {q.get('changeRate') or q.get('change', '')} · 20일 {chg20:+.1f}%")
+                for iv in ("1d", "1m"):
+                    try:
+                        cid = chart.draw(sym, iv, title=name)
+                        self._charts.append({"id": cid, "label": f"{name} {'일봉' if iv == '1d' else '1분봉'}"})
+                    except Exception:
+                        pass
+            except toss.TossError as e:
+                lines.append(f"- {sym}: 조회 실패 ({e})")
+        if self._charts:
+            self._send("charts", {"items": self._charts})
+        self._send("status", {"text": ""})
+        note = ("\n[첨부 차트] 토스 데이터로 그린 차트가 첨부돼 있어요 (" + ", ".join(c["label"] for c in self._charts)
+                + "). 캔들·이동평균·거래량을 직접 보고 추세·지지/저항을 분석에 쓰세요.") if self._charts else ""
+        return "<market>\n" + "\n".join(lines) + "\n</market>" + note
+
     # 채팅
     def _chat(self, body: dict):
         """자동매매 팀(trader)과 1:1 대화 — 팀 배정·검토·리서치 없이 바로 답함 (Claude 사용량 절약)"""
@@ -437,6 +483,10 @@ class Handler(BaseHTTPRequestHandler):
                             "model": str(spec), "reason": "", "sources": [], "team": 1, "router_model": "", "member_model": ""})
         self._charts = []
         extra = (tl.guide_for_agents(agent_id) or "") + "\n\n" + im.IMPROVE_GUIDE
+        market = self._stock_context(text, history)
+        if market:
+            extra += "\n\n" + market
+            images = images + [str(UPLOAD_DIR / c["id"]) for c in self._charts]   # AI 가 차트를 그림으로 직접 보게
         extra += "\n\n" + at.engine_context() + "\n\n" + at.TRADE_GUIDE   # 🤖 엔진 전체 상태 + [적용] 카드용 행동 태그
         if toss.enabled() and toss.ACCOUNT_WORDS.search(text):   # "내 잔고" 질문이면 계좌 조회 (조회 전용)
             try:
@@ -452,6 +502,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send("replace", {"text": reply})
         conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id, "model": str(spec), "sources": [],
                                  "drafts": [], "steps": []})
+        if self._charts:
+            conv["messages"][-1]["charts"] = self._charts
         for what, why in im.find_proposals(reply):
             job = im.create(what, why, agent_id)
             conv["messages"][-1].setdefault("improvements", []).append(job["id"])

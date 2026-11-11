@@ -413,7 +413,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
     <div class="composer-wrap" id="composer-home">
       <div class="composer" id="composer">
         <div class="attach-row" id="attach-row"></div>
-        <textarea id="input" rows="1" placeholder="자동매매에 물어보세요 — 오늘 뭐 샀어? 왜 팔았어? 성적 어때? 손절 4%로 바꿔줘"></textarea>
+        <textarea id="input" rows="1" placeholder="무엇이든 물어보세요 — 오늘 뭐 샀어? 삼성전자 지금 어때? 손절 4%로 바꿔줘"></textarea>
         <div class="composer-row">
           <button class="tool-btn" id="attach-btn" title="이미지 첨부 (Ctrl+V 붙여넣기, 끌어다 놓기도 돼요)">📎</button>
           <button class="tool-btn share-btn" id="share-btn" title="화면 공유 (디스코드 방송처럼) — 토스 창이나 탭을 고르면, 질문할 때마다 그 화면이 자동으로 같이 가요">🖥️</button>
@@ -743,7 +743,7 @@ async function init() {
   as.value = "trader";
   $("#model-select").value = store.get("model", "");
   $("#model-select").onchange = () => store.set("model", $("#model-select").value);
-  const ideas = ["오늘 뭐 샀어? 왜?", "지금 성적 어때?", "어제 복기 알려줘", "그림자 매매에서 더 나은 규칙 있어?", "손절 기준 조금 넓혀줘", "오늘은 새로 사지 마"];
+  const ideas = ["오늘 뭐 샀어? 왜?", "지금 성적 어때?", "삼성전자 지금 어때?", "엔비디아 차트 봐줘", "그림자 매매에서 더 나은 규칙 있어?", "손절 기준 조금 넓혀줘"];
   $("#chips").innerHTML = ideas.map(t => `<button class="chip">${esc(t)}</button>`).join("");
   document.querySelectorAll(".chip").forEach(c => c.onclick = () => { $("#input").value = c.textContent; send(); });
   newChat(); loadConvs(); show("chat"); loadTools(); refreshImpBadge(); initPhone(); api("/api/autotrade").then(tradeBadge).catch(() => {});
