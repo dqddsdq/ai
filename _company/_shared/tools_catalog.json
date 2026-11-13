@@ -1,0 +1,169 @@
+{
+  "_설명": "AI 가 요청할 수 있는 도구 목록 (허용 목록). 여기 없는 도구는 설치되지 않고 '메모'만 남아요. type: pip = 무료 파이썬 패키지(공식 저장소), api_key = 가입 후 키 입력",
+  "tools": [
+    {
+      "id": "dart",
+      "name": "DART 공시 API (금융감독원)",
+      "type": "api_key",
+      "env": "DART_API_KEY",
+      "signup": "https://opendart.fss.or.kr",
+      "teams": [
+        "stock-kr",
+        "portfolio"
+      ],
+      "free": true,
+      "desc": "국내 상장사 실적·공시 원문",
+      "steps": [
+        "opendart.fss.or.kr 접속 → 인증키 신청/관리 → 인증키 신청",
+        "이메일 인증 후 발급된 40자리 인증키 복사",
+        "🧰 도구 화면의 DART 칸에 붙여넣기"
+      ]
+    },
+    {
+      "id": "law",
+      "name": "국가법령정보 공동활용 API",
+      "type": "api_key",
+      "env": "LAW_API_OC",
+      "signup": "https://open.law.go.kr",
+      "teams": [
+        "legal-life",
+        "legal-biz"
+      ],
+      "free": true,
+      "desc": "법령·판례 원문 조회",
+      "steps": [
+        "open.law.go.kr 접속 → 회원가입 → OPEN API 신청",
+        "승인되면 OC 값(가입한 이메일의 @ 앞부분)을 확인",
+        "🧰 도구 화면의 법령 칸에 OC 값 입력"
+      ]
+    },
+    {
+      "id": "ecos",
+      "name": "한국은행 ECOS 통계 API",
+      "type": "api_key",
+      "env": "ECOS_API_KEY",
+      "signup": "https://ecos.bok.or.kr/api/",
+      "teams": [
+        "stock-kr",
+        "stock-us",
+        "portfolio",
+        "startup-money"
+      ],
+      "free": true,
+      "desc": "금리·환율·물가 등 공식 경제 통계",
+      "steps": [
+        "ecos.bok.or.kr/api 접속 → 인증키 신청",
+        "이메일로 받은 인증키 복사",
+        "🧰 도구 화면의 ECOS 칸에 붙여넣기"
+      ]
+    },
+    {
+      "id": "pykrx",
+      "name": "pykrx (한국거래소 시세)",
+      "type": "pip",
+      "package": "pykrx",
+      "teams": [
+        "stock-kr",
+        "portfolio"
+      ],
+      "free": true,
+      "desc": "코스피·코스닥 시세, 거래량, 외국인·기관 수급 (키 불필요)"
+    },
+    {
+      "id": "ddgs",
+      "name": "DuckDuckGo 검색",
+      "type": "pip",
+      "package": "ddgs",
+      "teams": [
+        "researcher"
+      ],
+      "free": true,
+      "desc": "무료 웹 검색 (공부 노트용 예비 검색)"
+    },
+    {
+      "id": "yfinance",
+      "name": "야후 파이낸스 시세",
+      "type": "pip",
+      "package": "yfinance",
+      "teams": [
+        "stock-kr",
+        "stock-us",
+        "portfolio"
+      ],
+      "free": true,
+      "desc": "국내·미국 시세와 과거 차트 (무료, 지연)"
+    },
+    {
+      "id": "toss_id",
+      "name": "토스증권 오픈API · 클라이언트 ID",
+      "type": "api_key",
+      "env": "TOSS_CLIENT_ID",
+      "signup": "https://developers.tossinvest.com",
+      "teams": [
+        "stock-kr",
+        "stock-us",
+        "portfolio"
+      ],
+      "free": true,
+      "desc": "실시간 시세·일봉 차트·내 잔고 (조회 전용, 주문은 앱이 막아 둠)",
+      "steps": [
+        "토스증권 앱/웹 → 오픈API 신청",
+        "발급된 클라이언트 ID(보통 tsck_ 로 시작)를 여기 붙여넣기",
+        "시크릿 키는 아래 칸에 따로"
+      ]
+    },
+    {
+      "id": "toss_secret",
+      "name": "토스증권 오픈API · 시크릿 키",
+      "type": "api_key",
+      "env": "TOSS_CLIENT_SECRET",
+      "signup": "https://developers.tossinvest.com",
+      "teams": [
+        "stock-kr",
+        "stock-us",
+        "portfolio"
+      ],
+      "free": true,
+      "desc": "클라이언트 ID 와 짝. 채팅에 붙이지 말고 여기에만",
+      "steps": [
+        "오픈API 키 발급 화면의 시크릿 키 복사 (한 번만 보여줄 수 있어요)",
+        "여기 붙여넣기"
+      ]
+    },
+    {
+      "id": "telegram",
+      "name": "텔레그램 알림 봇",
+      "type": "api_key",
+      "env": "TELEGRAM_BOT_TOKEN",
+      "signup": "https://t.me/BotFather",
+      "teams": [
+        "trader"
+      ],
+      "free": true,
+      "desc": "체결·손절·정지·오류를 폰으로 알림, /상태 /정지 /가상 /끄기 명령",
+      "steps": [
+        "텔레그램에서 @BotFather 검색 → /newbot → 봇 이름 정하기",
+        "받은 토큰(123456:ABC… 형식)을 여기 붙여넣기",
+        "텔레그램에서 방금 만든 봇에게 아무 말이나 한 번 보내기 → 알림 채팅으로 자동 등록"
+      ]
+    },
+    {
+      "id": "sec_edgar",
+      "name": "SEC 공시 (미장)",
+      "type": "api_key",
+      "env": "SEC_CONTACT_EMAIL",
+      "signup": "https://www.sec.gov/os/accessing-edgar-data",
+      "teams": [
+        "trader",
+        "stock"
+      ],
+      "free": true,
+      "desc": "미장 자동매매가 사기 전에 최근 24시간 공시(증자·상장폐지 등 악재, 실적·계약 같은 급등 이유)를 확인",
+      "steps": [
+        "가입·키 없음 (무료)",
+        "SEC 규칙상 접속할 때 연락용 이메일을 밝혀야 해요 → 사장님 이메일을 여기 입력",
+        "이 이메일은 SEC(sec.gov)에만 보내져요"
+      ]
+    }
+  ]
+}

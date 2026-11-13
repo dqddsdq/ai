@@ -1,0 +1,682 @@
+"""AI 제공자(Provider) 모음 — Claude, OpenAI, Gemini, 그리고 OpenAI 호환 API.
+
+모델은 "제공자:모델명" 형식으로 지정합니다.
+  claudecode                (설치된 Claude Code 로그인 사용, API 키 불필요 — 기본값)
+  claude:claude-opus-5-5    (Anthropic API 키 사용)
+  openai:gpt-5
+  gemini:gemini-2.5-pro
+  local                     (켜져 있는 로컬 실행기 + 로드된 모델 자동 감지, 기본값)
+  lmstudio:gemma-3-12b-it   (LM Studio, 무료)
+  llamacpp:any              (llama.cpp server)
+  vllm:모델명               (vLLM)
+  ollama:gemma4:latest      (Ollama)
+  mistral:mistral-large-latest
+  groq:llama-3.3-70b-versatile
+  xai:grok-4
+  echo:test                 (API 없이 테스트용)
+
+접두사가 없으면(예: "gemma4:latest") 켜져 있는 로컬 실행기에서 그 모델을 찾습니다.
+중국계 모델은 BLOCKED_MODEL_KEYWORDS로 차단합니다.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass
+from typing import Callable, Iterable
+
+# 사용자가 원치 않는 중국계 모델/제공자 키워드 (소문자 비교)
+BLOCKED_MODEL_KEYWORDS = (
+    "deepseek", "qwen", "qwq", "kimi", "moonshot", "glm", "chatglm", "zhipu",
+    "baichuan", "minimax", "abab", "doubao", "ernie", "hunyuan", "yi-", "internlm",
+    "spark", "step-", "sensenova",
+)
+
+# 기본 모델 — .env 에서 바꿀 수 있습니다 (예: OPENAI_MODEL=gpt-5.5)
+DEFAULT_MODELS = {
+    "claudecode": lambda: os.getenv("CLAUDECODE_MODEL", "default"),
+    "claude": lambda: os.getenv("CLAUDE_MODEL", "claude-opus-5-5"),
+    "openai": lambda: os.getenv("OPENAI_MODEL", "gpt-5"),
+    "gemini": lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),     # flash = 무료 요금제로 사용 가능
+    "local": lambda: os.getenv("LOCAL_MODEL", "auto"),
+    "lmstudio": lambda: os.getenv("LMSTUDIO_MODEL", "auto"),
+    "llamacpp": lambda: os.getenv("LLAMACPP_MODEL", "auto"),
+    "vllm": lambda: os.getenv("VLLM_MODEL", "auto"),
+    "ollama": lambda: os.getenv("OLLAMA_MODEL", "auto"),
+    "mistral": lambda: os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
+    "groq": lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    "xai": lambda: os.getenv("XAI_MODEL", "grok-4"),
+    "freellm": lambda: os.getenv("FREELLM_MODEL", "auto"),   # FreeLLMAPI: 무료 AI 여러 개를 하나로 묶은 중계기
+    "echo": lambda: "test",
+}
+
+# 내 PC에서 돌아가는 실행기들 (모두 OpenAI 호환 API 제공): (주소 환경변수, 기본 주소)
+LOCAL_SERVERS = {
+    "lmstudio": ("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"),
+    "llamacpp": ("LLAMACPP_BASE_URL", "http://localhost:8080/v1"),
+    "vllm": ("VLLM_BASE_URL", "http://localhost:8000/v1"),
+    "ollama": ("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+}
+
+# 클라우드 OpenAI 호환 엔드포인트: (base_url, API 키 환경변수)
+OPENAI_COMPATIBLE = {
+    "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY"),
+    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY"),
+    "xai": ("https://api.x.ai/v1", "XAI_API_KEY"),
+}
+
+KEY_ENV = {
+    "claudecode": None,
+    "claude": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    **{name: env for name, (_, env) in OPENAI_COMPATIBLE.items()},
+    **{name: None for name in (*LOCAL_SERVERS, "local")},
+    "freellm": "FREELLM_API_KEY",
+    "echo": None,
+}
+
+# 무료 사용량 바닥(429 등)난 제공자는 잠시 쉬게 함: {제공자: 다시 써도 되는 시각}
+COOLDOWN: dict[str, float] = {}
+COOLDOWN_SECONDS = 600
+QUOTA_WORDS = ("429", "quota", "rate limit", "rate_limit", "resource_exhausted", "too many requests", "limit exceeded")
+
+
+def _maybe_cooldown(provider: str, err: str) -> None:
+    if provider != "claudecode" and any(w in err.lower() for w in QUOTA_WORDS):
+        import time
+
+        COOLDOWN[provider] = time.time() + COOLDOWN_SECONDS
+
+
+# 메시지 형식: [{"role": "user"|"assistant", "content": "..."}]
+Message = dict
+OnText = Callable[[str], None]
+
+
+class ProviderError(RuntimeError):
+    pass
+
+
+@dataclass
+class ModelSpec:
+    provider: str
+    model: str
+
+    def __str__(self) -> str:
+        return f"{self.provider}:{self.model}"
+
+
+LOGIN_HELP = ("이 PC 에 Claude Code 가 없어요. 설치·로그인은 채팅창이 아니라 PowerShell(콘솔)에서 해요:\n"
+              "1) 설치: irm https://claude.ai/install.ps1 | iex\n"
+              "2) 실행: & \"$HOME\\.local\\bin\\claude.exe\"  → Esc → /login → 브라우저에서 승인\n"
+              "3) 이 창(AI 시작.bat)을 닫고 다시 켜기")
+
+
+def claude_cli() -> str | None:
+    """claude 명령 위치. PATH 에 없어도 흔한 설치 위치를 직접 찾아봅니다 (윈도우 설치 직후 PATH 미등록 대비)."""
+    found = os.getenv("CLAUDE_CLI") or shutil.which("claude")
+    if found:
+        return found
+    home = os.path.expanduser("~")
+    candidates = [
+        os.path.join(home, ".local", "bin", "claude.exe"),           # 윈도우 공식 설치 (irm ... | iex)
+        os.path.join(home, ".local", "bin", "claude"),               # 맥/리눅스 공식 설치
+        os.path.join(home, ".claude", "local", "claude.exe"),
+        os.path.join(home, ".claude", "local", "claude"),
+        os.path.join(os.getenv("APPDATA", ""), "npm", "claude.cmd"),  # npm 으로 설치
+        os.path.join(os.getenv("LOCALAPPDATA", ""), "Programs", "claude", "claude.exe"),
+        "/usr/local/bin/claude", "/opt/homebrew/bin/claude",
+    ]
+    hit = next((c for c in candidates if c and os.path.isfile(c)), None)
+    if hit:
+        return hit
+    # 윈도우: 데스크톱 앱 내장본·winget·버전별 폴더까지 (가장 최신 버전 우선)
+    import glob
+    pats = [os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Links", "claude.exe"),
+            os.path.join(os.getenv("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Packages", "Anthropic.ClaudeCode*", "**", "claude.exe"),
+            os.path.join(os.getenv("APPDATA", ""), "Claude", "claude-code", "*", "claude.exe"),
+            os.path.join(os.getenv("LOCALAPPDATA", ""), "AnthropicClaude", "**", "claude-code", "**", "claude.exe"),
+            os.path.join(home, ".local", "share", "claude", "versions", "*"),
+            os.path.join(os.getenv("ProgramFiles", ""), "nodejs", "claude.cmd")]
+    found = [f for pat in pats if pat and not pat.startswith(os.sep + "Microsoft")
+             for f in glob.glob(pat, recursive=True) if os.path.isfile(f)]
+    return max(found, key=os.path.getmtime) if found else None
+
+
+def _auto_default() -> str:
+    """키/설치 상태를 보고 기본 제공자 고르기: Claude Code → Claude API → 로컬."""
+    if claude_cli():
+        return "claudecode"
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "claude"
+    return "local"
+
+
+def parse_model(spec: str | None) -> ModelSpec:
+    """'claude:claude-opus-5-5' → ModelSpec. 접두사 없으면 로컬 자동 감지."""
+    spec = (spec or os.getenv("DEFAULT_MODEL") or _auto_default()).strip()
+    prefix, _, rest = spec.partition(":")
+    if prefix.lower() in DEFAULT_MODELS:
+        provider = prefix.lower()
+        model = rest or DEFAULT_MODELS[provider]()
+    else:
+        provider, model = "local", spec
+    lowered = model.lower()
+    for word in BLOCKED_MODEL_KEYWORDS:
+        if word in lowered:
+            raise ProviderError(f"차단된 모델입니다 (중국계 모델 제외 정책): {model}")
+    return ModelSpec(provider, model)
+
+
+def _has_key(env: str) -> bool:
+    """키가 있고, 'your_key_here' 같은 예시 값이 아니면 True."""
+    value = os.getenv(env, "").strip()
+    return bool(value) and not any(w in value.lower() for w in ("your", "xxx", "here", "<", "example"))
+
+
+def is_ready(spec: ModelSpec) -> bool:
+    """지금 바로 쓸 수 있는지 (키·설치·실행 여부). 안 되면 다른 AI 로 대체할 때 씀."""
+    import time
+
+    p = spec.provider
+    if COOLDOWN.get(p, 0) > time.time():
+        return False
+    if p == "claudecode":
+        return bool(claude_cli())
+    if p == "freellm":
+        return bool(os.getenv("FREELLM_URL") and _has_key("FREELLM_API_KEY") and _freellm_alive())
+    if p == "gemini":
+        return _has_key("GEMINI_API_KEY") or _has_key("GOOGLE_API_KEY")
+    if p == "local" or p in LOCAL_SERVERS:
+        names = [p] if p != "local" else (["local"] if os.getenv("LOCAL_BASE_URL") else list(LOCAL_SERVERS))
+        return any(probe_local(n, timeout=0.8) is not None for n in names)
+    env = KEY_ENV.get(p)
+    return True if env is None else _has_key(env)
+
+
+def provider_status() -> list[tuple[str, str, bool]]:
+    """(제공자, 기본 모델, 키 설정 여부) 목록."""
+    rows = []
+    for name, default in DEFAULT_MODELS.items():
+        env = KEY_ENV.get(name)
+        ready = True if env is None else _has_key(env)
+        if name == "claudecode":
+            ready = bool(claude_cli())
+        if name == "gemini":
+            ready = _has_key("GEMINI_API_KEY") or _has_key("GOOGLE_API_KEY")
+        rows.append((name, default(), ready))
+    return rows
+
+
+def chat(
+    spec: ModelSpec,
+    system: str,
+    messages: list[Message],
+    on_text: OnText | None = None,
+    effort: str = "medium",
+    web: bool = False,
+    images: list[str] | None = None,
+    timeout: float | None = None,
+    on_activity: Callable[[dict], None] | None = None,
+) -> str:
+    """모델에 대화를 보내고 전체 답변 텍스트를 돌려줍니다.
+
+    on_text 가 있으면 답변이 생성되는 대로 조각을 넘겨줍니다(스트리밍).
+    """
+    if images:
+        if spec.provider == "claude":
+            messages = _with_images_claude(messages, images)
+        # openai / gemini / 호환(Mistral·로컬)은 각 함수에서 이미지를 붙입니다
+    if spec.provider == "claudecode":
+        try:
+            return _chat_claudecode(spec, system, messages, on_text, effort, web, images or [], timeout, on_activity)
+        except ProviderError:
+            raise
+        except Exception as e:
+            raise ProviderError(f"[{spec}] 호출 실패: {type(e).__name__}: {e}") from e
+    handler = {
+        "claude": _chat_claude,
+        "openai": _chat_openai,
+        "gemini": _chat_gemini,
+        "echo": _chat_echo,
+        "freellm": _chat_freellm,
+    }.get(spec.provider, _chat_openai_compatible)
+    try:
+        if handler is _chat_claude:
+            return handler(spec, system, messages, on_text, effort)
+        return handler(spec, system, messages, on_text, effort, images=images or [])
+    except ProviderError:
+        raise
+    except ImportError as e:
+        raise ProviderError(f"패키지가 없어요: {e}. `pip install -r requirements.txt` 실행하세요.") from e
+    except Exception as e:  # SDK마다 예외 타입이 달라서 한 곳에서 정리
+        _maybe_cooldown(spec.provider, f"{type(e).__name__} {e}")
+        raise ProviderError(f"[{spec}] 호출 실패: {type(e).__name__}: {e}") from e
+
+
+_ALIVE_CACHE: dict[str, tuple[float, bool]] = {}
+
+
+def _freellm_alive() -> bool:
+    """FreeLLMAPI 가 켜져 있는지 (30초 캐시). 아무 HTTP 응답이라도 오면 켜진 것."""
+    import time
+
+    url = os.getenv("FREELLM_URL", "").rstrip("/")
+    hit = _ALIVE_CACHE.get(url)
+    if hit and hit[0] > time.time():
+        return hit[1]
+    try:
+        import requests
+
+        requests.get(url, timeout=1.5)
+        alive = True
+    except Exception:
+        alive = False
+    _ALIVE_CACHE[url] = (time.time() + 30, alive)
+    return alive
+
+
+# ── FreeLLMAPI (내 PC의 무료 AI 중계기) ───────────────────────────────────
+def _chat_freellm(spec, system, messages, on_text, effort, images=()):
+    """FREELLM_URL = FreeLLMAPI 루트 주소 (뒤에 /v1 붙이지 않음), FREELLM_API_KEY = 통합 키.
+    FREELLM_API = anthropic(기본, Claude Code 와 같은 방식) / openai"""
+    url = os.getenv("FREELLM_URL", "").rstrip("/")
+    key = os.getenv("FREELLM_API_KEY", "")
+    if not url or not key:
+        raise ProviderError("FREELLM_URL / FREELLM_API_KEY 가 .env 에 없어요.")
+    if url.endswith("/v1"):
+        url = url[:-3]  # 루트 주소를 써야 함 (SDK 가 /v1 을 붙임)
+    if os.getenv("FREELLM_API", "anthropic").lower() == "openai":
+        from openai import OpenAI
+
+        client = OpenAI(base_url=url + "/v1", api_key=key, max_retries=0)
+        msgs = [{"role": "system", "content": system}, *messages]
+        if images:
+            parts = [{"type": "text", "text": messages[-1]["content"]}] + [
+                {"type": "image_url", "image_url": {"url": u}} for u, _, _ in _data_urls(images)]
+            msgs = msgs[:-1] + [{"role": "user", "content": parts}]
+        r = client.chat.completions.create(model=spec.model, messages=msgs)
+        text = r.choices[0].message.content or ""
+    else:
+        import anthropic
+
+        # 통합 키를 두 방식(x-api-key, Bearer)으로 모두 보냄 — 중계기마다 받는 방식이 달라서
+        client = anthropic.Anthropic(base_url=url, api_key=key, max_retries=0,   # 사용량 바닥이면 재시도 없이 바로 빠짐
+                                     default_headers={"x-api-key": key, "Authorization": f"Bearer {key}"})
+        msgs = _with_images_claude(messages, images) if images else messages
+        r = client.messages.create(model=spec.model, max_tokens=8000, system=system, messages=msgs)
+        text = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+    if not text.strip():
+        raise ProviderError("FreeLLMAPI 가 빈 답을 돌려줬어요.")
+    return _emit(on_text, [text])
+
+
+def _emit(on_text: OnText | None, chunks: Iterable[str]) -> str:
+    out = []
+    for piece in chunks:
+        if piece:
+            out.append(piece)
+            if on_text:
+                on_text(piece)
+    return "".join(out)
+
+
+# ── Claude Code CLI (구독 로그인 그대로 사용) ──────────────────────────────
+CLAUDECODE_TIMEOUT = 900
+
+
+def _with_images_claude(messages: list[Message], images: list[str]) -> list[Message]:
+    import base64
+    import mimetypes
+
+    blocks = []
+    for path in images:
+        mt = mimetypes.guess_type(path)[0] or "image/png"
+        with open(path, "rb") as f:
+            data = base64.standard_b64encode(f.read()).decode()
+        blocks.append({"type": "image", "source": {"type": "base64", "media_type": mt, "data": data}})
+    blocks.append({"type": "text", "text": messages[-1]["content"]})
+    return messages[:-1] + [{"role": "user", "content": blocks}]
+
+
+def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), timeout=None, on_activity=None):
+    exe = claude_cli()
+    if not exe:
+        raise ProviderError(LOGIN_HELP)
+    # Windows 의 claude.cmd 는 명령줄 길이 제한(8191자)이 있어서 긴 내용은 전부 stdin 으로 보냅니다.
+    history = messages[:-1]
+    parts = ["<instructions>", system, "</instructions>"]
+    if history:
+        parts.append("<conversation_so_far>")
+        for m in history:
+            who = "사용자" if m["role"] == "user" else "나(에이전트)"
+            parts.append(f"[{who}]\n{m['content']}")
+        parts.append("</conversation_so_far>")
+    parts += ["<user_message>", messages[-1]["content"] if messages else "", "</user_message>"]
+    if images:
+        parts.append("<attached_images>\n사용자가 화면 캡처 이미지를 첨부했어요. 답하기 전에 Read 도구로 아래 파일을 전부 열어서 보세요:\n"
+                     + "\n".join(os.path.abspath(p) for p in images) + "\n</attached_images>")
+    prompt = "\n\n".join(parts)
+
+    cmd = [
+        exe, "-p",
+        "--system-prompt", "You are an AI agent inside the user's one-person company. Follow <instructions> exactly "
+                           "and reply only to <user_message>, in Korean unless asked otherwise.",
+        # stream-json: 글이 써지는 대로 + 검색어·읽는 사이트까지 실시간으로 받음
+        "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+        "--tools", ",".join((["WebSearch", "WebFetch"] if web else []) + (["Read"] if images else [])),
+        "--no-session-persistence",
+        "--strict-mcp-config",
+    ]
+    allowed = (["WebSearch", "WebFetch"] if web else []) + (["Read"] if images else [])
+    if allowed:
+        cmd += ["--allowedTools", ",".join(allowed)]
+    if images:
+        cmd += ["--add-dir", os.path.dirname(os.path.abspath(images[0]))]
+    if spec.model and spec.model != "default":
+        cmd += ["--model", spec.model]
+
+    import tempfile
+    import threading
+
+    # stderr 는 파일로 받음: 파이프로 받으면 윈도우에서 버퍼가 차서 멈출 수 있음
+    err_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err_file,
+                            text=True, encoding="utf-8", errors="replace", cwd=os.getcwd(),
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    limit = timeout or CLAUDECODE_TIMEOUT
+    timed_out = threading.Event()
+
+    def _kill():
+        timed_out.set()
+        proc.kill()
+
+    watchdog = threading.Timer(limit, _kill)
+    watchdog.daemon = True
+    watchdog.start()
+    try:
+        proc.stdin.write(prompt)
+        proc.stdin.close()
+        text, final, is_error = _read_stream_json(proc.stdout, on_text, on_activity)
+        proc.wait(timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    finally:
+        watchdog.cancel()
+        if proc.poll() is None:  # 중지 버튼 등으로 중간에 끊기면 claude 프로세스도 정리
+            proc.kill()
+    err_file.seek(0)
+    err = err_file.read().strip()[-600:]
+    err_file.close()
+    if timed_out.is_set():
+        raise ProviderError(f"Claude Code 가 {int(limit)}초 안에 답하지 않았어요. {err}".strip())
+    if proc.returncode != 0 or is_error:
+        detail = err or (final if is_error else "") or locals().get("text", "")[-300:] or "메시지 없음"
+        raise ProviderError(f"Claude Code 오류 (코드 {proc.returncode}): {detail}")
+    return (final or text).strip()
+
+
+def _read_stream_json(stdout, on_text, on_activity):
+    """Claude Code stream-json 한 줄씩 읽기 → (스트리밍된 글, 최종 답, 오류 여부).
+    on_activity 로 '검색어', '검색 결과 사이트', '읽는 페이지', '읽는 이미지' 를 실시간으로 알려줌."""
+    import json as _json
+    import re as _re
+
+    streamed, final, is_error = [], "", False
+    in_text_block = False
+    for line in iter(stdout.readline, ""):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            e = _json.loads(line)
+        except ValueError:
+            continue
+        t = e.get("type")
+        if t == "stream_event":
+            ev = e.get("event") or {}
+            if ev.get("type") == "content_block_start":
+                in_text_block = (ev.get("content_block") or {}).get("type") == "text"
+            elif ev.get("type") == "content_block_delta" and in_text_block:
+                piece = (ev.get("delta") or {}).get("text", "")
+                if piece:
+                    streamed.append(piece)
+                    if on_text:
+                        on_text(piece)
+        elif t == "assistant" and on_activity:
+            for b in (e.get("message") or {}).get("content", []):
+                if b.get("type") != "tool_use":
+                    continue
+                inp, name = b.get("input") or {}, b.get("name", "")
+                if name == "WebSearch":
+                    on_activity({"kind": "search", "query": inp.get("query", "")})
+                elif name == "WebFetch":
+                    on_activity({"kind": "fetch", "url": inp.get("url", "")})
+                elif name == "Read":
+                    on_activity({"kind": "read", "path": os.path.basename(str(inp.get("file_path", "")))})
+                elif name in ("Edit", "Write", "MultiEdit"):
+                    on_activity({"kind": "edit", "path": str(inp.get("file_path", "")).split("_cache")[-1][-80:]})
+                elif name in ("Grep", "Glob"):
+                    on_activity({"kind": "tool", "name": f"{name} {inp.get('pattern', '')}"[:80]})
+                else:
+                    on_activity({"kind": "tool", "name": name})
+        elif t == "user" and on_activity:
+            for b in (e.get("message") or {}).get("content", []):
+                if b.get("type") != "tool_result":
+                    continue
+                content = b.get("content")
+                body = content if isinstance(content, str) else " ".join(
+                    c.get("text", "") for c in (content or []) if isinstance(c, dict))
+                m = _re.search(r"Links:\s*(\[.*?\])\s*(\n|$)", body, _re.S)
+                if m:
+                    try:
+                        links = [{"title": x.get("title", ""), "url": x.get("url", "")} for x in _json.loads(m.group(1))][:6]
+                        on_activity({"kind": "results", "links": links})
+                    except ValueError:
+                        pass
+                elif b.get("is_error"):
+                    on_activity({"kind": "tool_error", "text": body[:160]})
+        elif t == "result":
+            final = e.get("result") or ""
+            is_error = bool(e.get("is_error")) or e.get("subtype") not in (None, "success")
+    return "".join(streamed), final, is_error
+
+
+# ── Claude (Anthropic) ────────────────────────────────────────────────────
+def _chat_claude(spec, system, messages, on_text, effort):
+    import anthropic
+
+    client = anthropic.Anthropic()
+    kwargs = dict(
+        model=spec.model,
+        max_tokens=64000,
+        system=system,
+        messages=messages,
+        thinking={"type": "adaptive"},
+        output_config={"effort": effort},
+    )
+    # 안전 분류기가 거절하면 서버가 다른 Claude 모델로 자동 재시도 (Claude API 전용)
+    if spec.model in ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"):
+        kwargs.update(betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+        stream_ctx = client.beta.messages.stream(**kwargs)
+    else:
+        stream_ctx = client.messages.stream(**kwargs)
+
+    with stream_ctx as stream:
+        text = _emit(on_text, stream.text_stream)
+        final = stream.get_final_message()
+    if final.stop_reason == "refusal":
+        raise ProviderError("Claude가 이 요청을 거절했어요. 질문을 바꿔 보세요.")
+    if final.stop_reason == "max_tokens":
+        text += "\n\n[답변이 길어서 잘렸어요]"
+    return text
+
+
+# ── OpenAI ────────────────────────────────────────────────────────────────
+def _data_urls(images) -> list[tuple[str, bytes, str]]:
+    """[(data URL, 원본 바이트, MIME)]"""
+    import base64
+    import mimetypes
+
+    out = []
+    for path in images or []:
+        mt = mimetypes.guess_type(path)[0] or "image/png"
+        with open(path, "rb") as f:
+            raw = f.read()
+        out.append((f"data:{mt};base64,{base64.standard_b64encode(raw).decode()}", raw, mt))
+    return out
+
+
+def _chat_openai(spec, system, messages, on_text, effort, images=()):
+    from openai import OpenAI
+
+    client = OpenAI()
+    if images:
+        last = messages[-1]
+        parts = [{"type": "input_text", "text": last["content"]}] + [
+            {"type": "input_image", "image_url": url} for url, _, _ in _data_urls(images)]
+        messages = messages[:-1] + [{"role": "user", "content": parts}]
+    stream = client.responses.create(
+        model=spec.model,
+        instructions=system,
+        input=messages,
+        stream=True,
+    )
+
+    def pieces():
+        for event in stream:
+            if event.type == "response.output_text.delta":
+                yield event.delta
+            elif event.type in ("response.failed", "error"):
+                raise ProviderError(f"OpenAI 오류: {event}")
+
+    return _emit(on_text, pieces())
+
+
+# ── 로컬 실행기 감지 ──────────────────────────────────────────────────────
+def local_url(name: str) -> str | None:
+    if name == "local":
+        return os.getenv("LOCAL_BASE_URL") or None
+    env, default = LOCAL_SERVERS[name]
+    return os.getenv(env) or default
+
+
+def probe_local(name: str, timeout: float = 1.5) -> list[str] | None:
+    """실행기가 켜져 있으면 로드된/설치된 모델 목록, 꺼져 있으면 None."""
+    url = local_url(name)
+    if not url:
+        return None
+    try:
+        import requests
+
+        r = requests.get(url.rstrip("/") + "/models", timeout=timeout)
+        r.raise_for_status()
+        return [m.get("id", "") for m in r.json().get("data", []) if m.get("id")]
+    except Exception:
+        return None
+
+
+def resolve_local(spec: ModelSpec) -> tuple[str, str]:
+    """(base_url, 모델 이름). 'local' 이면 켜져 있는 실행기를 찾습니다."""
+    names = [spec.provider] if spec.provider != "local" else (
+        ["local"] if os.getenv("LOCAL_BASE_URL") else list(LOCAL_SERVERS))
+    tried = []
+    for name in names:
+        models = probe_local(name)
+        tried.append(f"{name}({local_url(name)})")
+        if models is None:
+            continue
+        if spec.model in ("auto", ""):
+            if not models:
+                raise ProviderError(f"{name} 는 켜져 있지만 로드된 모델이 없어요. 모델을 먼저 로드하세요.")
+            return local_url(name), models[0]
+        if spec.provider != "local" or spec.model in models or not models:
+            return local_url(name), spec.model
+        # 이름이 정확히 안 맞으면 비슷한 것 찾기 (예: gemma3:12b ↔ gemma-3-12b-it)
+        key = "".join(ch for ch in spec.model.lower() if ch.isalnum())
+        close = [m for m in models if key[:6] and key[:6] in "".join(ch for ch in m.lower() if ch.isalnum())]
+        if close:
+            return local_url(name), close[0]
+        if spec.provider == "local" and len(names) > 1:
+            continue
+        raise ProviderError(f"{name} 에 '{spec.model}' 모델이 없어요. 있는 모델: {', '.join(models)}")
+    raise ProviderError("켜져 있는 로컬 AI 실행기를 못 찾았어요. LM Studio 서버를 켜거나 "
+                        f"(Developer 탭 → Start Server) 클라우드 모델을 쓰세요. 확인한 곳: {', '.join(tried)}")
+
+
+# ── OpenAI 호환 (로컬 실행기, Mistral, Groq, xAI) ─────────────────────────
+def _chat_openai_compatible(spec, system, messages, on_text, effort, images=()):
+    from openai import OpenAI
+
+    model = spec.model
+    if spec.provider in LOCAL_SERVERS or spec.provider == "local":
+        base_url, model = resolve_local(spec)
+        api_key = "local"
+    elif spec.provider in OPENAI_COMPATIBLE:
+        base_url, key_env = OPENAI_COMPATIBLE[spec.provider]
+        api_key = os.getenv(key_env)
+        if not api_key:
+            raise ProviderError(f"{key_env} 가 .env 에 없어요.")
+    else:
+        raise ProviderError(f"알 수 없는 제공자: {spec.provider}")
+    client = OpenAI(base_url=base_url, api_key=api_key)
+    msgs = [{"role": "system", "content": system}, *messages]
+    if images:
+        parts = [{"type": "text", "text": messages[-1]["content"]}] + [
+            {"type": "image_url", "image_url": {"url": url}} for url, _, _ in _data_urls(images)]
+        msgs = msgs[:-1] + [{"role": "user", "content": parts}]
+    try:
+        stream = client.chat.completions.create(model=model, messages=msgs, stream=True)
+    except Exception:
+        if not images:
+            raise
+        # 이미지 못 보는 모델이면 글만 보내고, 이미지를 못 봤다고 알려줌
+        note = f"\n\n[첨부 이미지 {len(images)}장은 이 모델이 볼 수 없어요. 이미지 내용은 판단하지 마세요.]"
+        msgs = msgs[:-1] + [{"role": "user", "content": messages[-1]["content"] + note}]
+        stream = client.chat.completions.create(model=model, messages=msgs, stream=True)
+
+    def pieces():
+        for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+
+    return _emit(on_text, pieces())
+
+
+# ── Google Gemini ─────────────────────────────────────────────────────────
+def _chat_gemini(spec, system, messages, on_text, effort, images=()):
+    from google import genai
+    from google.genai import types
+
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise ProviderError("GEMINI_API_KEY 가 .env 에 없어요.")
+    client = genai.Client(api_key=api_key)
+    contents = [
+        types.Content(
+            role="model" if m["role"] == "assistant" else "user",
+            parts=[types.Part(text=m["content"])],
+        )
+        for m in messages
+    ]
+    if images:
+        contents[-1].parts.extend(types.Part.from_bytes(data=raw, mime_type=mt) for _, raw, mt in _data_urls(images))
+    stream = client.models.generate_content_stream(
+        model=spec.model,
+        contents=contents,
+        config=types.GenerateContentConfig(system_instruction=system),
+    )
+    return _emit(on_text, (chunk.text for chunk in stream))
+
+
+# ── 테스트용 (API 키 없이 동작 확인) ──────────────────────────────────────
+def _chat_echo(spec, system, messages, on_text, effort, images=()):
+    last = messages[-1]["content"] if messages else ""
+    if "JSON" in system and "agent" in system:
+        reply = '{"agent": "developer", "reason": "테스트 라우팅"}'
+    else:
+        reply = f"[echo] {last}"
+    return _emit(on_text, [reply])
