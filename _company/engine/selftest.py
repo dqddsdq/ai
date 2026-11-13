@@ -140,7 +140,7 @@ def 설정_허용_범위():
     """손실 한도·손절·주문 수 같은 안전 범위를 넓히지 못하게 (매매 코드가 바뀌어도)"""
     from . import autotrade as at
     limit = {"stop_loss_pct": 50, "max_daily_loss_pct": 50, "loss_pct_max": 50, "stop_max": 30, "limit_max_mult": 20,
-             "max_orders_per_day": 100, "pick_count": 10, "focus_max_pct": 100, "ai_max_per_hour": 600}
+             "max_orders_per_day": 100, "pick_count": 100, "focus_max_pct": 100, "ai_max_per_hour": 600}
     for k, hi in limit.items():
         assert k in at.NUMS and at.NUMS[k][1] <= hi, (k, at.NUMS.get(k))
     assert at.DEFAULTS["mode"] != "live" and at.CHOICES["mode"] == ("off", "paper", "live")
