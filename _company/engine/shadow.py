@@ -1,6 +1,7 @@
 """🧪 그림자 가상 매매 — 여러 규칙 조합을 실전과 동시에 가상으로 돌려 보고, 확실히 나은 조합을 실전 규칙으로 자동 교체.
 
-- 조합: '현재'(지금 실전 규칙) + 백테스트 상위 조합 + 격자 주변 조합 → 약 20개 (N_VARIANTS)
+- 조합: '현재'(지금 실전 규칙) + 백테스트 상위 조합 + 격자 주변 조합 → 설정 shadow_count 개 (기본 1000, 최대 1000)
+- 조합이 많으면 한 바퀴 STEP_BUDGET_SEC 안에서만 돌아가며 처리 · 파일 저장은 SAVE_EVERY_SEC 마다 (매매 루프 안 느려지게)
 - 실전 엔진이 매 바퀴 찾은 후보·시세를 그대로 받아서 모든 조합이 공유 (추가 조회는 보유 종목 시세 한 번에 묶어서만, AI 호출 없음)
 - 체결은 실전 가상 매매와 같게: 0.1% 불리한 체결·수수료·세금·손해 본 종목 재진입 금지·공시 악재 제외
 - 교체 조건 (조합이 많아 운으로 1등이 나오는 걸 막으려고 강화):
@@ -10,6 +11,7 @@
 - '현재' 조합 거래만 '비슷한 거래' 표본에 가중치 0.5 로 들어감 (tradelearn.estimate)
 - 30% 초과 급등 검증 조합(HOT)은 별도 보관 · 교체·정리 대상 아님
 - 급락 검증 조합(FLASH: 급락청산·급락반등)도 별도 보관 · 교체·정리 대상 아님 · 20건마다 텔레그램 보고
+- 💰 100만 원 가상 계좌: '현재' 조합 손익을 누적(규칙 바뀌어도 이어짐) · 확정 +10% 넘으면 텔레그램 알림만 (실전 자동 전환 없음)
 기록: _cache/shadow_US.json / shadow_KR.json
 """
 
@@ -43,8 +45,12 @@ LABEL = {"stop_loss_pct": "손절", "partial_tp_pct": "나눠팔기", "take_prof
          "surge_max_change_pct": "급등최대", "surge_volume_ratio": "거래량배수", "pre_volume_ratio": "프리장거래량",
          "swing_stop_pct": "스윙손절", "swing_trail_pct": "스윙고점대비", "news_unknown_ratio": "이유모를때금액",
          "swing_trail_vol": "스윙변동성기준"}
-N_VARIANTS = 20        # 일반 조합 목표 개수
-N_MAX = 23             # 이보다 많으면 거래 적은 조합부터 정리
+N_VARIANTS = 60        # 일반 조합 목표 개수 기본값 (설정 shadow_count 가 있으면 그 값)
+N_MAX = 80             # 기본 목표일 때 이보다 많으면 거래 적은 조합부터 정리
+N_HARD_MAX = 1000      # shadow_count 최대
+STEP_BUDGET_SEC = 1.5  # 한 바퀴에 일반 조합 처리에 쓸 최대 시간 (넘으면 다음 바퀴에 이어서 · 매매 루프 안 느려지게)
+SAVE_EVERY_SEC = 60    # 조합이 많을 때 파일 저장 간격 (메모리엔 바로 반영)
+_last_save: dict = {}
 PROMOTE_N = 20         # 교체 후보가 되려면 끝난 거래 최소 건수
 HOLDOUT = 0.3          # 뒤쪽(최근) 검증 비율
 CMP_MIN = 5            # 같은 기간 비교 대상('현재'·실전) 최소 건수
@@ -61,7 +67,7 @@ FLASH = [{"key": "FX", "name": "급락청산 (현재 규칙+급락 매도)", "or
          {"key": "FR", "name": "급락반등 진입", "origin": "1~3분 -5%·거래량 3배 뒤 반등 진입 · 손절은 급락 저점 아래"}]
 FLASH_REPORT_EVERY = 20
 FLASH_WINDOWS = (5, 15, 30)   # 신호 뒤 최고/최저 기록 구간(분)
-FLASH_MAX_SYMS = 12           # 한 바퀴에 반등을 살펴볼 최대 종목 수 (조회 줄이기)
+FLASH_MAX_SYMS = 10_000       # 한 바퀴에 반등을 살펴볼 종목 수 (제한 없음 · 조회 속도는 toss.py 가 지킴)
 REB_TP_PCT, REB_TRAIL_PCT, REB_MAX_MIN = 3.0, 2.0, 30   # 반등 진입 익절·고점 대비·최대 보유(분)
 _bars_cache: dict = {}
 
@@ -84,6 +90,9 @@ def _load(m: str) -> dict:
             v = _new_variant(h["name"], dict(h["params"]), "30% 초과 급등 검증")
             v.update(key=h["key"], reported=0)
             d["hot"].append(v)
+    a = d.get("acct")
+    if not isinstance(a, dict) or not a.get("start"):   # 💰 실전 규칙('현재') 따라가는 100만 원 가상 계좌
+        d["acct"] = {"start": _now(), "base": VIRTUAL, "realized": 0.0, "unreal": 0.0, "n": 0, "alerted": False, "t": ""}
     if not isinstance(d.get("flash"), list):
         d["flash"] = []
     have = {v.get("key") for v in d["flash"]}
@@ -95,15 +104,41 @@ def _load(m: str) -> dict:
     return d
 
 
-def _save(m: str, d: dict) -> None:
+def _target(c: dict) -> int:
+    """일반 조합 목표 개수 (설정 shadow_count, 2~1000)"""
+    try:
+        n = int(c.get("shadow_count", N_VARIANTS))
+    except (TypeError, ValueError):
+        n = N_VARIANTS
+    return max(2, min(N_HARD_MAX, n))
+
+
+def _cap_n(c: dict) -> int:
+    """이보다 많으면 거래 적은 조합부터 정리"""
+    return _target(c) + (N_MAX - N_VARIANTS)
+
+
+def _save(m: str, d: dict, force: bool = True) -> None:
+    n = len(d["variants"])
+    if not force and n > N_MAX and time.time() - _last_save.get(m, 0) < SAVE_EVERY_SEC:
+        return   # 조합이 많으면 파일 쓰기는 가끔만 (store 메모리엔 이미 반영됨)
+    _last_save[m] = time.time()
+    keep = max(100, min(3000, 180_000 // max(1, n)))   # 조합이 많으면 일반 조합 거래 기록을 줄여 파일 크기 제한
     for v in d.get("flash", []):
         v["signals"] = v.get("signals", [])[-300:]
     for v in d["variants"] + d.get("hot", []) + d.get("flash", []):
-        v["trades"] = v["trades"][-(1000 if v.get("key") else 300):]
+        v["trades"] = v["trades"][-(3000 if _is_base(v) or v.get("key") else keep):]
     d["promotions"] = d["promotions"][-50:]
-    d["retired"] = d["retired"][-300:]
+    d["retired"] = d["retired"][-max(300, n * 2):]
     d["pruned"] = d["pruned"][-30:]
     store.save(_file(m), d)
+
+
+def flush() -> None:
+    """앱 다시 켜기 전: 가끔만 쓰던 그림자 매매 기록을 지금 디스크에 씀"""
+    with _lock:
+        for m in list(_last_save):
+            _save(m, _load(m), force=True)
 
 
 def _now() -> str:
@@ -189,8 +224,9 @@ def _is_base(v: dict) -> bool:
     return v.get("name") == "현재"
 
 
-def _fill(d: dict, c: dict, market: str, target: int = N_VARIANTS) -> int:
+def _fill(d: dict, c: dict, market: str, target: int | None = None) -> int:
     """조합을 target 개까지 채움: 백테스트 상위 조합 먼저, 그다음 격자 주변 조합 (예전에 뺀 조합은 다시 안 넣음)"""
+    target = target or _target(c)
     base = base_params(c)
     have = {_phash(v["params"], c) for v in d["variants"]} | set(d["retired"])
     added = 0
@@ -209,9 +245,10 @@ def _fill(d: dict, c: dict, market: str, target: int = N_VARIANTS) -> int:
             have.add(_phash(p, c)); added += 1
     rnd = random.Random(_hash(base) + market + str(d["seq"]))
     tries = 0
-    while len(d["variants"]) < target and tries < 400:
+    limit = max(400, target * 6)   # 목표가 크면 시도도 늘림 (1개 → 2개 → 3개 값 바꾼 조합 순)
+    while len(d["variants"]) < target and tries < limit:
         tries += 1
-        p = _neighbor(base, rnd, 1 if tries <= 80 else 2, c)
+        p = _neighbor(base, rnd, 1 if tries <= 80 else 2 if tries <= 80 + target * 2 else 3, c)
         if p and _phash(p, c) not in have:
             d["seq"] += 1
             d["variants"].append(_new_variant(f"실험{d['seq']}", p, "격자 주변 조합"))
@@ -257,12 +294,13 @@ def ensure(c: dict, market: str, seeds: list[dict] | None = None, force: bool = 
                     d["variants"].append(_new_variant(f"백테스트{d['seq']}", p, "백테스트 추천"))
                     have.add(_phash(p, c)); changed = True
         fk = f"{bh}:{len(d['variants'])}:{len(d['retired'])}"
-        if len(d["variants"]) < N_VARIANTS - 1 and d.get("fill_key") != fk:   # 같은 상태에서 채우기 실패를 매 바퀴 반복 안 함
+        fk += f":{_target(c)}"
+        if len(d["variants"]) < _target(c) - 1 and d.get("fill_key") != fk:   # 같은 상태에서 채우기 실패를 매 바퀴 반복 안 함
             _fill(d, c, market)
-            d["fill_key"] = f"{bh}:{len(d['variants'])}:{len(d['retired'])}"
+            d["fill_key"] = f"{bh}:{len(d['variants'])}:{len(d['retired'])}:{_target(c)}"
             changed = True
-        if len(d["variants"]) > N_MAX:
-            _shrink(d, N_MAX); changed = True
+        if len(d["variants"]) > _cap_n(c):
+            _shrink(d, _cap_n(c)); changed = True
         if changed:
             d["base_hash"] = bh
             _save(market, d)
@@ -305,7 +343,16 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
     specs = {h["key"]: h for h in HOT}
     with _lock:
         d = _load(market)
-        for v in d["variants"] + d["hot"]:
+        # '현재'·급등 검증은 매 바퀴, 나머지는 시간 제한 안에서 돌아가며 (다음 바퀴에 이어서)
+        first = [v for v in d["variants"] if _is_base(v)] + d["hot"]
+        rest = [v for v in d["variants"] if not _is_base(v)]
+        k0 = int(d.get("rr", 0)) % len(rest) if rest else 0
+        order = first + rest[k0:] + rest[:k0]
+        t0, done = time.monotonic(), 0
+        for v in order:
+            if done >= len(first) and time.monotonic() - t0 > STEP_BUDGET_SEC:
+                break
+            done += 1
             vc = {**c, **v["params"]}
             v_cands = cands
             if v.get("key"):   # 급등 검증 조합: 자기 상승률 구간의 30% 초과 후보만
@@ -350,6 +397,10 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 net = px * (1 - sc) / (p["avg"] * (1 + bc)) - 1
                 rec = {"t": _now(), "sym": sym, "style": p["style"], "qty": qty, "pnl_pct": round(net * 100, 2),
                        "pnl_krw": round(net * p["avg"] * (1 + bc) * qty * f), "why": why[:60], "final": side == "SELL"}
+                if _is_base(v):   # 💰 누적 계좌: '현재' 조합의 확정 손익만 쌓음 (규칙이 바뀌어도 이어짐)
+                    d["acct"]["realized"] = float(d["acct"].get("realized", 0)) + rec["pnl_krw"]
+                    if side == "SELL":
+                        d["acct"]["n"] = int(d["acct"].get("n", 0)) + 1
                 if side == "SELL":
                     if p.get("cost0"):   # 나눠 판 것까지 합친 거래 전체 수익률
                         rec["trade_pct"] = round(((p.get("got", 0) + got) / p["cost0"] - 1) * 100, 2)
@@ -372,10 +423,10 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
             for sym, cd in sorted(v_cands.items(), key=lambda kv: -kv[1]["est"]["ev"]):
                 if str((v.get("no_rebuy") or {}).get(sym) or "") >= session_day:
                     continue
-                if sym in v["pos"] or len(v["pos"]) >= c["pick_count"] or v["buys_today"] >= c["max_orders_per_day"]:
+                if sym in v["pos"]:   # 🧪 가상이라 보유 종목 수·하루 매수 횟수 제한 없음
                     continue
                 q = quotes.get(sym)
-                if not q or not market_open(sym, "BUY"):
+                if not q or minutes is None:   # 장이 열려 있을 때만 (시세가 실제 값이어야 해서)
                     continue
                 ft = cd.get("features") or {}
                 nw = cd.get("news") or {}
@@ -390,11 +441,9 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     need_ratio = vc["pre_volume_ratio"] if ft.get("pre") else vc["surge_volume_ratio"]
                     if (ft.get("ratio") or 0) < need_ratio:
                         continue
-                    if minutes is None or minutes > 360:
-                        continue
                 lim = q["price"] * (1 + vc["limit_slip_pct"] / 100) if cd["style"] == "surge" else q["price"]
                 px = tl.fill_px(vc, q["price"], "BUY", lim)
-                qty = int(min(per_pos * n_ratio, v["cash"]) // (px * f))
+                qty = int(per_pos * n_ratio // (px * f))   # 🧪 가상 현금 부족 제한 없음 (종목당 금액은 모든 조합 같게 → 비교 공정)
                 if qty < 1:
                     continue
                 cost = qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
@@ -404,18 +453,62 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                                  "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost, "got": 0.0,
                                  "ft": {**{k: ft.get(k) for k in ("change", "ratio", "pre", "r20", "rsi") if ft.get(k) is not None},
                                         "style": cd["style"], "mkt": market}}
+        d["rr"] = (k0 + max(0, done - len(first))) % len(rest) if rest else 0
         msgs = _hot_reports(d, market)
+        try:   # 💰 100만 원 가상 계좌 평가·알림 (오류가 나도 그림자 매매는 그대로)
+            msgs += _acct_step(d, c, market, quotes, 1 if market == "KR" else fx)
+        except Exception as e:
+            print(f"🧪 가상 계좌 계산 오류: {type(e).__name__}: {e}")
         try:   # 📉 급락 신호 검증 (오류가 나도 기존 그림자 매매는 그대로)
             _flash_step(d, c, market, cands, hot, quotes, minutes, exits_only, signal_surge, market_open, session_day,
                         1 if market == "KR" else fx)
             msgs += _flash_reports(d, market)
         except Exception as e:
             print(f"🧪 급락 검증 오류: {type(e).__name__}: {e}")
-        _save(market, d)
+        _save(market, d, force=bool(msgs))   # 알림 있으면 바로 저장 (보고 표시 중복 방지)
     if msgs:
         from . import notify
         for m in msgs:
             notify.send(m)
+
+
+# ── 💰 100만 원 가상 계좌 (실전 규칙 '현재' 조합 누적 수익률) ──
+ACCT_ALERT_PCT = 10.0    # 확정 누적 수익률이 이 이상이면 텔레그램 알림 (실전은 안 켬)
+ACCT_REARM_PCT = 9.0     # 이 아래로 내려가면 다시 알림 가능 (오르내림 반복 알림 막기)
+
+
+def _acct_view(a: dict) -> dict:
+    base = float(a.get("base") or VIRTUAL)
+    real, unreal = float(a.get("realized", 0)), float(a.get("unreal", 0))
+    return {"start": a.get("start", ""), "base": round(base), "realized_krw": round(real), "unreal_krw": round(unreal),
+            "equity": round(base + real + unreal), "realized_pct": round(real / base * 100, 2),
+            "total_pct": round((real + unreal) / base * 100, 2), "n": int(a.get("n", 0)),
+            "alert_pct": ACCT_ALERT_PCT, "alerted": bool(a.get("alerted")), "t": a.get("t", "")}
+
+
+def _acct_step(d: dict, c: dict, market: str, quotes: dict, f: float) -> list[str]:
+    """'현재' 보유 종목 평가손익 갱신 · 확정 누적 +10% 넘으면 한 번 알림 (실전 전환은 사장님이 화면에서 직접)"""
+    a = d["acct"]
+    base_v = next((v for v in d["variants"] if _is_base(v)), None)
+    un = 0.0
+    if base_v:
+        sc, bc = tl.side_cost(c, market, "SELL") / 100, tl.side_cost(c, market, "BUY") / 100
+        for sym, p in base_v["pos"].items():
+            q = quotes.get(sym)
+            px = q["price"] if q else p["avg"]
+            un += p["qty"] * (px * (1 - sc) - p["avg"] * (1 + bc)) * f
+    a["unreal"], a["t"] = round(un), _now()
+    v = _acct_view(a)
+    if v["realized_pct"] < ACCT_REARM_PCT:
+        a["alerted"] = False
+    if a.get("alerted") or v["realized_pct"] < ACCT_ALERT_PCT:
+        return []
+    a["alerted"] = True
+    flag = '🇺🇸' if market == 'US' else '🇰🇷'
+    return [f"{flag} [💰 그림자 100만 원 계좌] 확정 누적 수익률 {v['realized_pct']:+.2f}% 달성 (기준 {ACCT_ALERT_PCT:g}%)\n"
+            f"시작 {v['start'][:10]} · 끝난 거래 {v['n']}건 · 확정 {v['realized_krw']:+,}원 · 보유 평가 포함 {v['total_pct']:+.2f}%\n"
+            f"(실전 규칙 '현재' 조합 기준 · 수수료·세금·미끄러짐 뺀 값)\n"
+            f"※ 실전은 자동으로 켜지지 않아요. 확인 후 화면에서 직접 켜 주세요."]
 
 
 # ── 📉 급락 신호 검증 (가상 전용) ──
@@ -502,7 +595,7 @@ def _flash_track(vs: list[dict]) -> None:
                     s["after"][str(w)] = None
                 continue
             ready = [w for w in todo if el >= w * 60 + 60]
-            if not ready or (s["sym"] not in fetched and len(fetched) >= 6):
+            if not ready:
                 continue
             fetched.add(s["sym"])
             bs = _bars(s["sym"], 200)
@@ -542,9 +635,7 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
             if p["style"] != "surge" or p.get("partial") or not p.get("cost0") or sym in fx_v["pos"] or fx_v["copied"].get(sym) == mark:
                 continue
             fx_v["copied"][sym] = mark
-            if fx_v["cash"] < p["cost0"]:
-                continue
-            fx_v["cash"] -= p["cost0"]
+            fx_v["cash"] -= p["cost0"]   # 🧪 가상 현금 제한 없음
             fx_v["pos"][sym] = {**{k: p[k] for k in ("qty", "avg", "style", "buy_day", "sday", "cost0") if k in p},
                                 "high": p["avg"], "partial": False, "got": 0.0, "ets": now}
     # 매도
@@ -578,7 +669,7 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
             if side in ("SELL", "SELL_PART") and market_open(sym, "SELL"):
                 _vsell(v, sym, side, price, why, vc, c, market, f, session_day)
     # FR 매수
-    if not exits_only and minutes is not None and minutes <= 360:
+    if not exits_only and minutes is not None:
         vc = {**c, **fr_v["params"]}
         syms = [s for s in sorted(watch, key=lambda s: -watch[s]) if s not in fr_v["pos"]][:FLASH_MAX_SYMS]
         miss = [s for s in syms if s not in quotes]
@@ -589,20 +680,18 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
                 pass
         per_pos = VIRTUAL / max(1, int(c["pick_count"]))
         for sym in syms:
-            if len(fr_v["pos"]) >= c["pick_count"] or fr_v["buys_today"] >= c["max_orders_per_day"]:
-                break
             if str((fr_v.get("no_rebuy") or {}).get(sym) or "") >= session_day:
                 continue
             q = quotes.get(sym)
             nw = (cands.get(sym) or hot.get(sym) or {}).get("news") or {}
-            if not q or nw.get("pending") or (nw.get("ok") and nw.get("bad")) or not market_open(sym, "BUY"):
+            if not q or nw.get("pending") or (nw.get("ok") and nw.get("bad")):
                 continue
             sig = picker.flash_rebound_signal(_done(sym), q["price"])
             if not sig or fr_v["seen"].get(sym) == sig["crash_t"]:
                 continue
             fr_v["seen"][sym] = sig["crash_t"]   # 같은 급락으로 두 번 안 삼
             px = tl.fill_px(_slip(vc), q["price"], "BUY")
-            qty = int(min(per_pos, fr_v["cash"]) // (px * f))
+            qty = int(per_pos // (px * f))
             if qty < 1:
                 continue
             cost = qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
@@ -665,7 +754,7 @@ def hot_cands(c: dict, market: str, fx: float, log=print) -> dict:
     실전 설정은 안 바꿈 (이 함수 안에서만 쓰는 복사본)"""
     from . import news, picker
     lo = min(h["lo"] for h in HOT)
-    scfg = {**c, "surge_min_change_pct": lo, "surge_max_change_pct": 10000, "pick_count": 6,
+    scfg = {**c, "surge_min_change_pct": lo, "surge_max_change_pct": 10000, "pick_count": 1000,
             "max_order_krw": VIRTUAL / max(1, int(c["pick_count"])), "usd_krw": fx}   # 가격 상한은 가상 종목당 금액
     r = picker.surge_scan(scfg, log=log, exclude=set(c.get("exclude") or []))
     out = {}
@@ -743,9 +832,10 @@ def overview(c: dict, market: str) -> dict:
            for v in d.get("hot", [])]
     flash = [{"id": v["id"], "name": v["name"], "origin": v["origin"], "diff": "급락 신호 검증 (자동 교체 안 함)",
               "signals": len(v.get("signals", [])), **stats(v, 3650), **summary(v)} for v in d.get("flash", [])]
+    n_rows, rows = len(rows), rows[:50]   # 화면엔 위쪽 50개만 (조합이 많아도 응답 가볍게)
     lines = [f"{r['name']}: {r['n_all']}건 · 승률 {r['win_all']}% · 평균 {r['avg_all']:+.2f}% · 최대 손실 {r['worst']:+.2f}%" for r in rows]
-    return {"variants": rows, "hot": hot, "flash": flash, "promotions": d["promotions"][-10:][::-1], "pruned": d["pruned"][-10:][::-1],
-            "summary": lines, "count": len(rows),
+    return {"variants": rows, "total": n_rows,"hot": hot, "flash": flash, "acct": _acct_view(d["acct"]), "promotions": d["promotions"][-10:][::-1], "pruned": d["pruned"][-10:][::-1],
+            "summary": lines, "count": n_rows,
             "rule": f"교체: 조합별 {max(PROMOTE_N, int(c.get('promote_min_trades', 15)))}건↑ · 앞 {round((1 - HOLDOUT) * 100)}%로 1개 선정 → "
                     f"뒤 {round(HOLDOUT * 100)}%(최근)에서도 '현재'·실전보다 평균 수익(수수료 뺀) 높고 플러스일 때만 · "
                     f"정리: {PRUNE_N}건↑ 조합 중 하위 {round(PRUNE_FRAC * 100)}% 교체"}
@@ -848,6 +938,6 @@ def add_seeds(c: dict, market: str, seeds: list[dict]) -> int:
         if not new:
             return 0
         d["variants"] += new
-        _shrink(d, N_MAX, keep=new)
+        _shrink(d, _cap_n(c), keep=new)
         _save(market, d)
         return len(new)

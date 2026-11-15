@@ -256,9 +256,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/" or path == "/index.html":
             return self._static("index.html", "text/html; charset=utf-8")
         if path in ("/api/autotrade", "/api/charts/auto"):   # ?market=US|KR (없으면 첫 시장)
-            qm = dict(parse_qsl(urlparse(self.path).query)).get("market")
-            with at.in_market(qm):
-                return self._json(at.overview() if path == "/api/autotrade" else {"items": at.auto_charts()})
+            qd = dict(parse_qsl(urlparse(self.path).query))
+            qm = qd.get("market")
+            with at.in_market(qm):   # open=펼친 종목 (그 종목만 차트 그림)
+                return self._json(at.overview() if path == "/api/autotrade" else {"items": at.auto_charts(open_sym=qd.get("open", ""))})
         if path == "/api/chart":   # 📊 차트 그리기 (자동매매가 가진 종목이면 산 가격·손절·나눠 팔기선 표시)
             q = dict(parse_qsl(urlparse(self.path).query))
             try:
@@ -353,6 +354,8 @@ class Handler(BaseHTTPRequestHandler):
             fn = {"apply": im.apply, "rollback": im.rollback, "discard": im.discard}[path.rsplit("/", 1)[1]]
             res = fn(str(body.get("id", "")))
             log(f"🛠️ 개선 {path.rsplit('/', 1)[1]}: {res.get('message', res)}")
+            if res.get("ok") and (res.get("needs_restart") or "다시 켜야" in str(res.get("message", ""))):   # 코드가 바뀌면(적용·되돌리기) 바퀴가 끝난 뒤 자동으로 다시 켜기
+                threading.Thread(target=_restart, daemon=True, name="restart").start()
             return self._json(res)
         if path == "/api/tools/approve":
             return self._json(tl.approve(str(body.get("id", ""))))
@@ -597,20 +600,84 @@ def _phone_secret(name: str, make) -> str:
     return v
 
 
+# 'AI 시작.bat' 없이 켰을 때 대신 돌봐 주는 감시 프로세스 (엔진 파일을 안 불러옴 → 고친 코드가 망가져도 돎)
+# bat 과 같은 규칙: 켜기 직전마다 지킴이(guard.py) → 종료 코드 3 이면 바로 다시, 오류면 10초 뒤 다시, 0 이면 끝
+_SUPERVISOR = "\n".join([
+    "import os, subprocess, sys, time",
+    "guard, cmd = sys.argv[1], sys.argv[2:]",
+    "first, fails = True, 0",
+    "try:",
+    "    while True:",
+    "        subprocess.call([sys.executable, guard])",
+    "        env = dict(os.environ, CAI_SUPERVISED='1')",
+    "        if first:",
+    "            env['CAI_HANDOFF'] = '1'",
+    "        first, t0 = False, time.time()",
+    "        rc = subprocess.call(cmd, env=env)",
+    "        if rc == 0:",
+    "            break",
+    "        if rc == 3:",
+    "            fails = 0",
+    "            continue",
+    "        fails = fails + 1 if time.time() - t0 < 60 else 1",
+    "        if fails >= 10:",
+    "            print('[자동 재시작] 앱이 계속 바로 꺼져서 멈춰요 — 직접 다시 켜 주세요')",
+    "            break",
+    "        print('[자동 재시작] 앱이 꺼져서 10초 뒤 다시 켜요')",
+    "        time.sleep(10)",
+    "except KeyboardInterrupt:",
+    "    pass",
+])
+_restarting = threading.Lock()
+
+
+def _spawn_next() -> bool:
+    """새 프로세스(감시 프로세스 → 앱)를 먼저 띄움. 새 앱은 옛 앱이 잠금을 풀 때까지 기다렸다가 켜짐"""
+    import subprocess
+    import sys
+    args = [a for a in sys.argv[1:]] or ["web"]
+    if "--no-browser" not in args:   # 다시 켤 때 브라우저 탭을 또 열지 않음
+        args.append("--no-browser")
+    cmd = [sys.executable, "-m", "engine"] + args
+    guard = str(Path(__file__).resolve().parent / "guard.py")
+    p = subprocess.Popen([sys.executable, "-c", _SUPERVISOR, guard] + cmd, cwd=str(ag.COMPANY_DIR))
+    time.sleep(2)
+    return p.poll() is None   # 감시 프로세스가 살아 있어야 옛 앱을 끔
+
+
 def _restart() -> None:
-    """자동 개선을 적용한 뒤 앱 다시 켜기 ('AI 시작.bat' 이 종료 코드 3을 보면 바로 다시 켬)"""
-    if os.environ.get("CAI_SUPERVISED") != "1":
-        log("🛠️ 코드가 바뀌었어요 — 'AI 시작.bat' 으로 켜야 자동으로 다시 켜져요. 지금은 직접 다시 켜 주세요")
-        return
-    log("🔄 자동 개선 적용 → 자동매매 바퀴가 끝나면 앱을 다시 켜요")
-    at.pause_for_restart()
+    """코드 적용 뒤 앱 다시 켜기: 주문·체결 중이면 바퀴가 끝날 때까지 대기 → 상태 저장 → (bat 이면 종료 코드 3 / 아니면 새 프로세스 먼저) → 옛 프로세스 종료"""
+    if not _restarting.acquire(blocking=False):
+        return   # 이미 다시 켜는 중
+    supervised = os.environ.get("CAI_SUPERVISED") == "1"
+    log("🔄 코드 적용 → 주문·체결 처리가 끝나고 자동매매 바퀴가 끝나면 앱을 다시 켜요")
+    at.wait_idle_for_restart(log)
+    with at._lock:   # 화면 버튼 등 다른 곳의 기록·주문 처리도 끝난 뒤 저장
+        try:
+            info = at.save_for_restart()
+            if info.get("unsaved"):
+                log(f"💾 일부 기록을 못 썼어요({', '.join(info['unsaved'])}) — 백업에서 이어받아요")
+        except Exception as e:
+            log(f"💾 다시 켜기 전 저장 오류: {type(e).__name__}: {e}")
     try:   # '자동 개선 적용' 같은 알림이 텔레그램으로 다 나간 뒤에 끄기
         from . import notify
         notify.flush(15)
     except Exception:
         pass
+    if not supervised:
+        try:
+            ok = _spawn_next()
+        except Exception as e:
+            ok = False
+            log(f"🔄 새 프로세스 띄우기 실패: {type(e).__name__}: {e}")
+        if not ok:
+            log("🛠️ 자동으로 다시 켜지 못했어요 — 자동매매는 계속 돌고, 코드 변경은 직접 다시 켜면 적용돼요")
+            at.resume_after_pause(log)
+            _restarting.release()
+            return
+        log("🔄 새 프로세스를 띄웠어요 → 지금 앱을 끄면 새 앱이 이어받아요")
     time.sleep(1)
-    os._exit(3)
+    os._exit(3 if supervised else 0)
 
 
 _instance_lock = []
@@ -656,14 +723,33 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     public_ip = ""
     if ip and not _private_ip(ip):  # PC 가 인터넷 공개 주소를 직접 받는 경우 → 폰 접속을 열면 전 세계에 노출
         public_ip, ip = ip, ""
-    if not _single_instance():   # 앱이 두 개 켜지면 자동매매도 두 개가 돌아서 같은 기록 파일을 동시에 씀 → 막기
+    handoff = os.environ.pop("CAI_HANDOFF", "") == "1"   # 자동 재시작으로 띄운 새 프로세스
+    got = _single_instance()
+    if not got and handoff:   # 옛 앱이 상태 저장 후 꺼질 때까지 기다림 (잠금은 그대로 → 동시에 두 개는 안 돎)
+        print("🔄 이전 앱이 꺼지기를 기다리는 중...")
+        for _ in range(180):
+            time.sleep(1)
+            if _single_instance():
+                got = True
+                break
+    if not got:   # 앱이 두 개 켜지면 자동매매도 두 개가 돌아서 같은 기록 파일을 동시에 씀 → 막기
+        if handoff:
+            raise SystemExit(4)   # 감시 프로세스가 10초 뒤 다시 시도
         print(f"이미 다른 창에서 켜져 있어요. 브라우저로 {url} 을 엽니다.")
         if open_browser:
             webbrowser.open(url)
         return
-    try:
-        server = ThreadingHTTPServer(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
-    except OSError:  # 이미 켜져 있음 (AI 시작.bat 두 번 실행 등)
+    server = None
+    for _ in range(30 if handoff else 1):   # 재시작이면 옛 앱의 주소가 풀릴 때까지 잠깐 다시 시도
+        try:
+            server = ThreadingHTTPServer(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
+            break
+        except OSError:
+            if handoff:
+                time.sleep(1)
+    if server is None:  # 이미 켜져 있음 (AI 시작.bat 두 번 실행 등)
+        if handoff:
+            raise SystemExit(4)
         print(f"이미 다른 창에서 켜져 있어요. 브라우저로 {url} 을 엽니다.")
         if open_browser:
             webbrowser.open(url)

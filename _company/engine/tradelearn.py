@@ -76,6 +76,21 @@ def _strategy(t_or_f: dict) -> str:
     return ""
 
 
+REB_TAG, PLAIN_TAG = "rebound", "plain"   # 🔄 2호 진입 방식 태그: 반등 확인 진입 / 기존 진입
+REB_GOAL_N = 20                            # 반등 진입이 이만큼 끝나면 비교 보고 (이후 20건마다)
+TAG_NAMES = {REB_TAG: "반등 확인 진입", PLAIN_TAG: "기존 진입"}
+
+
+def entry_tag(t: dict) -> str:
+    """2호(단타) 거래의 진입 방식: 반등 근거(rb_) 기록이 있으면 반등 확인 진입, 없으면 기존 진입. 스윙은 ''"""
+    if t.get("entry_tag") in (REB_TAG, PLAIN_TAG):
+        return t["entry_tag"]
+    f = t.get("features") or {}
+    if (f.get("style") or "surge") != "surge":
+        return ""
+    return REB_TAG if any(str(k).startswith("rb_") for k in f) else PLAIN_TAG
+
+
 def side_cost(cfg: dict, market: str, side: str) -> float:
     """한쪽 거래 비용(%): 미장 수수료 / 국장 수수료 (+ 매도 때 증권거래세)"""
     if market == "KR":
@@ -115,7 +130,8 @@ def open_trade(sym: str, qty: float, px: float, features: dict | None, mode: str
         else:
             d["trades"].append({"id": uuid.uuid4().hex[:10], "day": day, "sym": sym, "mode": mode, "entry_time": _now(),
                                 "entry_px": px, "qty_in": qty, "features": features or {}, "mfe": 0.0, "mae": 0.0,
-                                "exits": [], "closed": False, "strategy": _strategy(features or {})})
+                                "exits": [], "closed": False, "strategy": _strategy(features or {}),
+                                "entry_tag": entry_tag({"features": features or {}})})
         d["watch"].get(day, {}).get(sym, {}).update(bought=True)
         _save(d)
 
@@ -590,7 +606,69 @@ def overview(day: str, mode: str, market: str | None = None) -> dict:
     revs = [r for r in d["reviews"] if r["mode"] == mode and (not market or r.get("market", "US") == market)]
     return {"today": today_stats(day, mode, market), "review": revs[-1] if revs else None,
             "proposals": [p for p in d["proposals"] if p["status"] in ("pending", "applied")][-20:][::-1],
-            "trades": [t for t in d["trades"] if t["mode"] == mode and (not market or _tm(t) == market)][-30:][::-1]}
+            "trades": [t for t in d["trades"] if t["mode"] == mode and (not market or _tm(t) == market)][-30:][::-1],
+            "rebound": rebound_stats(market or "US", d)}
+
+
+# ── 🔄 2호 반등 확인 진입 vs 기존 진입 비교 (기록·보고만, 매매엔 영향 없음) ──
+def _grp(ts: list[dict]) -> dict:
+    n = len(ts)
+    if not n:
+        return {"n": 0, "win_rate": 0, "avg": 0.0, "mfe_avg": 0.0}
+    return {"n": n, "win_rate": round(sum(1 for t in ts if float(t.get("pnl_pct") or 0) > 0) / n * 100),
+            "avg": round(st.mean(float(t.get("pnl_pct") or 0) for t in ts), 2),
+            "mfe_avg": round(st.mean(float(t.get("mfe") or 0) for t in ts), 2)}
+
+
+def rebound_stats(market: str, d: dict | None = None) -> dict:
+    """끝난 2호 거래(실전+가상)를 진입 방식별로 집계: 건수·승률·평균 손익(수수료 뺀)·평균 MFE"""
+    if d is None:
+        with _lock:
+            d = _load()
+    g = {REB_TAG: [], PLAIN_TAG: []}
+    for t in d.get("trades") or []:
+        if not t.get("closed") or _tm(t) != market:
+            continue
+        k = entry_tag(t)
+        if k in g:
+            g[k].append(t)
+    r, p = _grp(g[REB_TAG]), _grp(g[PLAIN_TAG])
+    return {"rebound": r, "plain": p, "goal_n": REB_GOAL_N, "ready": r["n"] >= REB_GOAL_N,
+            "diff": {"win_rate": r["win_rate"] - p["win_rate"], "avg": round(r["avg"] - p["avg"], 2),
+                     "mfe_avg": round(r["mfe_avg"] - p["mfe_avg"], 2)} if r["n"] and p["n"] else {}}
+
+
+def rebound_text(market: str) -> str:
+    s = rebound_stats(market)
+    r, p = s["rebound"], s["plain"]
+    line = lambda name, x: f"{name} {x['n']}건 · 승률 {x['win_rate']}% · 평균 {x['avg']:+.2f}% · 평균 MFE {x['mfe_avg']:+.2f}%"
+    if not s["ready"]:
+        return f"🔄 반등 확인 진입 비교: {r['n']}/{REB_GOAL_N}건 쌓는 중 (기존 진입 {p['n']}건)"
+    out = f"🔄 2호 진입 비교 — {line('반등 확인', r)} / {line('기존', p)}"
+    if s["diff"]:
+        dd = s["diff"]
+        out += f" → 차이 승률 {dd['win_rate']:+d}%p · 평균 {dd['avg']:+.2f}%p · MFE {dd['mfe_avg']:+.2f}%p"
+    return out
+
+
+def rebound_goal_check(market: str) -> str:
+    """반등 진입이 20건·40건… 처음 도달하면 보고문 한 번 (규칙·비중은 안 바꿈)"""
+    s = rebound_stats(market)
+    n = s["rebound"]["n"]
+    step = n // REB_GOAL_N * REB_GOAL_N
+    if step < REB_GOAL_N:
+        return ""
+    with _lock:
+        d = _load()
+        g = d.get("reb_goal")
+        if not isinstance(g, dict):
+            g = d["reb_goal"] = {}
+        if int(g.get(market) or 0) >= step:
+            return ""
+        g[market] = step
+        _save(d)
+    return (rebound_text(market) + "\n(기록 보고만 해요 — 반등 진입을 계속 쓸지는 사장님이 정해 주세요"
+            + ("" if s["plain"]["n"] else " · 기존 진입 거래가 없어 비교 대상 없음") + ")")
 
 
 def day_sums(mode: str, n: int = 5, market: str | None = None) -> list[float]:

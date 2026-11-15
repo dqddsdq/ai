@@ -132,7 +132,9 @@ def save(path: Path, data) -> None:
             if now - _err_at.get(key, 0) > 300:   # 같은 파일 알림은 5분에 한 번
                 _err_at[key] = now
                 _errors.append(f"{path.name} 저장 실패 ({type(err).__name__}) — 다른 프로그램(백신·OneDrive 등)이 잡고 있는 것 같아요. 다음 저장 때 다시 시도해요")
+            e["dirty"] = True   # 메모리에만 있음 → flush() 때 다시 씀
             return
+        e["dirty"] = False
         e["mt"] = path.stat().st_mtime_ns
         now = time.time()
         if now - e["bak"] >= BAK_EVERY:
@@ -149,6 +151,18 @@ def save(path: Path, data) -> None:
                         old.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def flush() -> list[str]:
+    """앱 다시 켜기 전: 저장 실패로 메모리에만 남은 기록을 디스크에 다시 씀. 그래도 못 쓴 파일 이름 반환"""
+    left = []
+    with _lock:
+        for key, e in list(_cache.items()):
+            if e.get("dirty") and e.get("data") is not None:
+                save(Path(key), e["data"])
+                if _cache[key].get("dirty"):
+                    left.append(Path(key).name)
+    return left
 
 
 def errors() -> list[str]:

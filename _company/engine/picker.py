@@ -463,3 +463,122 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
         picks.append(c)
     note = f"{len(afford)}개 중 추세 조건 통과 {len(scored)}개 → {len(picks)}개"
     return {"day": today, "picks": picks, "note": note, "strategy": "trend", "market": market}
+
+
+# ── 초반 돌파 감지 (1분봉 기준 VWAP 돌파) ──
+def early_breakout_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
+    """초반 돌파 감지: 1분봉 기준 최근 60분 평균 거래량 대비 크게 증가 + VWAP 위로 돌파 + 오늘 등락률 +8% 미만 후보.
+    (강한 거래량 동반 초반 상승이 실제 급등 기회 신호인지 검증용)"""
+    market = cfg["market"]
+    base = load_base(market)
+    rows = base.get("rows") or {}
+    exclude = exclude or set()
+    t = mnow(market)
+    if not rows or base.get("day") != session_date(market):
+        return {"day": "", "picks": [], "note": "초반 돌파 기준값이 아직 없어요", "strategy": "breakout"}
+    fx = _fx(market, cfg)
+    max_price = cfg["max_order_krw"] / fx
+    min_price = 1000 if market == "KR" else cfg.get("us_min_price", 1.0)
+
+    # 거래량·거래대금이 충분한 종목 필터링
+    candidates = [s for s, r in rows.items() if s not in exclude and r["value20_krw"] >= cfg["min_trading_value_krw"] * 0.3
+                  and r["prev"] * 0.8 <= max_price and r["prev"] >= min_price * 1.0]
+
+    # 현재가 조회
+    prices = {}
+    for chunk in _chunks(candidates, 200):
+        try:
+            prices.update({k: v["price"] for k, v in toss.prices(chunk).items()})
+        except toss.TossError as e:
+            log(f"   현재가 일부 실패: {e}")
+
+    today_str = session_date(market)
+    picks = []
+    from concurrent.futures import ThreadPoolExecutor
+
+    def check(sym: str):
+        try:
+            # 1분봉 최근 70개(약 70분) 받기
+            r = toss._get("/api/v1/candles", symbol=sym, interval="1m", count=70) or {}
+            candles_1m = sorted(r.get("candles") or [], key=lambda c: c["timestamp"])
+            if len(candles_1m) < 60:
+                return None
+
+            # 오늘 데이터만 필터
+            today_candles = [c for c in candles_1m if c["timestamp"][:10] == today_str]
+            if len(today_candles) < 10:  # 최소 10분은 거래되었어야 함
+                return None
+
+            # 최근 60분 평균 거래량 계산 (전 60분)
+            vol_60m = [float(c.get("volume") or 0) for c in candles_1m[-60:]]
+            avg_vol_60m = sum(vol_60m) / len(vol_60m) if vol_60m else 0
+
+            # 현재 1분봉 거래량 (마지막)
+            last_1m = today_candles[-1]
+            curr_vol = float(last_1m.get("volume") or 0)
+
+            # VWAP 계산 (오늘 데이터만)
+            pv_sum = v_sum = 0.0
+            for c in today_candles:
+                tp = (float(c.get("highPrice") or c["closePrice"]) + float(c.get("lowPrice") or c["closePrice"])
+                      + float(c["closePrice"])) / 3
+                vol = float(c.get("volume") or 0)
+                pv_sum += tp * vol
+                v_sum += vol
+            vwap = pv_sum / v_sum if v_sum > 0 else None
+
+            # 현재가
+            curr_price = prices.get(sym)
+            if not curr_price or not vwap:
+                return None
+
+            # 조건 검사
+            # ① 거래량 최근 60분 평균 대비 2배 이상 증가
+            vol_ratio = curr_vol / max(avg_vol_60m, 1)
+            if vol_ratio < 2.0:
+                return None
+
+            # ② 가격이 VWAP 위로
+            if curr_price <= vwap * 1.001:  # 거의 같거나 아래면 제외
+                return None
+
+            # ③ 오늘 등락률 +8% 미만
+            daily_change = ((curr_price / rows[sym]["prev"]) - 1) * 100
+            if daily_change >= 8.0:
+                return None
+
+            # 추가 필터: 거래대금 확인
+            value_today = curr_vol * curr_price * fx
+            if value_today < cfg["min_trading_value_krw"] * 0.1:
+                return None
+
+            cur_unit = "원" if market == "KR" else "$"
+            return {
+                "symbol": sym, "name": rows[sym]["name"], "price": curr_price,
+                "change": round(daily_change, 1), "vwap": round(vwap, 2),
+                "vol_ratio": round(vol_ratio, 2), "score": round(vol_ratio * (curr_price / vwap - 1) * 100, 1),
+                "reason": (f"오늘 {daily_change:+.1f}% · 거래량 최근 60분 평균의 {vol_ratio:.1f}배 · VWAP {vwap:,.2f}{cur_unit} "
+                          f"→ 현재 {curr_price:,.2f}{cur_unit}")
+            }
+        except (toss.TossError, KeyError, ValueError):
+            return None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        results = [x for x in pool.map(check, prices.keys()) if x]
+
+    # 스코어로 정렬
+    results.sort(key=lambda x: -x["score"])
+
+    # 경고 제거
+    for c in results:
+        if len(picks) >= cfg.get("pick_count", 3):
+            break
+        try:
+            if toss._get(f"/api/v1/stocks/{c['symbol']}/warnings"):
+                continue
+        except toss.TossError:
+            pass
+        picks.append(c)
+
+    note = f"{t:%H:%M} 초반 돌파: {len(prices)}개 중 {len(results)}개 감지 → {len(picks)}개"
+    return {"day": today_str, "time": t.strftime("%H:%M"), "picks": picks, "note": note, "strategy": "breakout", "market": market}

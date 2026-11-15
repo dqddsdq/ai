@@ -482,8 +482,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div class="row" style="display:flex;gap:8px;margin-top:6px"><input class="field" id="trade-ask" style="flex:1" placeholder="예: 오늘 왜 아무것도 안 샀어? / 익절 8%로 바꿔 / TSLA는 사지 마"><button class="btn primary" id="trade-ask-go">보내기</button></div>
         <div class="muted" style="font-size:12.5px;margin-top:4px">채팅의 🤖 자동매매 팀으로 이어져요. 설정을 바꾸는 말은 [적용] 카드로 떠요 (실전 켜기는 여기 위 버튼으로만).</div>
       </div>
-      <div class="card"><b>📊 실시간 차트</b> <span class="muted" style="font-size:12.5px">자동매매가 가진 종목 + 방금 고른 종목 · 1분마다 자동 갱신 · 누르면 크게</span>
-        <div id="live-charts" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;margin-top:8px"></div>
+      <div class="card"><b>📊 실시간 차트</b> <span class="muted" style="font-size:12.5px">자동매매가 가진 종목 + 방금 고른 종목 · 종목을 누르면 그 차트만 펼쳐짐 · 1분마다 갱신 · 차트 누르면 크게</span>
+        <div id="live-charts" style="display:grid;gap:6px;margin-top:8px"></div>
       </div>
       <div class="card"><b>📊 차트</b> <span class="muted" style="font-size:12.5px">토스 데이터로 그린 차트 = AI 가 보는 그림. 자동매매가 가진 종목은 산 가격·손절·나눠 팔기선까지</span>
         <div class="row" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
@@ -572,6 +572,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><b>🤖 AI 스스로 판단</b></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_decide"> 거래마다 AI 판단 — 사기 전 살지·얼마나, 보유 중 일찍 팔지 (손절·마감 정리·한도는 못 바꿈, 판단 중에도 손절 확인은 계속)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-shadow_on"> 🧪 그림자 가상 매매 (규칙 조합 여러 개 동시에 가상으로)</label>
+        <div class="trade-grid"><label>그림자 조합 수 (2~1000)<input id="t-shadow_count" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-backtest_on"> 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로</label>
         <div class="trade-grid">
@@ -1352,7 +1353,7 @@ async function renderToolsPage() {
 }
 
 // ── 자동매매 ──
-const TRADE_NUM = ["pick_count", "monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
+const TRADE_NUM = ["pick_count", "shadow_count","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades"];
 const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
@@ -1452,8 +1453,13 @@ function renderLab(L) {
   const sh = L.shadow || {}, b = L.backtest || {};
   const vs = sh.variants || [];
   const allS = v => v.n_all !== undefined ? `전체 ${v.n_all}건 · 승률 ${v.win_all}% · 평균 ${pctS(v.avg_all)} · 최대 손실 ${pctS(v.worst)}` : `${v.n}건 · 승률 ${v.win_rate}%`;
-  $("#lab-shadow").innerHTML = vs.length ? `<div><b>그림자 가상 매매 · 조합 ${vs.length}개</b> <span class="muted">(현재 먼저, 그다음 20건↑ 평균 순 · 수수료 뺀 값)</span></div>`
-    + (sh.rule ? `<div class="muted">${esc(sh.rule)}</div>` : "") + vs.map(v =>
+  const ac = sh.acct, won = x => (x > 0 ? "+" : "") + Number(x || 0).toLocaleString() + "원";
+  // 💰 100만 원 가상 계좌 누적 수익률 (실전 규칙 '현재' 조합 기준)
+  const acHtml = ac ? `<div style="margin-bottom:6px;padding:8px 10px;border:1px solid var(--line);border-radius:10px"><b>💰 그림자 가상 계좌 (기준 ${Number(ac.base).toLocaleString()}원)</b> <span class="muted">시작 ${esc(String(ac.start).slice(0, 10))} · 실전 규칙('현재') 기준 · 수수료 뺀 값</span><br>`
+    + `확정 누적 <b style="color:${ac.realized_pct >= ac.alert_pct ? "var(--live)" : "inherit"}">${pctS(ac.realized_pct)}</b> (${won(ac.realized_krw)}, 끝난 거래 ${ac.n}건) · 보유 평가 포함 ${pctS(ac.total_pct)} · 평가액 ${Number(ac.equity).toLocaleString()}원<br>`
+    + `<span class="muted">${ac.realized_pct >= ac.alert_pct ? `🎉 목표 +${ac.alert_pct}% 달성 — 실전 전환은 자동으로 안 해요. 확인 후 직접 켜 주세요.` : `확정 누적 +${ac.alert_pct}% 넘으면 텔레그램으로 알려 드려요 (실전은 자동으로 안 켬)`}</span></div>` : "";
+  $("#lab-shadow").innerHTML = vs.length ? acHtml + `<div><b>그림자 가상 매매 · 조합 ${sh.total || vs.length}개</b> <span class="muted">(현재 먼저, 그다음 20건↑ 평균 순 · 수수료 뺀 값)</span></div>`
+    + (sh.rule ? `<div class="muted">${esc(sh.rule)}</div>` : "") + ((sh.total || 0) > vs.length ? `<div class="muted">위쪽 ${vs.length}개만 표시</div>` : "") + vs.map(v =>
     `<div>${v.name === "현재" ? "📌" : ""} <b>${esc(v.name)}</b> <span class="muted">(${esc(v.origin)})</span> · ${allS(v)} · 최근 총 ${v.ret_pct > 0 ? "+" : ""}${v.ret_pct}% · 보유 ${v.holding}<br><span class="muted">${esc(v.diff)}</span></div>`).join("")
     + ((sh.hot || []).length ? `<div style="margin-top:6px"><b>🚀 30% 초과 급등 검증 (따로 보관 · 교체 안 함)</b>${sh.hot.map(v => `<div>${esc(v.name)} · ${allS(v)}</div>`).join("")}</div>` : "")
     + ((sh.flash || []).length ? `<div style="margin-top:6px"><b>📉 급락 신호 검증 (따로 보관 · 교체 안 함)</b>${sh.flash.map(v => `<div>${esc(v.name)} · ${allS(v)} · 신호 ${v.signals}건 · 보유 ${v.holding}</div>`).join("")}</div>` : "")
@@ -1465,7 +1471,22 @@ function renderLab(L) {
     + (b.baseline && b.baseline.n ? `<div class="muted">지금 규칙: 평균 ${b.baseline.avg > 0 ? "+" : ""}${b.baseline.avg}% · 승률 ${b.baseline.win}% (${b.baseline.n}건)</div>` : "")
     + top.map((r, i) => `<div>${i + 1}. 평균 ${r.avg > 0 ? "+" : ""}${r.avg}% · 승률 ${r.win}% · ${r.n}건 <span class="muted">— 손절 ${r.params.stop_loss_pct}% · 나눠팔기 ${r.params.partial_tp_pct}% · 고점대비 ${r.params.trail_pct}% · 급등최소 ${r.params.surge_min_change_pct}% · 거래량 ${r.params.surge_volume_ratio}배</span></div>`).join("")
     + (b.swing_top || []).map(r => `<div>📈 스윙: 평균 ${r.avg > 0 ? "+" : ""}${r.avg}% · 승률 ${r.win}% · ${r.n}건 <span class="muted">— 손절 ${r.params.swing_stop_pct}% · 고점대비 ${r.params.swing_trail_pct}%</span></div>`).join("")
+    + replayHtml(b.replay)
     : `<span class="muted">아직 백테스트 전이에요 — 장 끝나고 자동으로, 또는 '지금 백테스트'</span>`;
+}
+// 🔄 단타 과거 복기 (반등 확인 진입 vs 기존 진입)
+function replayHtml(rp) {
+  if (!rp) return "";
+  if (!rp.all) return `<div class="muted" style="margin-top:6px">🔄 ${esc(rp.note || "")}</div>`;
+  const ln = (nm, x) => `${nm} ${x.n}건 · 승률 ${x.win}% · 평균 ${pctS(x.avg)} · 평균 MFE ${pctS(x.mfe)}`;
+  const pt = (nm, p) => p && (p.rebound.n || p.plain.n) ? `<div>${nm} <span class="muted">(${esc(p.from)}~${esc(p.to)})</span>: ${ln("반등", p.rebound)} / ${ln("기존", p.plain)}</div>` : "";
+  const d1 = rp.range_1d || {}, m1 = rp.range_1m || {};
+  const rg = `일봉 ${esc(d1.from || "-")}~${esc(d1.to || "-")} (${d1.n || 0}개) · 1분봉 ${esc(String(m1.from || "-").slice(0, 10))}~${esc(String(m1.to || "-").slice(0, 10))}`
+    + (m1.ended ? " (토스 제공 끝)" : m1.from ? " (받은 만큼 · 더 있을 수 있음)" : "")
+    + (m1.kept_from ? ` · 보관분 포함 ${esc(String(m1.kept_from).slice(0, 10))}부터` : "");
+  return `<div style="margin-top:6px"><b>🔄 단타 과거 복기</b> <span class="muted">급등일 ${rp.events}개 (찾은 ${rp.surge_days}개 · ${rp.syms}종목) · 비용 ${rp.slip_pct}% 불리 + 수수료·세금 ${rp.cost_pct}% · 표시만</span>`
+    + pt("전체", rp.all) + pt("앞 기간", rp.front) + pt("뒤 기간", rp.back)
+    + `<div><b>${esc(rp.verdict || "")}</b></div><div class="muted">받을 수 있는 과거 데이터: ${rg}</div></div>`;
 }
 $("#lab-bt").onclick = async () => { const r = await api("/api/autotrade/backtest", { market: tradeMk() }); alert(r.message || "시작했어요"); };
 $("#lab-reset").onclick = async () => { if (confirm("그림자 매매 조합을 새로 만들까요? (지금까지 가상 성적은 지워져요)")) { const r = await api("/api/autotrade/lab-reset", { market: tradeMk() }); alert(r.message); renderTrade(false); } };
@@ -1477,6 +1498,16 @@ function renderLearn(L) {
   if ((td.open || []).length) h += `<div class="muted">보유 중: ${td.open.map(o => `${esc(o.sym)} 최대 ${pctS(o.mfe)} / 최저 ${pctS(o.mae)}`).join(" · ")}</div>`;
   if (g.pause_until) h += `<div>⏸️ ${esc(g.pause_why || "")} (~${esc(String(g.pause_until).slice(11, 16))})</div>`;
   if (g.no_premarket) h += `<div>⏸️ ${esc(g.no_premarket)}</div>`;
+  const rb = L.rebound;   // 🔄 2호 반등 확인 진입 vs 기존 진입
+  if (rb && rb.rebound) {
+    const rl = (nm, x) => `${nm} ${x.n}건 · 승률 ${x.win_rate}% · 평균 ${pctS(x.avg)} · 평균 MFE ${pctS(x.mfe_avg)}`;
+    if (!rb.ready) h += `<div class="muted">🔄 반등 확인 진입 비교: ${rb.rebound.n}/${rb.goal_n}건 쌓는 중 (기존 진입 ${rb.plain.n}건)</div>`;
+    else {
+      const df = rb.diff || {};
+      h += `<div><b>🔄 2호 진입 비교</b><br>${rl("반등 확인", rb.rebound)}<br>${rl("기존", rb.plain)}` +
+        (df.avg !== undefined ? `<br><span class="muted">차이: 승률 ${df.win_rate >= 0 ? "+" : ""}${df.win_rate}%p · 평균 ${pctS(df.avg)}p · MFE ${pctS(df.mfe_avg)}p</span>` : `<br><span class="muted">기존 진입 거래가 없어 비교 대상 없음</span>`) + `</div>`;
+    }
+  }
   $("#learn-today").innerHTML = h;
   const props = L.proposals || [];
   $("#learn-props").innerHTML = props.length ? `<div style="font-size:13.5px"><b>규칙 조정</b> <span class="muted">(🔁 자동 조절이 켜져 있으면 범위 안에서 자동 적용 · [되돌리기] 가능)</span></div>` + props.map(p => `
@@ -1596,17 +1627,27 @@ $("#cv-cols").onchange = () => { cv.cols = +$("#cv-cols").value; cv.save(); cv.r
 $("#cv-auto").onchange = () => { cv.render(); cv.paint(); };
 $("#cv-refresh").onclick = async () => { await cv.refreshAuto(); cv.paint(); };
 
-let liveChartAt = 0;
+let liveChartAt = 0, liveOpen = "";   // liveOpen = 펼친 종목 (기본 모두 접힘)
 async function renderLiveCharts(force = false) {
   if (!force && Date.now() - liveChartAt < 55000) return;
   liveChartAt = Date.now();
-  const r = await fetch("/api/charts/auto?market=" + tradeMk()).then(x => x.json()).catch(() => ({ items: [] }));
+  const r = await fetch("/api/charts/auto?market=" + tradeMk() + "&open=" + encodeURIComponent(liveOpen)).then(x => x.json()).catch(() => ({ items: [] }));
   const items = r.items || [];
-  $("#live-charts").innerHTML = items.length ? items.map(c => `<div>
-      <div style="font-size:13px;margin-bottom:3px"><b>${esc(c.sym)}</b> <span class="muted">${c.held ? "보유 중" : "방금 고름"}</span></div>
-      ${c.error ? `<div class="muted" style="font-size:12.5px">⚠️ ${esc(c.error)}</div>` : `<img src="/api/upload/${esc(c.id)}?v=${c.v}" alt="${esc(c.sym)}" style="width:100%;border:1px solid var(--line);border-radius:10px;cursor:zoom-in;background:#fff">`}
+  if (liveOpen && !items.some(c => c.sym === liveOpen)) liveOpen = "";   // 목록에서 빠지면 접기
+  const pnl = (p) => p == null ? "" : `<span style="color:${p >= 0 ? "#d33" : "#36c"}">${p >= 0 ? "+" : ""}${p.toFixed(2)}%</span>`;
+  $("#live-charts").innerHTML = items.length ? items.map(c => `<div style="border:1px solid var(--line);border-radius:10px;padding:6px 10px">
+      <div class="live-row" data-sym="${esc(c.sym)}" style="font-size:13px;cursor:pointer;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span>${c.sym === liveOpen ? "▼" : "▶"}</span><b>${esc(c.sym)}</b>${c.name && c.name !== c.sym ? `<span>${esc(c.name)}</span>` : ""}
+        <span class="muted">${c.held ? "보유 중" : "방금 고름"}</span>${pnl(c.pnl_pct)}
+        <span style="margin-left:auto">${c.price != null ? Number(c.price).toLocaleString() : "-"}</span>
+      </div>
+      ${c.sym !== liveOpen ? "" : c.error ? `<div class="muted" style="font-size:12.5px;margin-top:6px">⚠️ ${esc(c.error)}</div>` : c.id ? `<img src="/api/upload/${esc(c.id)}?v=${c.v}" alt="${esc(c.sym)}" style="width:100%;margin-top:6px;border:1px solid var(--line);border-radius:10px;cursor:zoom-in;background:#fff">` : ""}
     </div>`).join("") : `<span class="muted" style="font-size:13px">지금 보유하거나 고른 종목이 없어요 — 장중에 종목을 고르면 여기 자동으로 떠요</span>`;
   document.querySelectorAll("#live-charts img").forEach(img => img.onclick = () => window.open(img.src, "_blank"));
+  document.querySelectorAll("#live-charts .live-row").forEach(el => el.onclick = () => {   // 누른 종목만 펼침 (다시 누르면 접힘)
+    liveOpen = liveOpen === el.dataset.sym ? "" : el.dataset.sym;
+    renderLiveCharts(true);
+  });
 }
 async function drawChart(iv) {
   const sym = $("#chart-sym").value.trim(); if (!sym) return $("#chart-sym").focus();

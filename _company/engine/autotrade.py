@@ -9,6 +9,7 @@
 
 급등주 규칙
 - 사기: 장중 몇 분마다 picker.surge_scan 이 고른 '오늘 +N% 이상 + 거래량 폭증' 종목 (장 시작 10분 뒤 ~ 마감 30분 전)
+  → 바로 안 사고 '반등 확인' 후: 고점에서 눌림 → VWAP·MA5 위 회복 → 직전 1분봉 연속 상승 (rebound_check)
 - 팔기: 손절(-3%) · 고점 대비 하락(-4%, 수익 지키기) · 익절(+10%) · 장 마감 15분 전 전부 정리 (밤새 안 들고 감)
 
 안전장치 (코드에서 강제)
@@ -78,6 +79,14 @@ DEFAULTS = {
     "min_trading_value_krw": 3000000000,  # 하루 거래대금 최소 (원 환산)
     "us_min_price": 1.0,           # 1달러 미만 동전주 제외
     "limit_slip_pct": 0.5,         # 급등주: 사는 지정가는 현재가 +0.5%, 파는 건 -0.5% (체결 잘 되게)
+    "chase_filter": True,          # 🧗 고점 추격 필터 (2호 단타): 오늘 고점 근처인데 직전 5분 되돌림이 없거나 5분 급등이면 안 삼
+    "chase_near_high_pct": 1.0,    #   오늘 고점 대비 이 % 이내면 '고점 근처'
+    "chase_min_pullback_pct": 0.5, #   직전 5분 고점에서 이 % 이상 눌린 적이 있어야 삼
+    "chase_run5_max_pct": 3.0,     #   고점 근처에서 직전 5분 상승률이 이 % 이상이면 안 삼
+    "rebound_entry": True,         # 🔄 2호 반등 확인 후 진입: 고점에서 눌린 뒤 VWAP·MA5 위 회복 + 직전 1분봉 연속 상승일 때만 삼
+    "rebound_pullback_pct": 1.5,   #   오늘 고점에서 이 % 이상 눌린 적이 있어야 함
+    "rebound_pullback_max_pct": 10.0,  #   이 % 넘게 무너졌으면 반등 아님 (안 삼)
+    "rebound_up_bars": 2,          #   직전 1분봉 몇 개가 연속 상승이어야 하는지 (1~3)
     "rsi_max_buy": 68,             # 추세(스윙): 과열 기준
     "swing_stop_pct": 6.0,         # 스윙 손절 (며칠 들고 가니 단타보다 넓게)
     "swing_trail_pct": 8.0,        # 스윙: 최고 수익이 이만큼 난 뒤 고점 대비 이만큼 빠지면 팔기
@@ -100,6 +109,7 @@ DEFAULTS = {
     "mode_down_month_pct": 8.0,    # 또는 이번 달 이 % 이상 손실이면 가상으로
     "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
     "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
+    "shadow_count": 1000,          #   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
     "auto_promote": True,          #   확실히 나은 조합을 실전 규칙으로 자동 교체 (매일 복기 뒤)
     "promote_min_trades": 15,      #   교체하려면 그 조합 거래가 최소 이만큼 (20 보다 작아도 20건 적용 · shadow.PROMOTE_N)
     "promote_margin_pct": 1.0,     #   (예전 기준·지금은 안 씀) 교체는 앞 70% 선정 → 뒤 30% 검증 방식
@@ -118,7 +128,7 @@ DEFAULTS = {
     "min_win_prob": 0,             # 추정 승률이 이보다 낮으면 안 삼 (0 = 안 씀)
     "no_rebuy_after_loss": True,   # 🔁 손해 보고 판 종목은 다시 안 삼: 단타는 그날, 스윙은 아래 일수 동안 (손절 후 재진입 반복 방지)
     "no_rebuy_swing_days": 3,
-    "explore_per_day": 2,          # 🔬 기대 수익이 마이너스지만 기록이 적어 확신 못 하는 후보: 하루 이만큼만 최소 금액으로 '탐색 매수' (0 = 안 삼)
+    "explore_per_day": 2,          # 🔬 기대 수익이 마이너스지만 기록이 적어 확신 못 하는 후보: 하루 이만큼만 최소 금액으로 '탐색 매수' (0 = 안 삼) · 2호 가상 매수엔 한도 없음
     "lane_swing_mode": "live",     # 🤝 1호 일반(스윙) AI — live: 실전 모드 따라감 · paper: 가상 장부 · off: 새로 안 삼 (보유는 계속 관리)
     "lane_surge_mode": "paper",    # 🤝 2호 급등주(단타) AI — 처음엔 가상으로 돌리고 성적 확인되면 자동으로 실전 (lane_auto_live)
     "lane_share_surge": 50,        #    같은 장부를 쓰는 두 AI 의 예산 나누기: 2호 몫(%) (나머지 1호) — 자동 조정
@@ -139,14 +149,16 @@ DEFAULTS = {
     "fee_kr_pct": 0.015,           # 국장 수수료(%) 사고팔 때 각각
     "tax_kr_pct": 0.18,            # 국장 증권거래세(%) 팔 때만 (세법 바뀌면 고치기)               # 환율 (토스에서 자동 갱신, 실패하면 이 값)
 }
-NUMS = {"promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_window_days": (1, 90), "ai_max_per_hour": (0, 600),
+NUMS = {"shadow_count": (2, 1000), "promote_min_trades": (3, 200), "promote_margin_pct": (0, 50), "promote_window_days": (1, 90), "ai_max_per_hour": (0, 600),
         "ai_hold_check_min": (1, 120), "stop_min": (0.5, 20), "stop_max": (1, 30), "limit_min_mult": (0.1, 1), "limit_max_mult": (1, 20), "loss_pct_min": (0.5, 20),
         "loss_pct_max": (1, 50), "mode_down_days": (1, 20), "mode_down_month_pct": (1, 50), "mode_up_trades": (3, 100),
         "loss_streak_pause": (1, 20), "pause_min": (5, 600), "monthly_target_pct": (1, 100), "pick_count": (1, 100), "max_total_krw": (10000, 1e10), "max_order_krw": (0, 1e10), "max_position_krw": (0, 1e10),
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20)}
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
+        "chase_near_high_pct": (0.1, 10), "chase_min_pullback_pct": (0, 5), "chase_run5_max_pct": (0.5, 20),
+        "rebound_pullback_pct": (0.3, 10), "rebound_pullback_max_pct": (2, 30), "rebound_up_bars": (1, 3)}
 CHOICES = {"lane_swing_mode": ("live", "paper", "off"), "lane_surge_mode": ("live", "paper", "off"), "ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
@@ -160,6 +172,75 @@ def pause_for_restart(timeout: float = 90) -> bool:
     if _thread is None or not _thread.is_alive():
         return True
     return _idle.wait(timeout)
+
+
+HANDOFF = COMPANY_DIR / "_cache" / "restart_handoff.json"   # 다시 켜기 전에 저장한 상태 요약 (새 프로세스가 읽음)
+
+
+def wait_idle_for_restart(log=print) -> None:
+    """주문·체결 처리 중엔 절대 안 끊음: 바퀴가 끝날 때까지 시간 제한 없이 기다림 (5분마다 안내)"""
+    waited = 0
+    while not pause_for_restart(60):
+        waited += 1
+        if waited % 5 == 0:
+            log(f"🔄 자동매매 바퀴가 아직 안 끝나서 다시 켜기를 기다리는 중 ({waited}분)")
+
+
+def resume_after_pause(log=print) -> None:
+    """다시 켜기를 못 하게 됐을 때: 멈춘 자동매매 루프를 다시 돌림"""
+    HANDOFF.unlink(missing_ok=True)   # 안 껐으니 '이어받음' 기록은 필요 없음
+    _stop_req.clear()
+    _idle.clear()
+    start(log)
+
+
+def save_for_restart() -> dict:
+    """바퀴가 끝난 뒤: 보유·장부(시장별 기록)·학습·그림자 기록을 디스크에 저장하고 요약을 남김"""
+    info = {"t": datetime.now().isoformat(timespec="seconds"), "markets": {}}
+    with _lock:
+        for m in ("US", "KR"):
+            if not _state_path(m).exists():
+                continue
+            with in_market(m):
+                s = state()
+                _save(s)
+                info["markets"][m] = {"bot_pos": len(s.get("bot_pos") or {}),
+                                      "paper_pos": len((s.get("paper") or {}).get("positions") or {}),
+                                      "orders": len(s.get("orders") or [])}
+    with tl._lock:
+        tl._save(tl._load())
+    try:
+        shadow.flush()
+    except Exception as e:
+        info["shadow_err"] = f"{type(e).__name__}: {e}"
+    info["unsaved"] = store.flush()
+    try:
+        store.write_text(HANDOFF, json.dumps(info, ensure_ascii=False))
+    except OSError:
+        pass
+    return info
+
+
+def _resume_note() -> None:
+    """다시 켜진 뒤: 저장해 둔 상태를 이어받았다고 기록 (상태 자체는 파일에서 그대로 읽힘)"""
+    try:
+        info = json.loads(HANDOFF.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    HANDOFF.unlink(missing_ok=True)
+    parts = [f"{'미장' if m == 'US' else '국장'} 보유 {v['bot_pos']}·가상 {v['paper_pos']}" for m, v in info.get("markets", {}).items()]
+    msg = f"♻️ 다시 켜짐 — {info.get('t', '')} 에 저장한 상태 이어받음 ({' · '.join(parts) or '기록 없음'})"
+    if info.get("unsaved"):
+        msg += f" ⚠️ 못 쓴 파일: {', '.join(info['unsaved'])}"
+    _log_fn(msg)
+    for m in info.get("markets", {}):
+        with in_market(m):
+            try:
+                event("재시작", msg)
+            except Exception:
+                pass
+
+
 _log_fn = print
 _busy_m = {"US": threading.Event(), "KR": threading.Event()}   # 시장별 종목 준비/고르기 백그라운드 작업 중
 _ctx = threading.local()        # 지금 처리 중인 시장 (스레드마다)
@@ -269,7 +350,7 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
     for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check", "prob_sizing",
-              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode", "shadow_on", "auto_promote", "backtest_on", "ai_decide", "swing_trail_vol"):
+              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode", "shadow_on", "auto_promote", "backtest_on", "ai_decide", "swing_trail_vol", "chase_filter", "rebound_entry"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -341,7 +422,7 @@ def event(kind: str, text: str, **extra) -> None:
 
 
 NOTIFY_KINDS = {"교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
-                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건"}   # 🔔 텔레그램으로 보낼 기록 종류
+                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 
 def _mkt(sym: str) -> str:
@@ -421,6 +502,25 @@ def swing_feats(sym: str, price: float, fx: float, day: str | None = None) -> di
             "volat": round((sum(x * x for x in rets) / max(len(rets), 1)) ** 0.5 * math.sqrt(252) * 100, 1),
             "chg1d": round((price / pc[-1] - 1) * 100, 1) if pc[-1] else None,
             "vratio": round(today_vol / v20, 2) if today_vol and v20 else None}
+
+
+def explore_value_ok(sym: str, price: float, fx: float, c: dict) -> tuple[bool, str]:
+    """🔬 탐색 매수용 최소 거래대금 확인: 20일 평균·오늘 거래대금 중 큰 값이 기준 이상이어야 삼 (확인 못 하면 안 삼)"""
+    need = float(c["min_trading_value_krw"])
+    if need <= 0:
+        return True, ""
+    try:
+        closes, vols, dates = toss.daily(sym, 25)
+    except Exception as e:
+        return False, f"거래대금 확인 오류({type(e).__name__})"
+    f = 1 if _mkt(sym) == "KR" else fx
+    d0 = picker.session_date(_mkt(sym))
+    past = [(cl, v) for cl, v, d in zip(closes, vols, dates) if str(d)[:10] < d0][-20:]
+    v20 = sum(cl * v for cl, v in past) / 20 * f if len(past) >= 20 else 0.0
+    vt = next((v for v, d in zip(vols, dates) if str(d)[:10] == d0), 0.0) * price * f
+    best = max(v20, vt)
+    note = f"거래대금 20일 평균 {v20 / 1e8:,.0f}억 · 오늘 {vt / 1e8:,.0f}억 (기준 {need / 1e8:,.0f}억)"
+    return best >= need, note
 
 
 _bf_done: set[str] = set()   # 보충을 시도한 거래 id
@@ -730,6 +830,105 @@ def signal_surge(price: float, qty: float, avg: float, high: float, minutes: int
     return "BUY", "급등 + 거래량 폭증"
 
 
+def chase_check(sym: str, price: float, minutes: int | None, c: dict) -> tuple[bool, dict, str]:
+    """🧗 고점 추격 필터: (살지, 수치, 설명). 1분봉을 못 받으면 막지 않고 '확인 불가'로 기록"""
+    from . import shadow
+    n = 400 if (minutes is not None and minutes > 190) else 200
+    bs = shadow._bars(sym, n)
+    if len(bs) < 5 or not price:
+        return True, {}, "고점 확인 불가(1분봉 부족)"
+    if minutes is not None and minutes >= 0:   # 정규장: 장 시작 이후 봉만
+        t0 = time.time() - (minutes + 1) * 60
+        day = [b for b in bs if shadow._ep(b["t"]) >= t0] or bs
+    else:
+        day = bs
+    hi, lo = max([b["h"] for b in day] + [price]), min([b["l"] for b in day] + [price])
+    last = bs[-5:]
+    i5 = max(range(len(last)), key=lambda i: last[i]["h"])
+    hi5 = max(last[i5]["h"], price)
+    low_after = min([b["l"] for b in last[i5:]] + [price])
+    m = {"from_high": round((price / hi - 1) * 100, 2),                       # 오늘 고점 대비(%)
+         "range_pos": round((price - lo) / (hi - lo) * 100, 1) if hi > lo else 100.0,   # 오늘 저~고 범위 위치(%)
+         "pullback5": round((1 - low_after / hi5) * 100, 2) if hi5 else 0.0,  # 직전 5분 고점에서 눌린 폭(%)
+         "run5": round((price / last[0]["o"] - 1) * 100, 2) if last[0]["o"] else 0.0}   # 직전 5분 상승률(%)
+    desc = f"고점 대비 {m['from_high']:+.2f}% · 범위 위치 {m['range_pos']:.0f}% · 5분 되돌림 {m['pullback5']:.2f}% · 5분 상승 {m['run5']:+.2f}%"
+    if m["from_high"] > -float(c["chase_near_high_pct"]):
+        if m["pullback5"] < float(c["chase_min_pullback_pct"]):
+            return False, m, f"고점 추격: {desc} (고점 {c['chase_near_high_pct']:g}% 이내 · 되돌림 {c['chase_min_pullback_pct']:g}% 미만)"
+        if m["run5"] >= float(c["chase_run5_max_pct"]):
+            return False, m, f"고점 추격: {desc} (고점 근처 5분 급등 ≥ {c['chase_run5_max_pct']:g}%)"
+    return True, m, desc
+
+
+def rebound_check(sym: str, price: float, minutes: int | None, c: dict) -> tuple[bool, dict, str]:
+    """🔄 반등 확인: 고점 후 눌림 → VWAP·MA5 위 회복 → 직전 1분봉 연속 상승일 때만 (살지, 수치, 설명). 확인 못 하면 안 삼"""
+    from . import shadow
+    n = 400 if (minutes is not None and minutes > 190) else 200
+    bs = shadow._bars(sym, n)
+    k = max(1, min(3, int(c.get("rebound_up_bars", 2))))
+    if len(bs) < max(6, k + 1) or not price:
+        return False, {}, "반등 확인 불가(1분봉 부족)"
+    if minutes is not None and minutes >= 0:   # 정규장: 장 시작 이후 봉만
+        t0 = time.time() - (minutes + 1) * 60
+        day = [b for b in bs if shadow._ep(b["t"]) >= t0] or bs
+    else:
+        day = bs
+    ih = max(range(len(day)), key=lambda i: day[i]["h"])   # 오늘 고점 봉
+    hi = day[ih]["h"]
+    low_after = min(b["l"] for b in day[ih:])               # 고점 이후 최저
+    pv = sum((b["h"] + b["l"] + b["c"]) / 3 * b["v"] for b in day)
+    vs = sum(b["v"] for b in day)
+    vwap = pv / vs if vs else 0.0
+    ma5 = sum(b["c"] for b in bs[-5:]) / 5
+    last = bs[-(k + 1):]
+    ups = sum(1 for i in range(1, len(last)) if last[i]["c"] > last[i]["o"] and last[i]["c"] > last[i - 1]["c"])
+    m = {"rb_pullback": round((1 - low_after / hi) * 100, 2) if hi else 0.0,          # 고점 → 눌림 바닥(%)
+         "rb_from_low": round((price / low_after - 1) * 100, 2) if low_after else 0.0,  # 눌림 바닥 대비 회복(%)
+         "rb_vwap_gap": round((price / vwap - 1) * 100, 2) if vwap else 0.0,          # VWAP 대비(%)
+         "rb_ma5_gap": round((price / ma5 - 1) * 100, 2) if ma5 else 0.0,             # MA5 대비(%)
+         "rb_up_bars": ups}                                                            # 직전 연속 상승 봉 수
+    desc = (f"고점 {hi:g}→바닥 {low_after:g} 눌림 {m['rb_pullback']:.2f}% · 바닥 대비 {m['rb_from_low']:+.2f}% · "
+            f"VWAP {vwap:g}({m['rb_vwap_gap']:+.2f}%) · MA5 {ma5:g}({m['rb_ma5_gap']:+.2f}%) · 연속 상승 {ups}/{k}봉")
+    pmin, pmax = float(c["rebound_pullback_pct"]), float(c["rebound_pullback_max_pct"])
+    if m["rb_pullback"] < pmin:
+        return False, m, f"반등 대기: 눌림 부족 ({desc} · 기준 {pmin:g}%↑)"
+    if m["rb_pullback"] > pmax:
+        return False, m, f"반등 아님: 너무 무너짐 ({desc} · 기준 {pmax:g}% 이하)"
+    if not vwap or price <= vwap:
+        return False, m, f"반등 대기: VWAP 아래 ({desc})"
+    if price <= ma5:
+        return False, m, f"반등 대기: MA5 아래 ({desc})"
+    if ups < k:
+        return False, m, f"반등 대기: 연속 상승 부족 ({desc})"
+    return True, m, f"반등 확인: {desc}"
+
+
+# 반등 근거(rb_)를 앞에 둬서 300자 자르기에도 남게
+WHY_KEYS = (("rb_pullback", "고점 후 눌림 {:.2f}%"), ("rb_from_low", "바닥 대비 회복 {:+.2f}%"), ("rb_vwap_gap", "VWAP 대비 {:+.2f}%"),
+            ("rb_ma5_gap", "MA5 대비 {:+.2f}%"), ("rb_up_bars", "연속 상승 {:.0f}봉"),
+            ("change", "오늘 {:+.1f}%"), ("ratio", "거래량 {:.1f}배"), ("vol_ratio", "거래량 {:.1f}배"), ("pre", "프리장 거래량 {:.2f}"),
+            ("score", "점수 {:.2f}"), ("from_high", "고점 대비 {:+.2f}%"), ("range_pos", "범위 위치 {:.0f}%"),
+            ("pullback5", "5분 되돌림 {:.2f}%"), ("run5", "5분 상승 {:+.2f}%"))
+
+
+def why_buy_text(feat: dict, est: dict | None, price: float, reason: str, ai_why: str = "") -> str:
+    """📝 매수 근거를 수치로 (학습·복기용 · 절대 공란 아님)"""
+    parts = []
+    for k, fmt in WHY_KEYS:
+        v = feat.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            parts.append(fmt.format(v))
+    known = {k for k, _ in WHY_KEYS} | {"p", "ev"}
+    for k, v in feat.items():   # 스윙 조건 등 나머지 수치
+        if k not in known and isinstance(v, (int, float)) and not isinstance(v, bool):
+            parts.append(f"{k} {v:g}")
+    if est:
+        parts.append(f"추정 승률 {float(est.get('p') or 0) * 100:.0f}% · 기대 {float(est.get('ev') or 0):+.2f}% ({est.get('n', 0)}건)")
+    parts.append(f"현재가 {price:g}")
+    txt = " · ".join(parts) + f" | 규칙: {reason[:60]}"
+    return (txt + (f" | AI: {ai_why[:80]}" if ai_why else ""))[:300]
+
+
 def _note_hold(sym: str, avg: float, high: float, price: float, side: str, reason: str, c: dict) -> None:
     """보유 종목 기록: ① 고점 대비 기준이 바뀌면 (종목·이전→이후·이유) 기록 ② 5분마다 '지금 판단' 기록 (나중에 원인 찾기용)"""
     with _lock:
@@ -974,6 +1173,17 @@ def _reconcile(fx: float) -> None:
                         event("확대 조건", gm)
                 except Exception as e:
                     _log_fn(f"🤖 [오류] 급등 전략 집계: {type(e).__name__}: {e}")
+                _rebound_report(o["symbol"])
+
+
+def _rebound_report(sym: str) -> None:
+    """🔄 반등 진입 20건마다 비교 보고 (보고만 · 오류 나도 매매엔 영향 없음)"""
+    try:
+        rm = tl.rebound_goal_check(_mkt(sym))
+        if rm:
+            event("반등 비교", rm)
+    except Exception as e:
+        _log_fn(f"🤖 [오류] 반등 진입 집계: {type(e).__name__}: {e}")
 
 
 def _bot_order_ids() -> set[str]:
@@ -1140,12 +1350,23 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             elif minutes is not None and first + 5 <= minutes <= 360 and slots:
                 scan_cfg = {**c, "max_order_krw": caps["order"], "usd_krw": fx}
                 r = picker.surge_scan(scan_cfg, log=_log_fn, exclude=set(pos) | set(c["exclude"]))
+                # 초반 돌파 감지 추가
+                br = picker.early_breakout_scan(scan_cfg, log=_log_fn, exclude=set(pos) | set(c["exclude"]))
                 with _lock:
-                    s2 = state(); s2["picks"] = r; _save(s2)
+                    s2 = state(); s2["picks"] = r; s2["breakout"] = br; _save(s2)
+                # 기존 급등주 후보
                 for x in r["picks"]:
                     cands[x["symbol"]] = {"style": "surge", "features": {k: x.get(k) for k in ("change", "ratio", "pre", "minute", "score")},
                                           "reason": x["reason"], "score": x.get("score", 0), "info": x}
-                results.append("🔎 단타 " + r["note"])
+                # 초반 돌파 후보 (가상 매매 전용 기록, 2호 lane_surge_mode 기본값이 paper)
+                for x in br["picks"]:
+                    if x["symbol"] not in cands:   # 기존 급등주와 중복 제외
+                        cands[x["symbol"]] = {"style": "surge", "features": {k: x.get(k) for k in ("change", "vol_ratio", "score")},
+                                              "reason": "[초반돌파] " + x["reason"], "score": x.get("score", 0), "info": x}
+                note_parts = ["🔎 단타 " + r["note"]]
+                if br["picks"]:
+                    note_parts.append(" | 초반 " + br["note"])
+                results.append("".join(note_parts))
             elif minutes is None:
                 results.append("🔎 장 시간이 아니에요")
         if strat in ("trend", "auto"):
@@ -1316,6 +1537,30 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 오늘 매수 횟수 한도({c['max_orders_per_day']}) 도달"); continue
             if sum(1 for k in pos if (style_map.get(k) or (cands.get(k) or {}).get("style") or "surge") == style) >= c["pick_count"]:
                 results.append(f"{sym}: {LANES[style]} 가 이미 {c['pick_count']}종목 보유 중"); continue
+            chase_m, chase_note = {}, ""
+            if style == "surge" and c.get("chase_filter", True):   # 🧗 고점 추격 필터 (진입 직후 역행 방지)
+                try:
+                    ok_c, chase_m, chase_note = chase_check(sym, price, minutes, c)
+                except Exception as e:
+                    ok_c, chase_m, chase_note = True, {}, f"고점 확인 오류({type(e).__name__})"
+                if not ok_c:
+                    _note_skip(sym, f"🧗 {chase_note}")
+                    results.append(f"{sym}: 🧗 {chase_note} → 안 삼"); continue
+            if style == "surge" and c.get("rebound_entry", True):   # 🔄 반등 확인 후 진입 (확인 못 하면 안 삼)
+                try:
+                    ok_r, rb_m, rb_note = rebound_check(sym, price, minutes, c)
+                except Exception as e:
+                    ok_r, rb_m, rb_note = False, {}, f"반등 확인 오류({type(e).__name__})"
+                if not ok_r:   # 대기는 자주 생겨서 이벤트 대신 결과 줄에만
+                    results.append(f"{sym}: 🔄 {rb_note} → 안 삼"); continue
+                chase_m = {**chase_m, **rb_m}   # 근거 수치를 why_buy·학습 기록에
+                try:   # 🔄 근거 수치를 주문 이유에도
+                    rb_txt = (f"눌림 {float(rb_m.get('rb_pullback', 0)):.2f}% · 연속 상승 {int(rb_m.get('rb_up_bars', 0))}봉 · "
+                              f"바닥 대비 {float(rb_m.get('rb_from_low', 0)):+.2f}% · VWAP {float(rb_m.get('rb_vwap_gap', 0)):+.2f}% · "
+                              f"MA5 {float(rb_m.get('rb_ma5_gap', 0)):+.2f}%")
+                except Exception:
+                    rb_txt = ""
+                reason = f"{reason} · 🔄 반등 확인" + (f"({rb_txt})" if rb_txt else "")
             caps = lane_caps[style]
             buy_px = price * (1 + c["limit_slip_pct"] / 100) if style == "surge" else price
             est, size_note = cands[sym]["est"], ""
@@ -1343,7 +1588,18 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if c["prob_sizing"]:   # 🎲 비슷한 조건의 지난 거래로 승률 추정 → 금액 조절
                 ratio_, note_ = tl.size_ratio(est, c)
                 explore = ratio_ > 0 and est["ev"] < 0   # 기대 마이너스인데 기록이 적어서 건너뛰지 않은 경우
-                if explore:
+                paper_surge = style == "surge" and not buy_live   # 🔬 2호 가상 매수는 위험 없음 → 하루 탐색 한도 없이 표본 쌓기 (실전 전환되면 다시 한도 적용)
+                if explore:   # 🔬 탐색 매수도 최소 거래대금 기준 꼭 지킴
+                    try:
+                        ok_v, v_note = explore_value_ok(sym, price, fx, c)
+                    except Exception as e:
+                        ok_v, v_note = False, f"거래대금 확인 오류({type(e).__name__})"
+                    if not ok_v:
+                        results.append(f"{sym}: 🔬 탐색 매수 거래대금 미달 — {v_note} → 안 삼"); continue
+                if explore and paper_surge:
+                    ratio_ = float(c["min_size_ratio"])
+                    note_ = f"🔬 탐색 매수(가상·한도 없음): 기대 {est['ev']:+.2f}% 지만 기록 {est['n']}건뿐이라 최소 금액({ratio_ * 100:.0f}%)으로 기록 쌓기"
+                elif explore:
                     if int(state().get("explore_today", 0)) >= c["explore_per_day"]:
                         ratio_, note_ = 0.0, f"기대 수익 {est['ev']:+.2f}% (기록 {est['n']}건) · 오늘 탐색 매수 {c['explore_per_day']}번 다 씀 → 건너뜀"
                     else:
@@ -1396,8 +1652,17 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     results.append(f"{sym}: 📚 스윙 진입 조건 기록 실패 — {type(e).__name__}: {e}")
             if c["ai_decide"] and why:
                 feat["ai_decide"] = "산다"
+            for k_, v_ in chase_m.items():   # 🧗 고점 위치·되돌림 수치도 학습 기록에
+                if str(k_).startswith("rb_"):   # 🔄 반등 근거는 이번 진입 값으로 꼭 덮어씀
+                    feat[k_] = v_
+                else:
+                    feat.setdefault(k_, v_)
+            try:   # 📝 매수 근거를 수치로 반드시 기록
+                feat["why_buy"] = why_buy_text(feat, est, price, reason, why)
+            except Exception:
+                feat["why_buy"] = f"현재가 {price:g} | 규칙: {reason[:60]}"
             nnote = news.note(nw)
-            if c["prob_sizing"] and est["ev"] < 0:
+            if c["prob_sizing"] and est["ev"] < 0 and not (style == "surge" and not buy_live):   # 2호 가상 탐색은 1호 실전 한도를 안 깎음
                 with _lock:
                     s_e = state(); s_e["explore_today"] = int(s_e.get("explore_today", 0)) + 1; _save(s_e)
             results.append(_execute(sym, "BUY", qty, buy_px, reason + (f" · {nnote}" if nnote else "") + (f" · 🎲 {size_note}" if size_note else "")
@@ -1530,6 +1795,8 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
             s["orders_today"] += 1
         _save(s)
     event("실전 주문" if live else "가상 주문", f"{label} — {reason}", symbol=sym, **({"chart": chart} if chart else {}))
+    if not live and side != "BUY":   # 🔄 가상 매도 뒤 반등 진입 비교 보고
+        _rebound_report(sym)
     return f"{sym}: {'✅ 주문 보냄' if live else '📝 가상 체결'} {label} — {reason}"
 
 
@@ -1748,6 +2015,7 @@ def hourly_text() -> str:
             lines.append(f"  오늘 매수 {buy} · 매도 {sell} (손절 {stop})")
             try:
                 lines.append("  " + tl.hot_text(m))
+                lines.append("  " + tl.rebound_text(m))
             except Exception:
                 pass
             # 지난 1시간 오류·정지
@@ -1788,6 +2056,7 @@ def start(log_fn=print) -> None:
     _log_fn = log_fn
     if _thread and _thread.is_alive():
         return
+    _resume_note()   # 자동 재시작이었으면 이어받은 상태 기록
 
     def tick(m: str, timers: dict) -> None:
         for msg in store.recovered():
@@ -1918,7 +2187,9 @@ LABELS = {"lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode":
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
           "trail_pct": "고점 대비 하락 매도(%)", "trail_wide_after_pct": "넓은 기준 쓰는 최고 수익(%)", "trail_wide_pct": "넓은 고점 대비 기준(%)", "surge_min_change_pct": "급등 최소 상승률(%)", "surge_max_change_pct": "급등 최대 상승률(%)",
           "surge_volume_ratio": "거래량 배수 기준", "pre_volume_ratio": "프리장 거래량 기준", "min_trading_value_krw": "최소 거래대금(원)",
-          "us_min_price": "최소 주가($)", "limit_slip_pct": "지정가 여유(%)", "interval_min": "종목 찾기 간격(분)",
+          "us_min_price": "최소 주가($)", "limit_slip_pct": "지정가 여유(%)", "chase_filter": "고점 추격 필터(2호)",
+          "chase_near_high_pct": "고점 근처 기준(%)", "chase_min_pullback_pct": "직전 5분 최소 되돌림(%)", "chase_run5_max_pct": "고점 근처 5분 급등 한도(%)",
+          "rebound_entry": "반등 확인 후 진입(2호)", "rebound_pullback_pct": "반등 전 최소 눌림(%)", "rebound_pullback_max_pct": "반등 전 최대 눌림(%)", "rebound_up_bars": "연속 상승 1분봉 수", "interval_min": "종목 찾기 간격(분)",
           "exit_check_sec": "손절 확인 간격(초)", "loss_streak_pause": "연속 손실 쉬기 기준", "pause_min": "쉬는 시간(분)",
           "us_premarket": "프리장 매매", "stop_at_target": "목표 달성 시 쉬기", "ai_check": "주문 전 AI 검토", "auto_pick": "종목 알아서 고르기",
           "market": "시장", "strategy": "전략", "budget_mode": "예산 방식", "mode": "모드",
@@ -1982,6 +2253,7 @@ def _engine_one() -> str:
     lines.append(line)
     try:
         lines.append(tl.hot_text(c["market"]))
+        lines.append(tl.rebound_text(c["market"]))
     except Exception:
         pass
     for t in L["trades"][:10]:
@@ -2091,15 +2363,30 @@ def _ai_chart_ok(sym: str, reason: str, price: float) -> tuple[bool, str, str]:
 _live_cache: dict[str, dict] = {}
 
 
-def auto_charts(limit: int = 6) -> list[dict]:
-    """📊 실시간 차트: 자동매매가 가진 종목 + 방금 고른 종목 (최대 6개), 종목당 1분에 한 번만 다시 그림 (파일은 덮어씀)"""
+def auto_charts(limit: int = 6, open_sym: str = "") -> list[dict]:
+    """📊 실시간 차트: 자동매매가 가진 종목 + 방금 고른 종목 (최대 6개). 종목마다 한 줄 요약, 펼친 종목(open_sym)만 차트 그림 (1분에 한 번)"""
     c, s = config(), state()
     if not toss.enabled():
         return []
-    held = list((s["bot_pos"] if c["mode"] != "paper" else s["paper"]["positions"]).keys())
-    picks = list((s.get("cands") or {}).keys()) or [x["symbol"] for x in (s.get("picks") or {}).get("picks", [])]
+    pos = s["bot_pos"] if c["mode"] != "paper" else s["paper"]["positions"]
+    held = list(pos.keys())
+    pk = (s.get("picks") or {}).get("picks", [])
+    picks = list((s.get("cands") or {}).keys()) or [x["symbol"] for x in pk]
+    names = {x.get("symbol"): x.get("name") for x in pk if x.get("symbol")}
+    syms = list(dict.fromkeys(held + picks))[:limit]
+    try:   # 한 줄 요약용 현재가 (한 번에 조회)
+        qs = toss.prices(syms) if syms else {}
+    except Exception:
+        qs = {}
     out = []
-    for sym in list(dict.fromkeys(held + picks))[:limit]:
+    for sym in syms:
+        px = (qs.get(sym) or {}).get("price")
+        avg = (pos.get(sym) or {}).get("avg") or 0
+        row = {"sym": sym, "held": sym in held, "name": names.get(sym) or "", "price": px,
+               "pnl_pct": round((px / avg - 1) * 100, 2) if px and avg else None}
+        if sym != open_sym:   # 접힌 종목은 차트 안 그림
+            out.append(row)
+            continue
         hit = _live_cache.get(sym)
         if not hit or time.time() - hit["at"] > 55:
             try:
@@ -2108,7 +2395,7 @@ def auto_charts(limit: int = 6) -> list[dict]:
             except Exception as e:
                 hit = {"error": str(e), "at": time.time()}
                 _live_cache[sym] = hit
-        out.append({"sym": sym, "held": sym in held, **{k: v for k, v in hit.items() if k != "at"}, "v": int(hit["at"])})
+        out.append({**row, **{k: v for k, v in hit.items() if k != "at"}, "v": int(hit["at"])})
     return out
 
 
@@ -2439,7 +2726,8 @@ def _cross_review(day: str, market: str) -> str:
     def _row(t):
         f = t.get("features") or {}
         return {"sym": t["sym"], "pnl": t["pnl_pct"], "exit": t.get("exit_kind"), "mfe": t["mfe"], "mae": t["mae"],
-                "why_buy": (f.get("ai_decide") or ""), "change": f.get("change"), "ratio": f.get("ratio"), "mode": t["mode"]}
+                "why_buy": (f.get("why_buy") or f.get("ai_decide") or ""), "change": f.get("change"), "ratio": f.get("ratio"),
+                "from_high": f.get("from_high"), "pullback5": f.get("pullback5"), "mode": t["mode"]}
     by = {LANES[st]: [_row(t) for t in ts if tl._ts(t) == st] for st in LANES}
     c = config()
     prompt = ("두 자동매매 AI 의 오늘 거래예요. " + " / ".join(f"{LANES[st]}: {lane_mode(c, st)}" for st in LANES) + "\n"
