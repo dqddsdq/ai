@@ -83,6 +83,7 @@ DEFAULTS = {
     "chase_near_high_pct": 1.0,    #   오늘 고점 대비 이 % 이내면 '고점 근처'
     "chase_min_pullback_pct": 0.5, #   직전 5분 고점에서 이 % 이상 눌린 적이 있어야 삼
     "chase_run5_max_pct": 3.0,     #   고점 근처에서 직전 5분 상승률이 이 % 이상이면 안 삼
+    "falling5_block": True,        # 📉 2호 단타: 직전 5분 상승률이 마이너스(하락 중)면 안 삼
     "rebound_entry": True,         # 🔄 2호 반등 확인 후 진입: 고점에서 눌린 뒤 VWAP·MA5 위 회복 + 직전 1분봉 연속 상승일 때만 삼
     "rebound_pullback_pct": 1.5,   #   오늘 고점에서 이 % 이상 눌린 적이 있어야 함
     "rebound_pullback_max_pct": 10.0,  #   이 % 넘게 무너졌으면 반등 아님 (안 삼)
@@ -359,7 +360,7 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
             except (TypeError, ValueError):
                 errors.append(f"{k} 는 {lo:g}~{hi:g}")
     for k in ("ai_check", "auto_pick", "stop_at_target", "us_premarket", "ai_chart_check", "prob_sizing",
-              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode", "shadow_on", "auto_promote", "backtest_on", "ai_decide", "swing_trail_vol", "chase_filter", "rebound_entry"):
+              "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode", "shadow_on", "auto_promote", "backtest_on", "ai_decide", "swing_trail_vol", "chase_filter", "rebound_entry", "falling5_block"):
         if k in new:
             c[k] = bool(new[k])
     if errors:
@@ -867,6 +868,25 @@ def chase_check(sym: str, price: float, minutes: int | None, c: dict) -> tuple[b
         if m["run5"] >= float(c["chase_run5_max_pct"]):
             return False, m, f"고점 추격: {desc} (고점 근처 5분 급등 ≥ {c['chase_run5_max_pct']:g}%)"
     return True, m, desc
+
+
+def falling5_check(sym: str, price: float) -> tuple[bool, float | None]:
+    """📉 직전 5분 상승률이 마이너스(하락 중)면 안 삼: (살지, 5분 상승률). 1분봉 부족이면 막지 않음"""
+    from . import shadow
+    bs = shadow._bars(sym, 10)
+    if len(bs) < 5 or not price or not bs[-5]["o"]:
+        return True, None
+    run5 = round((price / bs[-5]["o"] - 1) * 100, 2)   # chase_check 의 run5 와 같은 계산
+    return run5 >= 0, run5
+
+
+def _note_buy_skip(sym: str, why: str) -> None:
+    """매수 안 한 이유를 활동 기록에 (같은 이유는 5분에 한 번)"""
+    k = ("buy", sym, why[:40])
+    if time.time() - _skip_seen.get(k, 0) < 300:
+        return
+    _skip_seen[k] = time.time()
+    event("매수 안 함", f"{sym} — {why}", symbol=sym)
 
 
 def rebound_check(sym: str, price: float, minutes: int | None, c: dict) -> tuple[bool, dict, str]:
@@ -1567,6 +1587,15 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if sum(1 for k in pos if (style_map.get(k) or (cands.get(k) or {}).get("style") or "surge") == style) >= c["pick_count"]:
                 results.append(f"{sym}: {LANES[style]} 가 이미 {c['pick_count']}종목 보유 중"); continue
             chase_m, chase_note = {}, ""
+            if style == "surge" and c.get("falling5_block", True):   # 📉 직전 5분 하락 중이면 안 삼
+                try:
+                    ok_f, run5_f = falling5_check(sym, price)
+                except Exception:
+                    ok_f, run5_f = True, None   # 확인 오류면 막지 않음 (다른 관문이 판단)
+                if not ok_f:
+                    f_note = f"📉 직전 5분 하락 중 (5분 상승 {run5_f:+.2f}%) → 안 삼"
+                    _note_buy_skip(sym, f_note)
+                    results.append(f"{sym}: {f_note}"); continue
             if style == "surge" and c.get("chase_filter", True):   # 🧗 고점 추격 필터 (진입 직후 역행 방지)
                 try:
                     ok_c, chase_m, chase_note = chase_check(sym, price, minutes, c)
@@ -2254,7 +2283,7 @@ LABELS = {"regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%�
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
           "trail_pct": "고점 대비 하락 매도(%)", "trail_wide_after_pct": "넓은 기준 쓰는 최고 수익(%)", "trail_wide_pct": "넓은 고점 대비 기준(%)", "surge_min_change_pct": "급등 최소 상승률(%)", "surge_max_change_pct": "급등 최대 상승률(%)",
           "surge_volume_ratio": "거래량 배수 기준", "pre_volume_ratio": "프리장 거래량 기준", "min_trading_value_krw": "최소 거래대금(원)",
-          "us_min_price": "최소 주가($)", "limit_slip_pct": "지정가 여유(%)", "chase_filter": "고점 추격 필터(2호)",
+          "us_min_price": "최소 주가($)", "limit_slip_pct": "지정가 여유(%)", "chase_filter": "고점 추격 필터(2호)", "falling5_block": "5분 하락 중 매수 금지(2호)",
           "chase_near_high_pct": "고점 근처 기준(%)", "chase_min_pullback_pct": "직전 5분 최소 되돌림(%)", "chase_run5_max_pct": "고점 근처 5분 급등 한도(%)",
           "rebound_entry": "반등 확인 후 진입(2호)", "rebound_pullback_pct": "반등 전 최소 눌림(%)", "rebound_pullback_max_pct": "반등 전 최대 눌림(%)", "rebound_up_bars": "연속 상승 1분봉 수", "interval_min": "종목 찾기 간격(분)",
           "exit_check_sec": "손절 확인 간격(초)", "loss_streak_pause": "연속 손실 쉬기 기준", "pause_min": "쉬는 시간(분)",
