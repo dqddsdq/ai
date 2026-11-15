@@ -267,7 +267,7 @@ def watch(day: str, picks: list[dict], prices: dict[str, float]) -> None:
         for sym, x in w.items():
             if sym in prices:
                 x["max"], x["min"] = max(x["max"], prices[sym]), min(x["min"], prices[sym])
-        for k in sorted(d["watch"])[:-5]:   # 최근 5일만 보관
+        for k in sorted(d["watch"])[:-60]:   # 최근 30일(두 시장)만 보관 — 주말 긴 백테스트·놓친 종목 연구용
             d["watch"].pop(k)
         _save(d)
 

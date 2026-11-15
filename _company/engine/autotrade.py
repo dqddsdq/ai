@@ -143,6 +143,7 @@ DEFAULTS = {
     "tod_filter": True,            # 🕐 최근 30일 계속 지는 시간대(10건↑·승률 35%↓·평균 마이너스)엔 급등주 안 삼
     "max_per_sector": 3,           # 🧺 같은 업종 동시 보유 최대 (0 = 안 봄 · 토스가 업종을 알려줄 때만)
     "backup_on": True, "backup_dir": "",   # 💾 하루 한 번 학습·계좌 기록 백업 (비우면 문서\자동매매_백업)
+    "weekend_study": True,         # 📚 토요일 오전: 긴 백테스트·과거 급등 패턴·놓친 종목·그림자 정리·주간 AI 복기
     "weekly_report": True, "tomorrow_plan": True,   # 📊 주간 성적표 · 🗓️ 장 마감 뒤 내일 계획 (텔레그램)
     "improve_effect_check": True,  # 🛠️ 매매 코드 자동 개선 뒤 10건↑ 성적이 나빠지면 자동 되돌림
     "news_on": True,               # 📰 사기 전에 공시 확인 (국장 DART · 미장 SEC) — 악재(증자·CB·감자·상장폐지 등)면 안 삼
@@ -2206,6 +2207,12 @@ def start(log_fn=print) -> None:
                 return
             if config()["mode"] == "off":
                 continue
+            try:   # 📚 쉬는 날 공부 (토요일 오전 · 따로 돌아서 루프는 안 멈춤)
+                from . import weekend
+                if config().get("weekend_study", True) and weekend.due() and not weekend._running.is_set():
+                    threading.Thread(target=weekend.run, args=(_log_fn,), daemon=True, name="weekend").start()
+            except Exception as e:
+                _log_fn(f"🤖 [오류] 주말 공부: {type(e).__name__}: {e}")
             try:   # 💓 헬스체크 신호 · 💾 하루 한 번 백업
                 extras.heartbeat()
                 extras.daily_backup(config(), _log_fn)
@@ -2277,7 +2284,7 @@ def _summary_one() -> str:
 # ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
 LABELS = {"regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
           "tod_filter": "지는 시간대 피하기", "max_per_sector": "같은 업종 최대 보유", "backup_on": "매일 백업", "weekly_report": "주간 성적표",
-          "tomorrow_plan": "내일 계획 알림", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -2725,7 +2732,12 @@ def _ai_decide_buy(sym: str, cd: dict, price: float, c: dict):
     except Exception:
         name, img = "", None
     e = cd["est"]
-    prompt = (lane_persona(cd["style"], _mkt(sym)) + "\n"
+    try:
+        from . import weekend
+        pat = weekend.pattern_text(_mkt(sym)) if cd["style"] == "surge" else ""
+    except Exception:
+        pat = ""
+    prompt = (lane_persona(cd["style"], _mkt(sym)) + "\n" + (f"{pat}\n" if pat else "") + ""
               f"{'스윙(며칠 보유)' if cd['style'] == 'swing' else '단타(그날 정리)'} 매수 후보 {sym}, 현재가 {price}.\n"
               f"고른 이유: {cd['reason']}\n"
               + (f"최근 공시: {news.note(cd.get('news'))} (급등 이유가 공시로 설명되면 좋은 신호, 이유가 없으면 신중히)\n" if news.note(cd.get('news')) else "")

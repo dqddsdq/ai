@@ -238,6 +238,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(notify.test())
         if path == "/api/autotrade/preflight":
             return self._json(at.preflight())
+        if path == "/api/autotrade/weekend":
+            from . import weekend
+            if weekend._running.is_set():
+                return self._json({"ok": False, "message": "이미 공부 중이에요"})
+            threading.Thread(target=weekend.run, args=(log,), daemon=True, name="weekend").start()
+            return self._json({"ok": True, "message": "주말 공부 시작 — 10~30분 걸리고, 끝나면 텔레그램으로 알려요"})
         if path == "/api/autotrade/backtest":
             return self._json(at.backtest_now())
         if path == "/api/autotrade/lab-reset":
