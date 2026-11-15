@@ -623,6 +623,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div class="row" style="margin-top:8px"><div class="spacer"></div><button class="btn primary" id="imp-new">변경안 만들기</button></div>
       </div>
       <label class="muted" style="display:block;margin:8px 0"><input type="checkbox" id="imp-auto"> 🤖 <b>자동 개선</b> — 팀이 제안하면 AI 가 고치고, 검사 통과하면 승인 없이 적용 · 코드면 앱 자동 재시작 · 안 켜지면 자동 되돌림 (🔒 키·개인정보·계좌 관련 파일은 못 고침)</label>
+      <div class="muted" style="margin:4px 0 8px"><button class="btn" id="sync-btn" style="padding:3px 10px">🔄 GitHub 동기화</button> <span id="sync-status"></span></div>
       <div id="imp-list"></div>
     </div></div>
   </section>
@@ -1768,6 +1769,9 @@ async function renderImprovePage() {
   $("#imp-list").innerHTML = (d.jobs || []).length ? "" : `<p class="muted">아직 개선 기록이 없어요.</p>`;
   (d.jobs || []).forEach(j => improveCard(j, $("#imp-list")));
   $("#imp-auto").checked = !!d.auto;
+  const sy = d.sync || {};
+  $("#sync-status").textContent = sy.on ? (sy.last ? `마지막 ${sy.last} · ${sy.msg}` : "연결됨 · 1시간마다 자동") : "연결 안 됨 — '깃허브 연결.bat' 을 한 번 실행하세요";
+  $("#sync-btn").onclick = async (e) => { e.target.disabled = true; $("#sync-status").textContent = "동기화 중..."; const r = await api("/api/sync", {}); $("#sync-status").textContent = r.message; e.target.disabled = false; };
   $("#imp-auto").onchange = async (e) => { const r = await api("/api/improve/auto", { on: e.target.checked }); alert(r.message); };
 }
 $("#imp-new").onclick = async () => {

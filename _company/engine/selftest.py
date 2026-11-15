@@ -41,7 +41,7 @@ def 토스_쓰기는_주문_생성_취소만():
 def 자기개선_보호_파일():
     from . import improve
     need = {".env", "engine/toss.py", "engine/improve.py", "engine/tools.py", "engine/guard.py", "engine/__init__.py",
-            "engine/__main__.py", "engine/notify.py", "engine/selftest.py", "_shared/autotrade.json", "_shared/tools_catalog.json"}
+            "engine/__main__.py", "engine/notify.py", "engine/selftest.py", "engine/gitsync.py", "_shared/autotrade.json", "_shared/tools_catalog.json"}
     assert need <= improve.PROTECTED, need - improve.PROTECTED
 
 
@@ -144,6 +144,17 @@ def 설정_허용_범위():
     for k, hi in limit.items():
         assert k in at.NUMS and at.NUMS[k][1] <= hi, (k, at.NUMS.get(k))
     assert at.DEFAULTS["mode"] != "live" and at.CHOICES["mode"] == ("off", "paper", "live")
+
+
+@case
+def GitHub_동기화는_코드만():
+    """키·학습 기록·설정·대화는 GitHub 에 절대 안 올라감 (올릴 폴더가 코드뿐이고, 섞이면 빼냄)"""
+    from . import gitsync
+    for p in gitsync.SYNC_PATHS:
+        assert not any(n in p for n in gitsync.NEVER), p
+        assert p.startswith("_company/engine") or p.startswith("_company/_agents/trader/") or p == "_company/requirements.txt", p
+    for n in (".env", "_cache/", "autotrade.json", "sessions/", "memory.md"):
+        assert n in gitsync.NEVER, n
 
 
 @case

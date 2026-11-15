@@ -35,7 +35,7 @@ EDITABLE_DIRS = ("engine", "_agents", "_shared")
 #   지키는 장치: improve.py(이 목록·적용 절차) · selftest.py(계좌 규칙 검사) · guard.py(자동 되돌리기) · __init__/__main__(검사 우회 방지)
 PROTECTED = {".env", "engine/tools.py", "_shared/tools_catalog.json",
              "engine/toss.py", "_shared/autotrade.json", "engine/notify.py",
-             "engine/improve.py", "engine/selftest.py", "engine/guard.py", "engine/__init__.py", "engine/__main__.py",
+             "engine/improve.py", "engine/selftest.py", "engine/guard.py", "engine/gitsync.py", "engine/__init__.py", "engine/__main__.py",
              "_shared/improvements.json", "_shared/tool_requests.json"}
 # ⚠️ 고칠 수 있지만 조심할 매매 코드: 사장님 승인 + 자체 점검(돈 이동·실전 켜기·미수·정지 규칙) 통과해야 적용
 TRADING = {"engine/autotrade.py", "engine/tradelearn.py", "engine/picker.py", "engine/shadow.py", "engine/backtest.py", "engine/news.py",
@@ -437,6 +437,12 @@ def auto_once(log, restart) -> str:
     if not r.get("ok"):
         _notify(f"🛠️ 자동 개선 적용 안 됨: {r.get('message', '')[:120]}", log)
         return "적용 안 됨"
+    try:   # 🔄 GitHub 에도 올리기 (연결돼 있을 때만 · 코드만)
+        from . import gitsync
+        if gitsync.enabled():
+            log("🔄 " + gitsync.push(f"자동 개선: {job['request'][:60]}")["message"])
+    except Exception as e:
+        log(f"🔄 GitHub 올리기 오류: {type(e).__name__}: {e}")
     files = ", ".join(f["path"] for f in res["files"])[:150]
     trading = any(f.get("trading") for f in res["files"])
     _notify(f"🤖🛠️ 자동 개선 적용: '{job['request'][:60]}'\n파일: {files}" + ("\n⚠️ 매매 코드가 바뀌었어요" if trading else ""), log)

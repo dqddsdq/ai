@@ -298,7 +298,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tools":
             return self._json(tl.overview())
         if path == "/api/improve":
-            return self._json({"jobs": im.history()[:50], "auto": im.auto_on()})
+            from . import gitsync
+            return self._json({"jobs": im.history()[:50], "auto": im.auto_on(),
+                               "sync": {"on": gitsync.enabled(), **gitsync.STATUS}})
         m = re.match(r"^/api/improve/([\w\-]+)$", path)
         if m:
             job = im.get(m.group(1))
@@ -348,14 +350,22 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/improve/new":
             req = str(body.get("request", "")).strip()
             return self._json(im.create(req, "", "사장님") if req else {"error": "무엇을 바꿀지 적어 주세요"})
+        if path == "/api/sync":
+            from . import gitsync
+            return self._json(gitsync.sync_now(log, lambda: threading.Thread(target=_restart, daemon=True).start()))
         if path == "/api/improve/auto":
             return self._json(im.set_auto(bool(body.get("on"))))
         if path in ("/api/improve/apply", "/api/improve/rollback", "/api/improve/discard"):
             fn = {"apply": im.apply, "rollback": im.rollback, "discard": im.discard}[path.rsplit("/", 1)[1]]
             res = fn(str(body.get("id", "")))
             log(f"🛠️ 개선 {path.rsplit('/', 1)[1]}: {res.get('message', res)}")
-            if res.get("ok") and (res.get("needs_restart") or "다시 켜야" in str(res.get("message", ""))):   # 코드가 바뀌면(적용·되돌리기) 바퀴가 끝난 뒤 자동으로 다시 켜기
-                threading.Thread(target=_restart, daemon=True, name="restart").start()
+            def _after(kind=path.rsplit("/", 1)[1], need=res.get("ok") and (res.get("needs_restart") or "다시 켜야" in str(res.get("message", "")))):
+                from . import gitsync
+                if res.get("ok") and kind in ("apply", "rollback") and gitsync.enabled():   # 🔄 GitHub 에도 올리기
+                    log("🔄 " + gitsync.push(f"개선 {kind}")["message"])
+                if need:   # 코드가 바뀌면(적용·되돌리기) 바퀴가 끝난 뒤 자동으로 다시 켜기
+                    _restart()
+            threading.Thread(target=_after, daemon=True, name="after-improve").start()
             return self._json(res)
         if path == "/api/tools/approve":
             return self._json(tl.approve(str(body.get("id", ""))))
@@ -775,6 +785,10 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     notify.start(log)
     _keep_awake()
     threading.Thread(target=im.auto_worker, args=(log, _restart), daemon=True, name="improve-auto").start()
+    from . import gitsync
+    threading.Thread(target=gitsync.worker, args=(log, _restart), daemon=True, name="git-sync").start()
+    if gitsync.enabled():
+        log("🔄 GitHub 동기화 켜짐 — 1시간마다·자동 개선 적용 때 코드만 올리고 받아요")
     if im.auto_on():
         log("🤖🛠️ 자동 개선 켜짐 — 팀이 제안하면 고치고 검사 통과 시 바로 적용 (키·계좌 관련 파일은 잠금)")
     if at.config()["mode"] != "off":
