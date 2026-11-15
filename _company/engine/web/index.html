@@ -1447,16 +1447,25 @@ function chartBlock(items, container) {
 function openChart(id) { window.open("/api/upload/" + encodeURIComponent(id), "_blank"); }
 function tradeActionCard(a, container) {
   const el = document.createElement("div"); el.className = "treq";
+  const done = (status, msg) => {   // 적용됨·무시 상태 (대화에 저장돼서 다시 열어도 그대로)
+    el.querySelector(".tb").textContent = { applied: "적용됨", ignored: "무시", failed: "실패" }[status] || status;
+    el.querySelector(".tb").className = "tb " + (status === "applied" ? "ok" : "");
+    el.querySelector(".acts").innerHTML = `<span class="muted">${esc(msg || "")}</span>`;
+  };
   el.innerHTML = `<div class="th">🤖 <b>자동매매에 지시</b><span class="tb wait">적용 대기</span></div>
     <div class="why"><b>${esc(a.label || a.type)}</b>${a.why ? `<br>${esc(a.why)}` : ""}</div>
     <div class="acts"><button class="btn ${a.type === "stop" ? "danger" : "primary"}" data-a="ok">${a.type === "stop" ? "⛔ 지금 정지" : "적용"}</button><button class="btn" data-a="no">무시</button></div>`;
-  el.querySelector('[data-a="ok"]').onclick = async (e) => {
-    e.target.disabled = true; const r = await api("/api/autotrade/action", { action: a });
-    el.querySelector(".tb").textContent = r.ok ? "적용됨" : "실패"; el.querySelector(".tb").className = "tb " + (r.ok ? "ok" : "");
-    el.querySelector(".acts").innerHTML = `<span class="muted">${esc(r.message || (r.ok ? "바꿨어요" : "실패"))}</span>`;
-  };
-  el.querySelector('[data-a="no"]').onclick = () => { el.querySelector(".acts").innerHTML = '<span class="muted">무시했어요</span>'; el.querySelector(".tb").textContent = "무시"; };
   container.appendChild(el);
+  if (a.status) return done(a.status, a.result || (a.status === "ignored" ? "무시했어요" : "바꿨어요"));
+  const send = async (ignore) => {
+    el.querySelectorAll(".acts button").forEach(b => b.disabled = true);
+    const r = await api("/api/autotrade/action", { action: a, conversation_id: state.conv?.id, ignore });
+    if (r.status) return done(r.status, r.message);
+    if (r.ok) { a.status = ignore ? "ignored" : "applied"; a.result = r.message; }
+    done(r.ok ? (ignore ? "ignored" : "applied") : "failed", r.message || (r.ok ? "바꿨어요" : "실패"));
+  };
+  el.querySelector('[data-a="ok"]').onclick = () => send(false);
+  el.querySelector('[data-a="no"]').onclick = () => send(true);
 }
 function renderLanes(L, lessons, halted) {
   const modeKo = { live: "🔴 실전", paper: "📝 가상", off: "⏸️ 쉼" };

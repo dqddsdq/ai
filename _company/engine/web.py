@@ -222,8 +222,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(at.run_once(force=True))
             except Exception as e:
                 return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
-        if path == "/api/autotrade/action":
-            return self._json(at.apply_action(body.get("action") or {}))
+        if path == "/api/autotrade/action":   # 결과를 대화 기록에 남겨서 다시 열어도 '적용됨'·'무시'로 보이게 (두 번 적용 막기)
+            a = body.get("action") or {}
+            conv, card = None, None
+            try:
+                conv = load_conv(str(body.get("conversation_id") or ""))
+                card = next((x for m in conv["messages"] for x in (m.get("trade_actions") or []) if x.get("id") == a.get("id")), None)
+            except (FileNotFoundError, ValueError, KeyError):
+                pass
+            if card and card.get("status") in ("applied", "ignored"):
+                return self._json({"ok": False, "message": "이미 처리한 카드예요", "status": card["status"]})
+            r = {"ok": True, "message": "무시했어요"} if body.get("ignore") else at.apply_action(a)
+            if card is not None and (r.get("ok") or body.get("ignore")):
+                card["status"] = "ignored" if body.get("ignore") else "applied"
+                card["result"] = str(r.get("message") or "바꿨어요")[:200]
+                save_conv(conv)
+            return self._json(r)
         if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
             return self._json(at.unhalt())
         if path == "/api/autotrade/review":
