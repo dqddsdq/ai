@@ -146,7 +146,10 @@ def save_key(tool_id: str, value: str) -> dict:
     if not t or t["type"] != "api_key":
         return {"ok": False, "message": "키를 넣을 수 없는 도구예요"}
     value = value.strip()
-    if not re.fullmatch(r"[A-Za-z0-9._@:\-]{4,200}", value):
+    if t["env"] == "HEALTHCHECK_URL":   # 주소 하나만 받음 (https://hc-ping.com/… 같은 형식)
+        if not re.fullmatch(r"https://[A-Za-z0-9.\-]+(/[A-Za-z0-9._\-]+){1,6}", value):
+            return {"ok": False, "message": "https:// 로 시작하는 헬스체크 주소를 그대로 붙여넣어 주세요"}
+    elif not re.fullmatch(r"[A-Za-z0-9._@:\-]{4,200}", value):
         return {"ok": False, "message": "키 형식이 이상해요 (영문·숫자만, 공백 없이)"}
     env = t["env"]
     with _lock:

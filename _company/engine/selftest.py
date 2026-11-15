@@ -367,6 +367,34 @@ def 두_AI_장부_분리():
 
 
 @case
+def 추가_관문은_사는_것만_줄임():
+    """시장 분위기·시간대·업종·토스 장애 관문: 사는 것만 줄이고 0~1 배수 · 백업에 토큰 안 들어감 · 교체 기준은 조합 많을수록 엄격"""
+    from . import extras
+    c = _cfg(regime_on=True, regime_half_pct=1.5, regime_stop_pct=3, tod_filter=False, max_per_sector=0)
+    orig = extras.index_change
+    try:
+        for ch, want in ((-0.5, 1.0), (-2.0, 0.5), (-3.5, 0.0)):
+            extras.index_change = lambda m, ch=ch: ch
+            assert extras.regime("US", c)[0] == want, (ch, extras.regime("US", c))
+        extras.index_change = lambda m: -9.0
+        assert extras.buy_gate("A", "swing", 100, "US", [], c)[0] == 1.0   # 스윙은 지수 관문 안 받음
+    finally:
+        extras.index_change = orig
+    extras._fail.pop("ZZ", None)
+    for _ in range(3):
+        extras.toss_fail("ZZ", "x")
+    assert extras.degraded("ZZ") and extras.buy_gate("A", "swing", 100, "ZZ", [], c)[0] == 0.0
+    extras.toss_ok("ZZ")
+    assert not extras.degraded("ZZ")
+    assert extras.slip_cfg({"sim_slip_pct": 0.1}, spread=1.0)["sim_slip_pct"] == 0.5
+    assert extras.slip_cfg({"sim_slip_pct": 0.3}, spread=0.2)["sim_slip_pct"] == 0.3
+    assert extras.promote_edge(10) < extras.promote_edge(80)
+    import inspect
+    src = inspect.getsource(extras.daily_backup)
+    assert "toss.TOKEN_CACHE.name" in src, "백업에 토스 토큰이 들어가면 안 돼요"
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)

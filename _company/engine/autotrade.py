@@ -36,7 +36,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import backtest as bt
-from . import news, picker, shadow, store, toss
+from . import extras, news, picker, shadow, store, toss
 from . import tradelearn as tl
 from .agents import COMPANY_DIR, SHARED_DIR
 
@@ -136,6 +136,14 @@ DEFAULTS = {
     "lane_auto_live": True,        #    2호(가상)가 아래 조건을 채우면 실전으로 · 실전 쪽이 연속 손실이면 가상으로
     "lane_live_trades": 30, "lane_live_days": 14,   #    최근 N일 끝난 거래 M건 이상 · 평균 플러스 · 승률 45%↑
     "lane_cross_review": True,     #    장 마감 후 두 AI 가 서로 거래를 복기 → 공유 노트(교훈)에 기록
+    "regime_on": True,             # 📉 시장 분위기: 지수(QQQ·KODEX200)가 크게 빠지는 날 급등주 덜 사기
+    "regime_half_pct": 1.5,        #    지수 오늘 -이 % 이하면 급등주 금액 절반
+    "regime_stop_pct": 3,          #    -이 % 이하면 급등주 새로 안 삼
+    "tod_filter": True,            # 🕐 최근 30일 계속 지는 시간대(10건↑·승률 35%↓·평균 마이너스)엔 급등주 안 삼
+    "max_per_sector": 3,           # 🧺 같은 업종 동시 보유 최대 (0 = 안 봄 · 토스가 업종을 알려줄 때만)
+    "backup_on": True, "backup_dir": "",   # 💾 하루 한 번 학습·계좌 기록 백업 (비우면 문서\자동매매_백업)
+    "weekly_report": True, "tomorrow_plan": True,   # 📊 주간 성적표 · 🗓️ 장 마감 뒤 내일 계획 (텔레그램)
+    "improve_effect_check": True,  # 🛠️ 매매 코드 자동 개선 뒤 10건↑ 성적이 나빠지면 자동 되돌림
     "news_on": True,               # 📰 사기 전에 공시 확인 (국장 DART · 미장 SEC) — 악재(증자·CB·감자·상장폐지 등)면 안 삼
     "news_unknown_ratio": 1.0,     #    공시가 하나도 없는 '이유 모르는 급등'이면 금액 × 이 값 (1 = 안 줄임 · 그림자 매매로 0.5·0.25 비교 후 자동 교체)
     "focus_max_pct": 50,           # 🎯 확신할 때만 몰아넣기: 조건 맞으면 한 종목에 예산의 최대 이 %까지 (0 = 안 씀, 늘 똑같이 나눔)
@@ -156,12 +164,13 @@ NUMS = {"shadow_count": (2, 1000), "promote_min_trades": (3, 200), "promote_marg
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (10, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
         "chase_near_high_pct": (0.1, 10), "chase_min_pullback_pct": (0, 5), "chase_run5_max_pct": (0.5, 20),
         "rebound_pullback_pct": (0.3, 10), "rebound_pullback_max_pct": (2, 30), "rebound_up_bars": (1, 3)}
 CHOICES = {"lane_swing_mode": ("live", "paper", "off"), "lane_surge_mode": ("live", "paper", "off"), "ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
 _lock = threading.RLock()
 _thread: threading.Thread | None = None
+_restart_fn: list = [None]   # web.py 가 넣어 줌 (자동 개선 되돌린 뒤 다시 켜기)
 _stop_req = threading.Event()   # 자동 개선 후 다시 켜기 전에: 지금 바퀴만 끝내고 멈춤
 _idle = threading.Event()
 
@@ -1144,7 +1153,7 @@ def _reconcile(fx: float) -> None:
                     _add_realized(s, rec["symbol"], gain, "live")
                     s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                     left = bp["qty"] - delta
-                    tl.on_sell(rec["symbol"], delta, fill_px, rec.get("reason", ""), "live", left <= 1e-9, config())
+                    tl.on_sell(rec["symbol"], delta, fill_px, rec.get("reason", ""), "live", left <= 1e-9, {**config(), "_fx_now": fx})
                     if left > 1e-9:
                         s["bot_pos"][rec["symbol"]] = {"qty": left, "avg": bp["avg"]}
                         if rec.get("partial"):
@@ -1270,7 +1279,13 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         invested_by = {st: sum(_val(k, v) for k, v in pos.items() if (style_map.get(k) or "surge") == st) for st in LANES}
     except toss.TossError as e:
         event("오류", str(e))
+        m_ = extras.toss_fail(market, e)
+        if m_:
+            event("오류", m_)
         return {"ok": False, "message": str(e)}
+    m_ = extras.toss_ok(market)
+    if m_:
+        event("복구", m_)
 
     # 예산
     if c["budget_mode"] == "all_cash":
@@ -1392,6 +1407,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             cands[k]["news"] = news.peek(k, market)   # 기다리지 않음 (처음엔 '확인 중', 다음 바퀴에 결과)
             if cands[k]["news"].get("ok"):
                 cands[k]["features"]["news"] = "악재" if cands[k]["news"]["bad"] else "있음" if cands[k]["news"]["items"] else "없음"
+    if not exits_only:   # 💱 상위 후보 호가 스프레드 (1분 보관 · 가상 체결을 현실에 가깝게)
+        for k in [k for k in picked if k not in pos][:8]:
+            try:
+                cands[k]["spread_pct"] = extras.spread_pct(k)
+            except Exception:
+                pass
     if cands:
         with _lock:
             s2 = state(); s2["cands"] = {k: {"style": v["style"], "reason": v["reason"], "ev": v["est"]["ev"], "p": v["est"]["p"]} for k, v in cands.items()}; _save(s2)
@@ -1526,6 +1547,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: 이번 달 목표 달성 → 새로 안 삼"); continue
             if stop_why and style == "surge":
                 results.append(f"{sym}: 📚 장중 학습 — {stop_why}"); continue
+            try:   # 📉 시장 분위기 · 🕐 지는 시간대 · 🧺 업종 쏠림 · ⚠️ 토스 장애 (사는 것만 줄임)
+                gate_mult, gate_why = extras.buy_gate(sym, style, minutes, market, list(pos), c)
+            except Exception as e:
+                gate_mult, gate_why = 1.0, ""
+                results.append(f"{sym}: 관문 확인 오류 {type(e).__name__}")
+            if gate_mult <= 0:
+                _note_skip(sym, gate_why)
+                results.append(f"{sym}: {gate_why}"); continue
             try:   # 재진입 금지 기록이 없거나 깨져도 오류 없이 넘어감
                 nr_all = state().get("no_rebuy")
                 nr = str((nr_all if isinstance(nr_all, dict) else {}).get(sym) or "")
@@ -1584,6 +1613,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if nw and nw.get("ok") and not nw["items"] and c["news_unknown_ratio"] < 1:   # 이유 모르는 급등 → 비중 축소
                 budget *= c["news_unknown_ratio"]
                 size_note = " · ".join(x for x in (size_note, f"📰 급등 이유 모름 → 금액 {c['news_unknown_ratio'] * 100:.0f}%") if x)
+            if gate_mult < 1:
+                budget *= gate_mult
+                size_note = " · ".join(x for x in (size_note, gate_why) if x)
             full_budget = budget
             if c["prob_sizing"]:   # 🎲 비슷한 조건의 지난 거래로 승률 추정 → 금액 조절
                 ratio_, note_ = tl.size_ratio(est, c)
@@ -1643,6 +1675,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 if not ok:
                     event("AI 반대", f"{sym} 매수 보류 — {why2}", symbol=sym); results.append(f"{sym}: AI 반대 — {why2}"); continue
             feat = dict(cands[sym]["features"])
+            if market == "US":
+                feat["fx"] = round(fx, 2)   # 환율 효과 계산용
             if style == "swing":   # 📚 스윙 진입 조건 기록 (기록용 · 이미 판단 끝난 뒤라 매수엔 영향 없음)
                 try:
                     for k_, v_ in swing_feats(sym, price, fx).items():
@@ -1759,7 +1793,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
             return f"{sym}: 주문 거절 — {e}"
     else:
         f = 1 if _mkt(sym) == "KR" else fx
-        p_ = tl.fill_px(config(), float(quote or price), side, float(px))   # 현재가 + 미끄러짐, 지정가보다 나쁘게는 X
+        p_ = tl.fill_px(extras.slip_cfg(config(), sym), float(quote or price), side, float(px))   # 현재가 + 미끄러짐, 지정가보다 나쁘게는 X
         rec["fill"] = round(p_, 4)
         with _lock:
             s = state(); p = s["paper"]
@@ -1779,7 +1813,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
                 p["realized"] += gain; _add_realized(s, sym, gain, "paper")
                 s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                 left = cur["qty"] - qty
-                tl.on_sell(sym, qty, p_, reason, "paper", left <= 1e-9, config())
+                tl.on_sell(sym, qty, p_, reason, "paper", left <= 1e-9, {**config(), "_fx_now": fx})
                 if left > 1e-9:
                     p["positions"][sym] = {"qty": left, "avg": cur["avg"]}
                     if partial:
@@ -1839,6 +1873,17 @@ def reset_paper() -> dict:
     return {"ok": True}
 
 
+def _scorecard_safe(c: dict, s: dict) -> dict:
+    try:
+        fx = 1.0 if c["market"] == "KR" else usd_krw(c)
+        sc = extras.scorecard(c["market"], "live" if c["mode"] == "live" else "paper", fx,
+                              float((s.get("month") or {}).get("start") or 0), s.get("orders", []))
+        sc["text"] = extras.scorecard_text(c["market"], sc)
+        return sc
+    except Exception as e:
+        return {"text": f"성적표 계산 오류: {type(e).__name__}"}
+
+
 def overview() -> dict:
     c, s = config(), state()
     return {"config": c, "toss": toss.enabled(), "day": s["day"], "orders_today": s["orders_today"],
@@ -1851,7 +1896,7 @@ def overview() -> dict:
             "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper", c["market"]),
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
             "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {},
-            "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "halted_lane": s.get("halted_lane") or {}}
+            "scorecard": _scorecard_safe(c, s), "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "halted_lane": s.get("halted_lane") or {}}
 
 
 def _brief(m: str) -> dict:
@@ -1900,6 +1945,21 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
                 _log_fn(f"🧪 그림자 조합 정리: {pm}")
     except Exception as e:
         event("오류", f"그림자 조합 정리 실패: {type(e).__name__}: {e}")
+    try:   # 🗓️ 내일 계획 · 📊 주간 성적표 · 🧾 연말 세금 알림
+        fx_ = 1.0 if c2["market"] == "KR" else usd_krw(c2)
+        with _lock:
+            s_r = state()
+            extras.after_review(c2["market"], mode_key, fx_, s_r, c2)
+            _save(s_r)
+    except Exception as e:
+        event("오류", f"장 마감 알림 실패: {type(e).__name__}: {e}")
+    try:   # 🛠️ 매매 코드 자동 개선 효과 확인 → 나빠졌으면 되돌림
+        if c2.get("improve_effect_check", True):
+            msg = extras.improve_effect(_log_fn, _restart_fn[0])
+            if msg:
+                event("자동 조정", msg)
+    except Exception as e:
+        event("오류", f"자동 개선 효과 확인 실패: {type(e).__name__}: {e}")
     if c2["backtest_on"] and toss.enabled():
         backtest_now(wait=True)
 
@@ -2117,6 +2177,11 @@ def start(log_fn=print) -> None:
                 return
             if config()["mode"] == "off":
                 continue
+            try:   # 💓 헬스체크 신호 · 💾 하루 한 번 백업
+                extras.heartbeat()
+                extras.daily_backup(config(), _log_fn)
+            except Exception as e:
+                _log_fn(f"🤖 [오류] 헬스체크·백업: {type(e).__name__}: {e}")
             try:
                 _hourly_check()   # ⏰ 1시간 장 상황 요약 (읽기 전용)
             except Exception as e:
@@ -2181,7 +2246,9 @@ def _summary_one() -> str:
 
 
 # ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
-LABELS = {"lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+LABELS = {"regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
+          "tod_filter": "지는 시간대 피하기", "max_per_sector": "같은 업종 최대 보유", "backup_on": "매일 백업", "weekly_report": "주간 성적표",
+          "tomorrow_plan": "내일 계획 알림", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -2234,6 +2301,10 @@ def _engine_one() -> str:
     lv = lanes_overview(c["market"])
     lines.append("🤝 두 AI: " + " / ".join(f"{v['name']} 모드 {v['mode']} 몫 {v['share']}% · 최근 {v['days']}일 {v.get('n', 0)}건"
                                         + (f" 승률 {v['win_rate']}% 평균 {v['avg']:+.2f}%" if v.get("n") else "") for v in lv.values()))
+    try:
+        lines.append("📊 " + _scorecard_safe(c, s)["text"].replace("\n", " / "))
+    except Exception:
+        pass
     notes = tl.lessons_text(c["market"], 8)
     if notes:
         lines.append("📒 공유 노트(교차 복기 교훈): " + notes)

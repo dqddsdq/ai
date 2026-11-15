@@ -164,6 +164,24 @@
         "SEC 규칙상 접속할 때 연락용 이메일을 밝혀야 해요 → 사장님 이메일을 여기 입력",
         "이 이메일은 SEC(sec.gov)에만 보내져요"
       ]
+    },
+    {
+      "id": "healthcheck",
+      "name": "헬스체크 (PC 꺼짐 알림)",
+      "type": "api_key",
+      "env": "HEALTHCHECK_URL",
+      "signup": "https://healthchecks.io",
+      "teams": [
+        "trader"
+      ],
+      "free": true,
+      "desc": "앱이 5분마다 이 주소로 신호를 보내요. PC·인터넷이 꺼져서 신호가 끊기면 그 서비스가 폰·메일로 알려줘요",
+      "steps": [
+        "healthchecks.io 에서 직접 무료 가입 (AI 가 대신 가입하지 않아요)",
+        "새 체크 만들기 → 주기 5분 · 유예 10분",
+        "https://hc-ping.com/... 로 시작하는 주소를 여기에 붙여넣기",
+        "그 서비스의 알림 설정에서 폰 앱·메일 연결"
+      ]
     }
   ]
 }

@@ -27,6 +27,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import store
+from . import extras
 from . import tradelearn as tl
 from .agents import COMPANY_DIR
 
@@ -390,13 +391,13 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     p["partial"] = True
                     continue
                 lim = price * (1 - vc["limit_slip_pct"] / 100) if p["style"] == "surge" else price
-                px = tl.fill_px(vc, price, "SELL", lim)   # 실전 가상 매매와 같은 체결 방식
+                px = tl.fill_px(extras.slip_cfg(vc, spread=(extras._mem.get(("spr", sym)) or (0, None))[1]), price, "SELL", lim)   # 실전 가상 매매와 같은 체결 + 스프레드
                 sc, bc = tl.side_cost(vc, market, "SELL") / 100, tl.side_cost(vc, market, "BUY") / 100   # 수수료·세금 포함
                 got = qty * px * f * (1 - sc)
                 v["cash"] += got
                 net = px * (1 - sc) / (p["avg"] * (1 + bc)) - 1
                 rec = {"t": _now(), "sym": sym, "style": p["style"], "qty": qty, "pnl_pct": round(net * 100, 2),
-                       "pnl_krw": round(net * p["avg"] * (1 + bc) * qty * f), "why": why[:60], "final": side == "SELL"}
+                       "pnl_krw": round(net * p["avg"] * (1 + bc) * qty * f), "why": why[:60], "final": side == "SELL", "fit": p.get("fit", True)}
                 if _is_base(v):   # 💰 누적 계좌: '현재' 조합의 확정 손익만 쌓음 (규칙이 바뀌어도 이어짐)
                     d["acct"]["realized"] = float(d["acct"].get("realized", 0)) + rec["pnl_krw"]
                     if side == "SELL":
@@ -442,14 +443,15 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     if (ft.get("ratio") or 0) < need_ratio:
                         continue
                 lim = q["price"] * (1 + vc["limit_slip_pct"] / 100) if cd["style"] == "surge" else q["price"]
-                px = tl.fill_px(vc, q["price"], "BUY", lim)
+                px = tl.fill_px(extras.slip_cfg(vc, spread=cd.get("spread_pct")), q["price"], "BUY", lim)   # 호가 스프레드 반영
+                fit = len(v["pos"]) < int(c["pick_count"]) and v["buys_today"] < int(c["max_orders_per_day"]) and (minutes or 0) <= 360
                 qty = int(per_pos * n_ratio // (px * f))   # 🧪 가상 현금 부족 제한 없음 (종목당 금액은 모든 조합 같게 → 비교 공정)
                 if qty < 1:
                     continue
                 cost = qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
                 v["cash"] -= cost
                 v["buys_today"] += 1
-                v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False,
+                v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False, "fit": fit,
                                  "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost, "got": 0.0,
                                  "ft": {**{k: ft.get(k) for k in ("change", "ratio", "pre", "r20", "rsi") if ft.get(k) is not None},
                                         "style": cd["style"], "mkt": market}}
@@ -860,13 +862,15 @@ def maybe_promote(c: dict, market: str, apply_fn) -> str:
     base_v = next((v for v in d["variants"] if _is_base(v)), None)
     if not base_v:
         return ""
-    bfin = _fin(base_v)
+    fitf = lambda ts: [t for t in ts if t.get("fit", True)]   # noqa: E731  실전 조건(보유 수·하루 횟수·마감 전)에 맞았던 거래만으로 비교
+    bfin = fitf(_fin(base_v))
     min_n = max(PROMOTE_N, int(c.get("promote_min_trades", 15)))
+    need_edge = extras.promote_edge(len(d["variants"]))   # 조합이 많을수록 더 큰 차이 요구 (운으로 1등 방지)
     best = None
     for v in d["variants"]:
         if v is base_v or v.get("key"):
             continue
-        fin = _fin(v)
+        fin = fitf(_fin(v))
         if len(fin) < min_n:
             continue
         cut = int(len(fin) * (1 - HOLDOUT))
@@ -884,14 +888,14 @@ def maybe_promote(c: dict, market: str, apply_fn) -> str:
     b_late = [t for t in bfin if t["t"] >= since]
     la, ba = _avg(late), _avg(b_late)
     ln, lv = _live_avg(market, since)
-    if len(b_late) < CMP_MIN or la <= 0 or la <= ba or (ln >= CMP_MIN and la <= lv):
+    if len(b_late) < CMP_MIN or la <= 0 or la - ba < need_edge or (ln >= CMP_MIN and la <= lv):
         return ""
     params = _clean(dict(v["params"]), c)
     if not params:
         return ""
     ev = (f"'{v['name']}' {len(early) + len(late)}건 — 앞 {len(early)}건 평균 {_avg(early):+.2f}% vs '현재' {_avg(b_early):+.2f}% · "
           f"최근 {len(late)}건 평균 {la:+.2f}% vs '현재' {ba:+.2f}%({len(b_late)}건)"
-          + (f" · 실전 {lv:+.2f}%({ln}건)" if ln >= CMP_MIN else "") + " (수수료·미끄러짐 뺀 값)")
+          + (f" · 실전 {lv:+.2f}%({ln}건)" if ln >= CMP_MIN else "") + f" (수수료·미끄러짐 뺀 값 · 실전 조건에 맞는 거래만 · 필요 차이 {need_edge:g}%p)")
     why = f"그림자 가상 매매에서 더 나은 규칙 조합 → 실전 적용 ({_diff(params, base_v['params'])})"
     if not apply_fn(params, why, ev):
         return ""

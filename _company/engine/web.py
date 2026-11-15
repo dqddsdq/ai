@@ -780,6 +780,7 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     im.boot_check(log, _restart)   # 자동 개선 직후면 자체 점검 → 실패면 되돌리고 다시 켜기
+    at._restart_fn[0] = _restart
     at.start(log)
     from . import notify
     notify.start(log)

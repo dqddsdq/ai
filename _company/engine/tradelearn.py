@@ -197,6 +197,8 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
             t["cost_pct"] = round(rt_cost(cfg, _tm(t)), 3)
             t["pnl_pct"] = round(t["gross_pct"] - t["cost_pct"], 2)   # 수수료·세금 뺀 실제 수익률
             t["exit_kind"] = _kind(t["exits"][-1]["reason"])
+            if cfg.get("_fx_now"):
+                t["fx_close"] = float(cfg["_fx_now"])   # 미장 환율 효과 계산용
             # 원금·실현 손익 (거래 통화 기준, 수수료·세금 포함) — 전략별 누적 수익률용
             bc, sc = side_cost(cfg, _tm(t), "BUY") / 100, side_cost(cfg, _tm(t), "SELL") / 100
             t["invested"] = round(t["entry_px"] * t["qty_in"] * (1 + bc), 4)
