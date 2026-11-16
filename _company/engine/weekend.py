@@ -136,6 +136,14 @@ def run(log=print) -> dict:
                         r["prune"] = shadow.prune(at.config(), m)
                 except Exception as e:
                     r["backtest"] = f"실패 {type(e).__name__}: {e}"
+                try:   # 🔧 손실 원인별로 규칙 하나씩 고쳐 보기 → 처음 보는 날에서도 나으면 그림자에
+                    from . import fixloop
+                    fx_ = fixloop.run(at.config(), m, at.signal_surge, log)
+                    r["fixloop"] = fixloop.text(fx_)
+                    if fx_.get("seed") and c.get("shadow_on"):
+                        r["fix_seed"] = shadow.add_seeds(at.config(), m, [fx_["seed"]])
+                except Exception as e:
+                    r["fixloop"] = f"🔧 원인별 수정 실패: {type(e).__name__}: {e}"
                 try:
                     r["pattern"] = pattern_study(m, log)
                 except Exception as e:
@@ -157,6 +165,7 @@ def run(log=print) -> dict:
                 ms = r["missed"]
                 msg = (f"📚 {flag} 주말 공부 끝\n{r['score']}\n🧪 백테스트(30일): {r.get('backtest', '')}"
                        + (f" · 그림자에 {r['seeds']}개 추가" if r.get("seeds") else "") + (f" · {r['prune']}" if r.get("prune") else "")
+                       + (f"\n{r['fixloop']}" if r.get("fixloop") else "") + (" (그림자에 추가)" if r.get("fix_seed") else "")
                        + (f"\n📈 {pt}" if pt else "")
                        + (f"\n🔎 놓친 종목 {ms['missed']['n']}개 평균 최고 {ms['missed']['up_avg']:+.1f}% vs 산 종목 {ms['bought']['n']}개 {ms['bought'].get('up_avg', 0):+.1f}%" if ms["missed"].get("n") else "")
                        + (f"\n🤖 {r['ai']}" if r.get("ai") else ""))
@@ -172,7 +181,7 @@ def _ai_review(market: str, r: dict) -> str:
     """주간 종합 복기 (AI 1번) → 교훈 2~3개를 공유 노트에"""
     from . import providers as pv
     from . import team as tm
-    data = {"성적": r.get("score", ""), "백테스트": r.get("backtest", ""), "과거급등패턴": (r.get("pattern") or {}).get("all"),
+    data = {"성적": r.get("score", ""), "백테스트": r.get("backtest", ""), "원인별수정": r.get("fixloop", ""), "과거급등패턴": (r.get("pattern") or {}).get("all"),
             "급등구간별": (r.get("pattern") or {}).get("by_chg"), "놓친vs산": r.get("missed"), "공유노트": tl.lessons_text(market, 8)}
     prompt = ("자동매매 엔진의 이번 주 기록이에요. 다음 주 매매에 바로 쓸 교훈 2~3개를 한 줄씩 써 주세요 "
               "(숫자는 아래 자료만, 이미 공유 노트에 있는 건 빼고, 투자 권유 문구 없이).\n"

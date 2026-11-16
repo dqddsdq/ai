@@ -403,6 +403,18 @@ def 켜기끄기_설정은_전부_저장됨():
 
 
 @case
+def 원인별_수정_분류():
+    from . import fixloop
+    p = {"stop_loss_pct": 3, "trail_pct": 4, "surge_volume_ratio": 3}
+    ts = [{"ret": -4, "mfe": 0.1, "why": "손절", "pre": False, "ratio": 6, "minute": 30},
+          {"ret": -1, "mfe": 4.0, "why": "고점 대비", "pre": False, "ratio": 6, "minute": 30},
+          {"ret": 2, "mfe": 3.0, "why": "익절", "pre": True, "ratio": 1, "minute": -30}]
+    cs = fixloop.causes(ts, p)
+    assert cs[0]["cause"] == "사자마자 떨어짐" and cs[0]["loss_share"] == 80, cs
+    assert any(c["cause"] == "이익을 돌려줌" for c in cs)
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)
