@@ -1167,7 +1167,7 @@ def _reconcile(fx: float) -> None:
         ex = r.get("execution") or {}
         filled = float(ex.get("filledQuantity") or 0)
         fill_px = float(ex.get("averageFilledPrice") or o["price"])
-        msg = ""
+        msg = stop_msg = ""
         with _lock:
             s = state()
             rec = next((x for x in s["orders"] if x.get("order_id") == o["order_id"]), None)
@@ -1192,6 +1192,10 @@ def _reconcile(fx: float) -> None:
                     s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                     left = bp["qty"] - delta
                     tl.on_sell(rec["symbol"], delta, fill_px, rec.get("reason", ""), "live", left <= 1e-9, {**config(), "_fx_now": fx})
+                    try:   # 🧯 손절 체결가 기록 (오류 나도 체결 처리는 그대로)
+                        stop_msg = _stop_fill(s, rec.get("client_order_id", ""), delta, fill_px)
+                    except Exception:
+                        stop_msg = ""
                     if left > 1e-9:
                         s["bot_pos"][rec["symbol"]] = {"qty": left, "avg": bp["avg"]}
                         if rec.get("partial"):
@@ -1213,6 +1217,8 @@ def _reconcile(fx: float) -> None:
             _save(s)
         if delta > 0:
             event("체결", msg or f"{o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {delta:g}주 @ {fill_px:g}", symbol=o["symbol"])
+            if stop_msg:
+                event("손절 기록", stop_msg, symbol=o["symbol"])
             if o["side"] != "BUY":   # 🚀 급등 전략 확대 조건 도달 보고 (보고만, 비중은 안 바꿈)
                 try:
                     gm = tl.hot_goal_check(_mkt(o["symbol"]))
@@ -1231,6 +1237,137 @@ def _rebound_report(sym: str) -> None:
             event("반등 비교", rm)
     except Exception as e:
         _log_fn(f"🤖 [오류] 반등 진입 집계: {type(e).__name__}: {e}")
+
+
+# ── 🧯 손절 기록: 기준가·발동 시각·체결가 · 1%p 넘게 벌어지면 원인 · 손절 뒤 가격 추적 (기록만, 매매엔 영향 없음) ──
+_last_seen: dict = {}   # 종목 → (직전 확인 가격, 시각(초), 장 날짜) · 메모리만
+STOP_TRACK = ((30, "30분"), (120, "2시간"), (1440, "1일"), (4320, "3일"), (7200, "5일"))   # 손절 뒤 확인 시점(분)
+
+
+def _stop_open(s: dict, sym: str, held: dict, price: float, reason: str, style: str, minutes, prev, c: dict,
+               coid: str, fill: float | None, qty: float) -> None:
+    """손절 발동 기록 (같은 종목 미체결 재주문이면 처음 발동 기록에 이어 붙임)"""
+    log = s.setdefault("stop_log", [])
+    now = time.time()
+    old = next((r for r in reversed(log) if r.get("symbol") == sym and not r.get("fill_px") and now - float(r.get("ts", 0)) < 86400), None)
+    if old:
+        old.setdefault("ids", []).append(coid); old["retries"] = int(old.get("retries", 0)) + 1
+        rec = old
+    else:
+        m_ = re.search(r"기준 -(\d+(?:\.\d+)?)%", reason or "")
+        stop_pct = float(m_.group(1)) if m_ else float(c["swing_stop_pct"] if style == "swing" else c["stop_loss_pct"])
+        avg = float(held.get("avg") or 0)
+        if avg <= 0:
+            return
+        rec = {"symbol": sym, "style": style, "avg": avg, "stop_pct": stop_pct, "line": round(avg * (1 - stop_pct / 100), 4),
+               "t": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"), "ts": now, "day": s.get("day"), "minutes": minutes,
+               "trigger_px": float(price), "trigger_pnl": round((price / avg - 1) * 100, 2), "ids": [coid], "retries": 0,
+               "prev_px": prev[0] if prev else None, "prev_ago_sec": round(now - prev[1]) if prev else None,
+               "prev_same_day": bool(prev and prev[2] == s.get("day")), "track": {}}
+        log.append(rec)
+    s["stop_log"] = log[-100:]
+    if fill:
+        _stop_fill(s, coid, qty, float(fill))
+
+
+def _stop_cause(r: dict) -> str:
+    """기준과 체결가 차이의 원인 (갭 · 확인 지연 · 호가 공백)"""
+    out = []
+    trig_dev = r["trigger_pnl"] + r["stop_pct"]   # 발동 순간 이미 기준 아래로 간 정도 (%p)
+    slip = (r["fill_px"] / r["trigger_px"] - 1) * 100 if r.get("trigger_px") else 0.0
+    if trig_dev <= -0.5:
+        if not r.get("prev_same_day"):
+            out.append(f"갭(오늘 첫 확인에서 이미 기준보다 {trig_dev:+.1f}%p)")
+        elif r.get("prev_px") is not None and r["prev_px"] <= r["line"]:
+            out.append(f"확인 지연(직전 확인 {r.get('prev_ago_sec')}초 전에도 이미 기준 아래였는데 주문이 늦음)")
+        else:
+            out.append(f"확인 지연(직전 확인 {r.get('prev_ago_sec')}초 사이 급락, 발동 때 기준보다 {trig_dev:+.1f}%p)")
+    if int(r.get("retries", 0)) > 0:
+        out.append(f"확인 지연(미체결로 {r['retries']}번 다시 주문)")
+    if slip <= -0.5:
+        out.append(f"호가 공백(발동가 대비 체결 {slip:+.1f}%)")
+    return " · ".join(out) or "작은 차이 누적"
+
+
+def _stop_fill(s: dict, coid: str, qty: float, fill_px: float) -> str:
+    """손절 체결가 반영 → 처음 체결일 때만 알림 문구 돌려줌"""
+    r = next((x for x in reversed(s.get("stop_log") or []) if coid in (x.get("ids") or [])), None)
+    if not r or qty <= 0:
+        return ""
+    first = not r.get("fill_px")
+    q0 = float(r.get("fill_qty", 0))
+    r["fill_px"] = round((float(r.get("fill_px") or 0) * q0 + fill_px * qty) / (q0 + qty), 4)   # 나눠 체결되면 평균
+    r["fill_qty"] = q0 + qty
+    r["fill_ts"] = r.get("fill_ts") or time.time()
+    r["fill_t"] = r.get("fill_t") or datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+    r["fill_pnl"] = round((r["fill_px"] / r["avg"] - 1) * 100, 2)
+    r["gap_pp"] = round(r["fill_pnl"] + r["stop_pct"], 2)   # 기준 대비 차이 (%p, 음수 = 기준보다 더 잃음)
+    r["cause"] = _stop_cause(r) if r["gap_pp"] <= -1 else ""
+    if not first:
+        return ""
+    r["low_px"] = r["high_px"] = r["fill_px"]
+    return (f"🧯 손절 기록 {r['symbol']}: 기준 -{r['stop_pct']:g}%(기준가 {r['line']:g}) · 발동 {r['t'][5:]} @ {r['trigger_px']:g}"
+            f"({r['trigger_pnl']:+.1f}%) · 체결 @ {r['fill_px']:g}({r['fill_pnl']:+.1f}%) · 기준 대비 {r['gap_pp']:+.1f}%p"
+            + (f"\n원인: {r['cause']}" if r["cause"] else ""))
+
+
+def _stop_track(quotes: dict, minutes) -> list[str]:
+    """손절 뒤 30분·2시간·1일·3일·5일 가격 변화 기록 (장중에만 갱신)"""
+    if minutes is None:
+        return []
+    with _lock:
+        s = state()
+        todo = [r for r in s.get("stop_log") or [] if r.get("fill_px") and not r.get("track_done")]
+    if not todo:
+        return []
+    need = [r["symbol"] for r in todo if r["symbol"] not in quotes]
+    px = {k: v["price"] for k, v in quotes.items()}
+    if need:
+        try:
+            px.update({k: v["price"] for k, v in toss.prices(list(dict.fromkeys(need))).items()})
+        except toss.TossError:
+            pass
+    done_msgs = []
+    with _lock:
+        s = state()
+        now = time.time()
+        for r in s.get("stop_log") or []:
+            p = px.get(r.get("symbol"))
+            if not r.get("fill_px") or r.get("track_done") or not p:
+                continue
+            r["high_px"] = max(float(r.get("high_px") or p), p); r["low_px"] = min(float(r.get("low_px") or p), p)
+            el = (now - float(r.get("fill_ts") or now)) / 60
+            tr = r.setdefault("track", {})
+            for mins_, label in STOP_TRACK:
+                if el >= mins_ and label not in tr:   # 장 밖 시간이면 다음 장중 첫 가격으로 기록
+                    tr[label] = {"px": p, "pct": round((p / r["fill_px"] - 1) * 100, 2)}
+            if len(tr) >= len(STOP_TRACK):
+                r["track_done"] = True
+                up = (r["high_px"] / r["fill_px"] - 1) * 100
+                last = tr["5일"]["pct"]
+                r["verdict"] = ("손절 뒤 반등 — 손절이 일렀을 수 있음" if last >= r["stop_pct"] / 2 or up >= r["stop_pct"]
+                                else "손절 뒤 추가 하락 — 손절 적정" if last <= -2 else "횡보 — 판단 보류")
+                done_msgs.append(f"🧯 손절 뒤 추적 {r['symbol']} (손절 {r['fill_t'][5:16]} @ {r['fill_px']:g}): "
+                                 + " · ".join(f"{k} {v['pct']:+.1f}%" for k, v in tr.items())
+                                 + f" · 최고 {up:+.1f}% · 최저 {(r['low_px'] / r['fill_px'] - 1) * 100:+.1f}% → {r['verdict']}")
+        _save(s)
+    for m_ in done_msgs:
+        event("손절 추적", m_)
+    return done_msgs
+
+
+def stop_log_text(n: int = 5) -> str:
+    """최근 손절 기록 요약 (채팅 AI·복기용)"""
+    rows = [r for r in (state().get("stop_log") or []) if r.get("fill_px")][-n:]
+    if not rows:
+        return ""
+    out = ["🧯 최근 손절 기록 (기준 → 체결, 원인, 손절 뒤 변화):"]
+    for r in rows:
+        tr = " · ".join(f"{k} {v['pct']:+.1f}%" for k, v in (r.get("track") or {}).items())
+        out.append(f"- {r['fill_t'][5:16]} {r['symbol']} 기준 -{r['stop_pct']:g}% → 체결 {r['fill_pnl']:+.1f}% ({r['gap_pp']:+.1f}%p)"
+                   + (f" · 원인: {r['cause']}" if r.get("cause") else "") + (f" · 뒤 {tr}" if tr else "")
+                   + (f" · {r['verdict']}" if r.get("verdict") else ""))
+    return "\n".join(out)
 
 
 def _bot_order_ids() -> set[str]:
@@ -1472,6 +1609,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
 
     symbols = list(dict.fromkeys(held_syms + picked))
     if not symbols:
+        if not exits_only:   # 🧯 보유 종목이 없어도 손절 뒤 추적은 계속
+            try:
+                results += _stop_track(quotes, minutes)
+            except Exception as e:
+                results.append(f"🧯 손절 추적 오류: {type(e).__name__}: {e}")
         if c["shadow_on"] and not dry:   # 실전에 살 게 없어도 그림자 조합들의 매도는 계속
             try:
                 shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
@@ -1511,6 +1653,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             results.append(f"{sym}: 시세 없음"); continue
         price = q["price"]
         held = pos.get(sym, {"qty": 0.0, "avg": 0.0})
+        prev_seen = _last_seen.get(sym)   # 🧯 직전 확인 가격 (손절 원인 판단용)
+        if held["qty"] > 0:
+            _last_seen[sym] = (price, time.time(), s["day"])
         with _lock:
             s3 = state()
             if held["qty"] > 0:
@@ -1798,6 +1943,26 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     s_f = state(); s_f.setdefault("ai_hold_at", {}).pop(sym, None); _save(s_f)
                 event("매도 오류", f"{sym} 매도 실패 — {type(e).__name__}: {e} (다음 바퀴에 다시 판단)", symbol=sym)
                 results.append(f"{sym}: 매도 오류 — {type(e).__name__}: {e} (다음 바퀴에 다시 판단)"); continue
+            if not part and _sell_kind(reason) == "손절":   # 🧯 손절 발동 기록 (오류 나도 매도엔 영향 없음)
+                try:
+                    stop_msg = ""
+                    with _lock:
+                        s_s = state()
+                        o_ = next((o for o in reversed(s_s["orders"]) if o.get("symbol") == sym and o.get("side") == "SELL"), None)
+                        if o_ and o_.get("status") != "rejected":
+                            _stop_open(s_s, sym, held, price, reason, style, minutes, prev_seen, c, o_.get("client_order_id", ""),
+                                       o_.get("fill") if not sell_live else None, qty)
+                            if not sell_live:
+                                r_ = next((r for r in reversed(s_s.get("stop_log") or []) if o_.get("client_order_id") in (r.get("ids") or [])), None)
+                                if r_ and r_.get("fill_px"):
+                                    stop_msg = (f"🧯 손절 기록 {sym}(가상): 기준 -{r_['stop_pct']:g}% · 발동 @ {r_['trigger_px']:g}({r_['trigger_pnl']:+.1f}%) · "
+                                                f"체결 @ {r_['fill_px']:g}({r_['fill_pnl']:+.1f}%) · 기준 대비 {r_['gap_pp']:+.1f}%p"
+                                                + (f"\n원인: {r_['cause']}" if r_.get("cause") else ""))
+                            _save(s_s)
+                    if stop_msg:
+                        event("손절 기록", stop_msg, symbol=sym)
+                except Exception as e:
+                    results.append(f"{sym}: 🧯 손절 기록 오류 — {type(e).__name__}: {e}")
             try:   # 재진입 금지·익절 비교 기록 (오류 나도 매도엔 영향 없음)
                 if not part and c.get("no_rebuy_after_loss", True) and held.get("avg") and \
                         (price / held["avg"] - 1) * 100 < tl.rt_cost(c, market):   # 수수료 빼고 손해로 파는 거면 재진입 금지
@@ -1812,6 +1977,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     _ghost_open(sym, tp_by_rule[0], tp_by_rule[1], price, tp_by_rule[2], tp_by_rule[3])
             except Exception as e:
                 results.append(f"{sym}: 매도 후 기록 오류 — {type(e).__name__}: {e}")
+    if not exits_only:   # 🧯 손절 뒤 가격 추적 (기록만)
+        try:
+            results += _stop_track(quotes, minutes)
+        except Exception as e:
+            results.append(f"🧯 손절 추적 오류: {type(e).__name__}: {e}")
     if c["ai_take_profit"] == "test" and c["ai_decide"] and not dry:
         try:
             results += _ghost_step(c, market, minutes)
@@ -2363,6 +2533,12 @@ def _summary_one() -> str:
     rv = tl.last_review_text("live" if c["mode"] == "live" else "paper", c["market"])
     if rv:
         lines.append(rv)
+    try:   # 🧯 손절 기록 (기준 대비 차이·원인·손절 뒤 변화)
+        sl = stop_log_text()
+        if sl:
+            lines.append(sl)
+    except Exception:
+        pass
     vd = s.get("verify_daily") or {}
     if vd.get("text"):   # 🧾 하루 한 번 검증 누적 요약 (실전 전환 판단 근거)
         lines.append(f"[{vd.get('t', '')} 기준] " + vd["text"].replace("\n", " / "))
