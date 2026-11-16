@@ -433,7 +433,7 @@ def event(kind: str, text: str, **extra) -> None:
 
 
 NOTIFY_KINDS = {"교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
-                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교"}   # 🔔 텔레그램으로 보낼 기록 종류
+                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교", "검증 요약"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 
 def _mkt(sym: str) -> str:
@@ -1997,6 +1997,54 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
         event("오류", f"자동 개선 효과 확인 실패: {type(e).__name__}: {e}")
     if c2["backtest_on"] and toss.enabled():
         backtest_now(wait=True)
+    try:   # 🧾 그림자·백테스트·반등 비교 누적 요약 (하루 한 번 · 기록·텔레그램만)
+        _verify_daily(day)
+    except Exception as e:
+        event("오류", f"검증 요약 실패: {type(e).__name__}: {e}")
+
+
+def verify_text(market: str) -> str:
+    """그림자 매매·백테스트·반등 확인 진입 비교의 누적 건수·승률·평균 손익 (읽기만)"""
+    f = lambda x, n="n_all", w="win_all", a="avg_all": f"{x.get(n, 0)}건 · 승률 {x.get(w, 0)}% · 평균 {float(x.get(a, 0)):+.2f}%"  # noqa: E731
+    lines = [f"🧾 검증 누적 요약 ({'미장' if market == 'US' else '국장'} · 수수료 뺀 값)"]
+    try:
+        sh = shadow.totals(market)
+        a = sh["acct"]
+        lines.append(f"🧪 그림자 '현재' 규칙: {f(sh['base'])} · 최대 손실 {sh['base'].get('worst', 0):+.2f}%")
+        lines.append(f"🧪 그림자 조합 전체({sh['variants']}개): {f(sh['all'])}")
+        lines.append(f"📉 급락반등 진입(가상): {f(sh['flash_rebound'])}")
+        lines.append(f"💰 100만 원 가상 계좌({a['start'][:10]}~): {a['n']}건 · 확정 {a['realized_pct']:+.2f}% · 평가 포함 {a['total_pct']:+.2f}%")
+    except Exception as e:
+        lines.append(f"🧪 그림자: 집계 실패 ({type(e).__name__})")
+    b = bt.load(market)
+    if b.get("baseline"):
+        lines.append(f"📼 최근 백테스트({b.get('day', '')}) 현재 규칙: {f(b['baseline'], 'n', 'win', 'avg')}")
+    else:
+        lines.append("📼 백테스트: " + (b.get("note") or "기록 없음"))
+    rp = (b.get("replay") or {}).get("all") or {}
+    if rp:
+        lines.append(f"🔄 과거 복기 반등 확인 {f(rp.get('rebound') or {}, 'n', 'win', 'avg')} / 기존 {f(rp.get('plain') or {}, 'n', 'win', 'avg')}"
+                     f" · {(b.get('replay') or {}).get('verdict', '')}")
+    try:
+        rs = tl.rebound_stats(market)
+        r, p = rs["rebound"], rs["plain"]
+        lines.append(f"🔄 실제 2호 진입 비교: 반등 확인 {f(r, 'n', 'win_rate', 'avg')} ({r['n']}/{rs['goal_n']}건) / 기존 {f(p, 'n', 'win_rate', 'avg')}")
+    except Exception as e:
+        lines.append(f"🔄 반등 비교: 집계 실패 ({type(e).__name__})")
+    lines.append("※ 기록·보고만 해요 — 실전 전환은 사장님이 화면에서 직접 정해 주세요")
+    return "\n".join(lines)
+
+
+def _verify_daily(day: str) -> None:
+    """하루 한 번만: 요약을 상태에 저장(채팅 자료) + 기록·텔레그램"""
+    with _lock:
+        s = state()
+        if (s.get("verify_daily") or {}).get("day") == day:
+            return
+    text = verify_text(cur_market())
+    with _lock:
+        s = state(); s["verify_daily"] = {"day": day, "t": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "text": text}; _save(s)
+    event("검증 요약", text)
 
 
 def review_now(wait: bool = False) -> dict:
@@ -2287,6 +2335,9 @@ def _summary_one() -> str:
     rv = tl.last_review_text("live" if c["mode"] == "live" else "paper", c["market"])
     if rv:
         lines.append(rv)
+    vd = s.get("verify_daily") or {}
+    if vd.get("text"):   # 🧾 하루 한 번 검증 누적 요약 (실전 전환 판단 근거)
+        lines.append(f"[{vd.get('t', '')} 기준] " + vd["text"].replace("\n", " / "))
     lines.append("</autotrade>")
     return "\n".join(lines)
 

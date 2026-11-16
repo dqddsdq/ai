@@ -821,6 +821,17 @@ def summary(v: dict) -> dict:
             "avg_all": round(st.mean(rs), 2) if rs else 0, "worst": round(min(rs), 2) if rs else 0}
 
 
+def totals(market: str) -> dict:
+    """하루 요약용 누적 집계 (읽기만): '현재' 조합 · 일반 조합 전체 · 급락반등 진입 · 100만 원 계좌"""
+    with _lock:
+        d = _load(market)
+        base_v = next((v for v in d["variants"] if _is_base(v)), None)
+        alls = summary({"trades": [t for v in d["variants"] for t in v.get("trades", [])]})
+        fr = next((v for v in d.get("flash", []) if v.get("key") == "FR"), None)
+        return {"base": summary(base_v) if base_v else summary({}), "all": alls, "variants": len(d["variants"]),
+                "flash_rebound": summary(fr) if fr else summary({}), "acct": _acct_view(d["acct"])}
+
+
 def overview(c: dict, market: str) -> dict:
     with _lock:
         d = _load(market)
