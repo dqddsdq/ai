@@ -169,6 +169,72 @@ def spread_pct(sym: str) -> float | None:
     return _cached(("spr", sym), 60, fn)
 
 
+_QTY_KEYS = ("quantity", "qty", "volume", "size", "amount", "q", "remainQuantity", "orderQuantity")
+_TOT_KEYS = {"bid": ("totalBidQuantity", "totalBidQty", "bidTotalQuantity", "totalBuyQuantity"),
+             "ask": ("totalAskQuantity", "totalAskQty", "askTotalQuantity", "totalSellQuantity")}
+_SIDE_KEYS = {"bid": ("bids", "bidOrders", "buy", "buyOrders"), "ask": ("asks", "askOrders", "sell", "sellOrders")}
+
+
+def _book_sum(ob: dict, side: str) -> tuple[float | None, int]:
+    """한쪽 잔량 합계 (총합 칸이 있으면 그 값, 없으면 단계별 잔량 합) · (합계, 단계 수)"""
+    for k in _TOT_KEYS[side]:
+        try:
+            if ob.get(k) is not None and float(ob[k]) > 0:
+                return float(ob[k]), 0
+        except (TypeError, ValueError):
+            pass
+    for k in _SIDE_KEYS[side]:
+        lv = ob.get(k)
+        if not isinstance(lv, list) or not lv:
+            continue
+        tot, n = 0.0, 0
+        for x in lv:
+            if not isinstance(x, dict):
+                continue
+            for qk in _QTY_KEYS:
+                try:
+                    if x.get(qk) is not None:
+                        tot += float(x[qk]); n += 1
+                        break
+                except (TypeError, ValueError):
+                    pass
+        if n:
+            return tot, n
+    return None, 0
+
+
+def book_depth(sym: str) -> dict | None:
+    """📚 매수·매도 잔량 합 (그림자 검증 전용 · 조회는 spread_pct 와 같은 toss 조회 함수 · 20초 보관).
+    형식을 모르거나 실패하면 None · 받을 수 있는지는 book_probe() 에 기록"""
+    def fn():
+        try:
+            ob = toss._get("/api/v1/orderbook", symbol=sym) or {}
+        except Exception as e:
+            _mem[("ob_probe",)] = (time.time(), {"ok": False, "t": _now(), "sym": sym, "why": f"조회 실패: {type(e).__name__}: {str(e)[:80]}"})
+            return None
+        if isinstance(ob, list) and ob and isinstance(ob[0], dict):   # 목록으로 오면 첫 항목
+            ob = ob[0]
+        if not isinstance(ob, dict):
+            _mem[("ob_probe",)] = (time.time(), {"ok": False, "t": _now(), "sym": sym, "why": f"모르는 형식 ({type(ob).__name__})"})
+            return None
+        bid, nb = _book_sum(ob, "bid")
+        ask, na = _book_sum(ob, "ask")
+        keys = sorted(ob)[:15]
+        if not bid or not ask:
+            _mem[("ob_probe",)] = (time.time(), {"ok": False, "t": _now(), "sym": sym, "why": "잔량 칸을 못 찾음", "keys": keys})
+            return None
+        r = {"bid": bid, "ask": ask, "ratio": round(bid / ask, 3), "levels": max(nb, na)}
+        _mem[("ob_probe",)] = (time.time(), {"ok": True, "t": _now(), "sym": sym, "why": "잔량 받음", "keys": keys, **r})
+        return r
+    return _cached(("ob", sym), 20, fn)
+
+
+def book_probe() -> dict:
+    """호가 잔량 받을 수 있는지 마지막 확인 결과 (아직 안 해 봤으면 ok=None)"""
+    hit = _mem.get(("ob_probe",))
+    return dict(hit[1]) if hit else {"ok": None, "why": "아직 확인 전 (장중 보유 종목이 생기면 확인)"}
+
+
 def slip_cfg(cfg: dict, sym: str | None = None, spread: float | None = None) -> dict:
     """가상 체결 미끄러짐 = max(기본, 스프레드의 절반)"""
     sp = spread if spread is not None else (spread_pct(sym) if sym else None)

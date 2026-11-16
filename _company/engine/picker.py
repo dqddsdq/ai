@@ -362,6 +362,39 @@ def flash_exit_signal(bars: list[dict], price: float) -> str:
     return ""
 
 
+VF_VOL = 0.6              # 📉 거래량 감소+VWAP 아래: 최근 3봉 평균 거래량이 직전 평균의 60% 이하
+OB_WEAK = 0.5             # 📚 호가 약화: 매수잔량/매도잔량 0.5 이하
+OB_DROP = 0.6             #   그리고 산 직후 비율의 60% 이하로 떨어짐
+
+
+def vwap_fade_signal(bars: list[dict], price: float) -> str:
+    """보유 중 청산 신호 (그림자 검증 전용). bars = 오늘 다 끝난 1분봉(오래된→최신).
+    최근 3봉 거래량이 직전 평균보다 줄고 + 현재가가 오늘 VWAP 아래면 이유, 아니면 ''"""
+    if len(bars) < 13 or not price:
+        return ""
+    base = _vbase(bars[:-3])
+    if not base:
+        return ""
+    rv = sum(b["v"] for b in bars[-3:]) / 3
+    if rv > base * VF_VOL:
+        return ""
+    pv = sum((b["h"] + b["l"] + b["c"]) / 3 * b["v"] for b in bars)
+    vs = sum(b["v"] for b in bars)
+    vwap = pv / vs if vs else 0
+    if not vwap or price >= vwap:
+        return ""
+    return f"거래량 감소 {rv / base * 100:.0f}%·VWAP 아래 {(price / vwap - 1) * 100:+.1f}%"
+
+
+def book_weak_signal(ratio: float | None, ratio0: float | None) -> str:
+    """호가 약화 청산 신호 (그림자 검증 전용). ratio = 지금 매수잔량/매도잔량, ratio0 = 산 직후 값"""
+    if not ratio or not ratio0:
+        return ""
+    if ratio <= OB_WEAK and ratio <= ratio0 * OB_DROP:
+        return f"호가 약화 매수/매도 잔량 {ratio:.2f} (산 직후 {ratio0:.2f})"
+    return ""
+
+
 def flash_rebound_signal(bars: list[dict], price: float) -> dict | None:
     """급락 반등 진입: 1~3분 안에 -5%↓ + 거래량 3배↑ → 바로 다음 1분봉이 양봉 반등 + 거래량 유지.
     bars = 다 끝난 1분봉 (마지막 = 반등 봉). 신호면 {low, crash_t, drop, vol, why}"""
