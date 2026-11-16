@@ -384,6 +384,11 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     side, why = signal_swing(closes, price, p["qty"], p["avg"], p["high"], days, vc)
                 else:
                     side, why = signal_surge(price, p["qty"], p["avg"], p["high"], minutes, False, vc, partial_done=p.get("partial", False))
+                    if side == "HOLD" and not p.get("partial") and p.get("ets"):   # ⏱️ 실전과 같은 시간 손절
+                        from .autotrade import time_stop
+                        tw = time_stop(p["ets"], p["avg"], p["high"], price, vc)
+                        if tw:
+                            side, why = "SELL", tw
                 if side not in ("SELL", "SELL_PART") or not market_open(sym, "SELL"):
                     continue
                 qty = p["qty"] if side == "SELL" else max(1, int(p["qty"] * vc["partial_tp_ratio"]))
@@ -451,7 +456,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 cost = qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
                 v["cash"] -= cost
                 v["buys_today"] += 1
-                v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False, "fit": fit,
+                v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False, "fit": fit, "ets": time.time(),
                                  "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost, "got": 0.0,
                                  "ft": {**{k: ft.get(k) for k in ("change", "ratio", "pre", "r20", "rsi") if ft.get(k) is not None},
                                         "style": cd["style"], "mkt": market}}

@@ -395,6 +395,14 @@ def 추가_관문은_사는_것만_줄임():
 
 
 @case
+def 켜기끄기_설정은_전부_저장됨():
+    from . import autotrade as at
+    import inspect
+    src = inspect.getsource(at.save_config)
+    assert "isinstance(v, bool)" in src, "새로 추가한 켜기/끄기 설정이 저장 목록에서 빠지면 안 돼요"
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)
