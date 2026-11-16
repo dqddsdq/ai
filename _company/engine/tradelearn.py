@@ -389,7 +389,27 @@ def estimate(features: dict, cfg: dict) -> dict:
     ev = p * avg_win + (1 - p) * avg_loss
     basis = (("같은 조건" if sample is exact else "비슷한 조건") + f" {n}건" + (f"(그림자 {n_sh}건×{SHADOW_W:g} 포함)" if n_sh else "")) \
         if n else f"기록 없음 → 기본 {base_p * 100:.0f}%"
-    return {"p": round(p, 3), "n": n, "ev": round(ev, 2), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "basis": basis}
+    lvl = "exact" if sample is exact and W(exact) >= 5 else "part" if sample is part else "exact_few"
+    return {"p": round(p, 3), "n": n, "ev": round(ev, 2), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "basis": basis,
+            "group": group_desc(k, lvl, f0)}
+
+
+def group_desc(k: tuple, lvl: str, f: dict) -> str:
+    """묶음 기준을 사람이 읽게 (같은 기대값이 여러 종목에 찍힐 때 이유 설명용)"""
+    def rng(i, edges, unit):
+        if i < 0:
+            return "값 없음"
+        lo, hi = edges[i], edges[i + 1]
+        return f"{lo:g}{unit} 이상" if hi >= 1e9 else f"{lo:g}~{hi:g}{unit}" if lo > -1e9 else f"{hi:g}{unit} 미만"
+    if k[1] == "swing":
+        parts = [k[0], "스윙", "20일 " + rng(k[2], R20_EDGES, "%")] + (["RSI " + rng(k[3], RSI_EDGES, "")] if lvl != "part" else ["RSI 무시"])
+    else:
+        rk = PRE_RATIO_EDGES if k[2] else RATIO_EDGES
+        parts = [k[0], "단타", "프리장" if k[2] else "정규장"] + (["상승률 " + rng(k[3], CHANGE_EDGES, "%")] if lvl != "part" else ["상승률 무시"]) \
+            + ["거래량 " + rng(k[4], rk, "배")]
+    lv = {"exact": "같은 조건", "part": "넓힌 조건(같은 조건 5건 미만)", "exact_few": "같은 조건(5건 미만)"}[lvl]
+    miss = [x for x in (("r20", "rsi") if k[1] == "swing" else ("change", "ratio")) if f.get(x) is None]
+    return f"{lv}: " + " · ".join(parts) + (f" (특징값 없음: {', '.join(miss)})" if miss else "")
 
 
 def size_ratio(est: dict, cfg: dict) -> tuple[float, str]:

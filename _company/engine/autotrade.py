@@ -1439,6 +1439,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         cd["features"].update(style=cd["style"], mkt=market)
         cd["est"] = tl.estimate(cd["features"], c)
         cd["reason"] += f" · 추정 승률 {cd['est']['p'] * 100:.0f}%({cd['est']['n']}건) · 기대 {cd['est']['ev']:+.2f}%"
+    same: dict = {}   # 같은 '건수·기대값'으로 묶인 후보 → 묶음 기준을 기록에 남김
+    for sym, cd in cands.items():
+        same.setdefault((cd["style"], cd["est"]["n"], cd["est"]["ev"]), []).append(sym)
+    for (sty, n_, ev_), syms in same.items():
+        if len(syms) >= 2:
+            gs = sorted({cands[x]["est"].get("group", "?") for x in syms})
+            results.append(f"🧮 {len(syms)}종목이 같은 추정({n_}건 · 기대 {ev_:+.2f}%): " + ", ".join(syms[:6]) + (" 외" if len(syms) > 6 else "")
+                           + " — 묶음 기준: " + " / ".join(gs[:3]) + " → 종목 고유값이 아니라 같은 조건 구간의 지난 거래로 계산됨")
     picked = sorted(cands, key=lambda k: (cands[k]["est"]["ev"], cands[k]["score"]), reverse=True)
     if c["news_on"] and not exits_only and news.enabled(market):   # 📰 상위 후보 공시 확인 (20분 보관) → 실전·그림자·AI 판단 공통
         for k in [k for k in picked if k not in pos][:8]:
