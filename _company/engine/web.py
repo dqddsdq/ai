@@ -716,12 +716,28 @@ def _spawn_next() -> bool:
     return p.poll() is None   # 감시 프로세스가 살아 있어야 옛 앱을 끔
 
 
+def _wait_chats_done(max_sec: int = 900) -> None:
+    """진행 중인 채팅 답변·자기 개선 작업이 끝날 때까지 기다림"""
+    end = time.time() + max_sec
+    told = False
+    while time.time() < end:
+        busy = [k for k, v in LIVE.items() if not v.get("done") and time.time() - v.get("t", 0) < 600]
+        working = [r for r in im.history()[:20] if r.get("status") == "working"]
+        if not busy and not working:
+            return
+        if not told:
+            log(f"🔄 답변 {len(busy)}개·코딩 {len(working)}개가 진행 중이라 끝나면 다시 켜요")
+            told = True
+        time.sleep(3)
+
+
 def _restart() -> None:
     """코드 적용 뒤 앱 다시 켜기: 주문·체결 중이면 바퀴가 끝날 때까지 대기 → 상태 저장 → (bat 이면 종료 코드 3 / 아니면 새 프로세스 먼저) → 옛 프로세스 종료"""
     if not _restarting.acquire(blocking=False):
         return   # 이미 다시 켜는 중
     supervised = os.environ.get("CAI_SUPERVISED") == "1"
     log("🔄 코드 적용 → 주문·체결 처리가 끝나고 자동매매 바퀴가 끝나면 앱을 다시 켜요")
+    _wait_chats_done()   # 💬 답변·코딩 중이면 끝날 때까지 (최대 15분) — 재시작으로 답이 사라지지 않게
     at.wait_idle_for_restart(log)
     with at._lock:   # 화면 버튼 등 다른 곳의 기록·주문 처리도 끝난 뒤 저장
         try:
