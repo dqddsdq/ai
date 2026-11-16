@@ -154,10 +154,28 @@ class Handler(BaseHTTPRequestHandler):
     _send_lock = threading.Lock()   # 여러 AI 가 동시에 실시간 글을 보내도 섞이지 않게
 
     def _send(self, event: str, data):
+        lv = getattr(self, "_live", None)
+        if lv is not None:   # 💬 진행 중인 답변을 메모리에 같이 보관 → 채팅에 다시 들어와도 이어서 보임
+            if event == "delta":
+                lv["text"] += data.get("text", "")
+            elif event == "replace":
+                lv["text"] = data.get("text", "")
+            elif event == "status":
+                lv["status"] = data.get("text", "")
+            elif event in ("step_start", "activity", "step_activity"):
+                lv["status"] = data.get("title") or data.get("text") or data.get("label") or lv["status"]
+            lv["t"] = time.time()
+        if lv is not None and lv.get("stop"):
+            raise BrokenPipeError("사용자가 중지")   # ■ 중지 버튼 → 답변 만들기 멈춤
+        if getattr(self, "_gone", False):
+            return
         payload = json.dumps(data, ensure_ascii=False)
-        with self._send_lock:
-            self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode())
-            self.wfile.flush()
+        try:
+            with self._send_lock:
+                self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode())
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            self._gone = True   # 화면이 떠나도 답변 만들기는 계속 → 끝나면 대화에 저장
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
@@ -300,6 +318,10 @@ class Handler(BaseHTTPRequestHandler):
             })
         if path == "/api/conversations":
             return self._json(list_convs())
+        m = re.match(r"^/api/conversations/([\w\-]+)/live$", path)
+        if m:   # 💬 진행 중인 답변 (없으면 active False)
+            lv = LIVE.get(m.group(1))
+            return self._json({"active": bool(lv) and not lv.get("done"), **({k: lv[k] for k in ("text", "status", "started", "t") if k in lv} if lv else {})})
         m = re.match(r"^/api/conversations/([\w\-]+)$", path)
         if m:
             try:
@@ -351,7 +373,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in routes:
             self._sse_start()
             try:
-                routes[path](body)
+                try:
+                    routes[path](body)
+                except BaseException:
+                    lv = getattr(self, "_live", None)
+                    if lv is not None:
+                        lv.update(done=True, error=True)
+                    raise
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 log("  (사용자가 중지했거나 연결이 끊김)")
             except pv.ProviderError as e:  # 설치·로그인·한도 같은 안내성 오류는 긴 오류 내역 없이
@@ -397,6 +425,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._upload(body)
         if path == "/api/capture":
             return self._capture(body)
+        m = re.match(r"^/api/conversations/([\w\-]+)/stop$", path)
+        if m:
+            lv = LIVE.get(m.group(1))
+            if lv is not None:
+                lv["stop"] = True
+            return self._json({"ok": True})
         m = re.match(r"^/api/conversations/([\w\-]+)/delete$", path)
         if m:
             import shutil
@@ -512,6 +546,8 @@ class Handler(BaseHTTPRequestHandler):
             history[-1]["content"] += f"\n\n[화면 캡처 {len(images)}장 첨부]"
         conv["messages"].append({"role": "user", "content": text, "images": image_ids})
         save_conv(conv)
+        self._live = LIVE.setdefault(conv["id"], {})
+        self._live.clear(); self._live.update(text="", status="답변 준비 중", t=time.time(), done=False, started=time.time())
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
                             "model": str(spec), "reason": "", "sources": [], "team": 1, "router_model": "", "member_model": ""})
         self._charts = []
@@ -558,6 +594,8 @@ class Handler(BaseHTTPRequestHandler):
                                             "steps": t.get("steps", []), "tool_status": tl.status(t) if t else ""})
         save_conv(conv)
         log("  ✅ 답변 완료")
+        LIVE.pop(conv["id"], None)
+        self._live = None
         self._send("done", {"conversation_id": conv["id"]})
 
     # 자기 개선 실행 (복사본에서 고치고 검사 → 결과만 보여줌, 적용은 따로)
@@ -580,6 +618,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send("step_done", step.as_dict())
         self._send("improve_result", res)
         self._send("done", {})
+
+LIVE: dict[str, dict] = {}   # 대화 id → 진행 중인 답변 {text, status, t, done}
+
 
 # ── 폰 접속 (같은 와이파이) ──
 PHONE = {"on": False, "url": "", "pin": "", "token": ""}

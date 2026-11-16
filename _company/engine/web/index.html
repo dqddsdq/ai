@@ -824,6 +824,20 @@ async function openConv(id) {
     }
   }
   $("#top-title").textContent = c.title; scrollDown(true); loadConvs();
+  resumeLive(c.id);
+}
+async function resumeLive(id) {   // 💬 답변 만드는 중에 나갔다 들어와도 이어서 보이게
+  if (state.busy) return;   // 이 화면에서 지금 받고 있는 중이면 그대로
+  const lv = await api(`/api/conversations/${id}/live`); if (!lv || !lv.active) return;
+  const a = addAI({ agent: "trader" }); a.body.classList.add("cursor");
+  const draw = (x) => { a.body.innerHTML = x.text ? finalHTML(x.text) : ""; a.status(x.text ? "" : `${x.status || "답변 준비 중"}... ${Math.round(Date.now() / 1000 - (x.started || Date.now() / 1000))}초`); };
+  draw(lv); scrollDown(true);
+  const timer = setInterval(async () => {
+    if (state.conv?.id !== id) return clearInterval(timer);   // 다른 대화로 가면 멈춤
+    const x = await api(`/api/conversations/${id}/live`);
+    if (x && x.active) { draw(x); return; }
+    clearInterval(timer); if (state.conv?.id === id && !state.busy) openConv(id);   // 끝났으면 저장된 답으로 다시 그림
+  }, 1500);
 }
 
 // ── 메시지 그리기 ──
@@ -1010,7 +1024,11 @@ input.addEventListener("input", autosize);
 input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!state.busy) send(); }
 });
-sendBtn.onclick = () => state.busy ? state.controller?.abort() : send();
+sendBtn.onclick = () => {   // ■ 중지: 서버에도 알려서 답변 만들기를 실제로 멈춤 (화면만 나가는 건 안 멈춤)
+  if (!state.busy) return send();
+  if (state.conv?.id) api(`/api/conversations/${state.conv.id}/stop`, {}).catch(() => {});
+  state.controller?.abort();
+};
 function setBusy(b) { state.busy = b; sendBtn.classList.toggle("stop", b); sendBtn.textContent = b ? "■" : "↑"; sendBtn.title = b ? "중지" : "보내기 (Enter)"; autosize(); }
 
 // ── AI 작업 현황: 작업 중일 때만 표시. 작은 창 / 크게 보기(담당 AI·작업·작업 화면) / 최소화 ──
@@ -1752,6 +1770,14 @@ function improveCard(job, container) {
     let full = j;
     if (["ready", "blocked", "applied", "rolled_back"].includes(j.status) && !j.files?.[0]?.diff) full = await api("/api/improve/" + j.id);
     const [label, cls] = impStatus(full.status);
+    if (full.status === "working" && !el.dataset.poll) {   // 🛠️ 만드는 중에 나갔다 들어와도 끝나면 자동으로 결과 표시
+      el.dataset.poll = "1";
+      const t = setInterval(async () => {
+        if (!document.body.contains(el)) return clearInterval(t);
+        const j = await api("/api/improve/" + full.id);
+        if (j && !j.error && j.status !== "working") { clearInterval(t); el.dataset.poll = ""; draw(j); }
+      }, 3000);
+    }
     const files = (full.files || []).map(f => `<details class="imp-file"${(full.files || []).length <= 2 ? " open" : ""}><summary>${f.protected ? "🔒 " : f.trading ? "⚠️ " : ""}<b>${esc(f.path)}</b> <span class="muted">${{ added: "새 파일", deleted: "삭제", modified: "수정" }[f.status] || ""} · +${f.plus} −${f.minus}</span></summary>${f.diff ? diffHTML(f.diff) : ""}</details>`).join("");
     const checks = (full.checks || []).map(c => `<div class="chk">${c.ok ? "✅" : "❌"} ${esc(c.name)} — <span class="muted">${esc(c.detail || "")}</span></div>`).join("");
     el.innerHTML = `<div class="th">🛠️ <b>${full.team && full.team !== "사장님" ? esc(teamName(full.team)) + "이 개선을 제안해요" : "개선 요청"}</b><span class="tb ${cls}">${esc(label)}</span></div>
