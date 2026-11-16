@@ -1576,6 +1576,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if gate_mult <= 0:
                 _note_skip(sym, gate_why)
                 results.append(f"{sym}: {gate_why}"); continue
+            if style == "swing":   # 📉 지수 급락일엔 스윙도 새로 안 삼
+                crash_why = extras.crash_day(market, c)
+                if crash_why:
+                    _note_skip(sym, crash_why)
+                    results.append(f"{sym}: {crash_why}"); continue
             try:   # 재진입 금지 기록이 없거나 깨져도 오류 없이 넘어감
                 nr_all = state().get("no_rebuy")
                 nr = str((nr_all if isinstance(nr_all, dict) else {}).get(sym) or "")
@@ -2180,7 +2185,13 @@ def start(log_fn=print) -> None:
             return
         # 들고 있는 종목은 자주(기본 10초) 매도 조건만 확인
         gap = c["interval_min"] * 60
-        if not (time.time() - timers["last"] >= gap - 5 or time.time() - timers["exit"] < c["exit_check_sec"]):
+        exit_sec = c["exit_check_sec"]
+        try:   # 📉 지수 급락일엔 손절 확인을 5초마다 (루프 최소 간격)
+            if extras.crash_day(m, c):
+                exit_sec = min(exit_sec, 5)
+        except Exception:
+            pass
+        if not (time.time() - timers["last"] >= gap - 5 or time.time() - timers["exit"] < exit_sec):
             with _lock:
                 s0 = state()
             if s0["bot_pos"] if c["mode"] == "live" else s0["paper"]["positions"]:

@@ -76,6 +76,19 @@ def regime(market: str, c: dict) -> tuple[float, str]:
     return 1.0, ""
 
 
+def crash_day(market: str, c: dict) -> str:
+    """지수가 -regime_stop_pct(기본 3)% 이하면 이유, 아니면 '' — 스윙 신규 매수 막기·손절 확인 촘촘히"""
+    if not c.get("regime_on", True):
+        return ""
+    try:
+        ch = index_change(market)
+    except Exception:
+        return ""
+    if ch is None or ch > -float(c.get("regime_stop_pct", 3)):
+        return ""
+    return f"📉 {INDEX_NAME[market]} 오늘 {ch:+.1f}% — 시장이 크게 빠지는 날이라 스윙 새로 안 삼"
+
+
 # ── 2. 시간대별 성적 (계속 지는 시간대는 피하기) ──
 def tod_bucket(minutes) -> str:
     if minutes is None:
