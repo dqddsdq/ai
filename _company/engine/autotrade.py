@@ -2338,6 +2338,8 @@ def _summary_one() -> str:
     vd = s.get("verify_daily") or {}
     if vd.get("text"):   # 🧾 하루 한 번 검증 누적 요약 (실전 전환 판단 근거)
         lines.append(f"[{vd.get('t', '')} 기준] " + vd["text"].replace("\n", " / "))
+    else:   # 아직 한 번도 안 돌았으면 숫자 지어내지 않게
+        lines.append("🧾 검증 누적 요약: 아직 없음 (평일 장 마감 복기 뒤 하루 한 번 만들어져요)")
     lines.append("</autotrade>")
     return "\n".join(lines)
 
