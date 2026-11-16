@@ -146,6 +146,9 @@ DEFAULTS = {
     "weekend_study": True,         # 📚 토요일 오전: 긴 백테스트·과거 급등 패턴·놓친 종목·그림자 정리·주간 AI 복기
     "weekly_report": True, "tomorrow_plan": True,   # 📊 주간 성적표 · 🗓️ 장 마감 뒤 내일 계획 (텔레그램)
     "improve_effect_check": True,  # 🛠️ 매매 코드 자동 개선 뒤 10건↑ 성적이 나빠지면 자동 되돌림
+    "live_quality": True,          # 🎯 실전 돈은 '강한 신호'에만: 단타 중 프리장 또는 이미 +20%↑ 오른 종목 · 정규장은 거래량 5배↑ · 공시가 확인되면 이유 있는 급등만
+    "live_quality_change": 20, "live_quality_ratio": 5,
+    "swing_live": False,           # 📉 스윙은 지금 성적이 나빠서(평균 -2.1%) 가상으로만 — 스윙 기록이 좋아지면 켜기
     "live_needs_proof": True,      # 🛡️ 실전 돈은 '검증된 조건'에만: 비슷한 지난 거래 N건↑ · 기대 수익 플러스일 때만 실전, 아니면 가상 장부로 (탐색 매수는 전부 가상)
     "live_proof_n": 10,
     "time_stop_min": 15,           # ⏱️ 시간 손절: 단타를 산 지 이 분 동안 최고 수익이 +아래 % 도 못 가면 바로 정리 (0 = 안 씀)
@@ -174,7 +177,7 @@ NUMS = {"shadow_count": (2, 1000), "promote_min_trades": (3, 200), "promote_marg
         "max_orders_per_day": (1, 100), "max_daily_loss_pct": (0.5, 50), "max_daily_loss_krw": (1000, 1e10),
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
-        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (5, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "live_proof_n": (3, 200), "time_stop_min": (0, 240), "time_stop_up_pct": (0, 10), "stop_slip_pct": (0.3, 5),
+        "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (5, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "live_proof_n": (3, 200), "live_quality_change": (0, 100), "live_quality_ratio": (0, 100), "time_stop_min": (0, 240), "time_stop_up_pct": (0, 10), "stop_slip_pct": (0.3, 5),
         "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
         "chase_near_high_pct": (0.1, 10), "chase_min_pullback_pct": (0, 5), "chase_run5_max_pct": (0.5, 20),
         "rebound_pullback_pct": (0.3, 10), "rebound_pullback_max_pct": (2, 30), "rebound_up_bars": (1, 3)}
@@ -1597,6 +1600,20 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 proof_note = f"🛡️ 검증 전이라 가상으로 (비슷한 거래 {est0.get('n', 0)}건 · 기대 {est0.get('ev', 0):+.2f}% — 실전은 {c['live_proof_n']}건↑·플러스부터)"
             else:
                 proof_note = ""
+            if buy_live and style == "swing" and not c.get("swing_live", False):
+                buy_live, proof_note = False, "📉 스윙은 지금 가상으로만 (설정 '스윙 실전'을 켜면 실전)"
+            elif buy_live and style == "surge" and c.get("live_quality", True):   # 🎯 강한 신호만 실전
+                f0 = (cands.get(sym) or {}).get("features") or {}
+                nw0 = (cands.get(sym) or {}).get("news") or {}
+                strong = bool(f0.get("pre")) or float(f0.get("change") or 0) >= float(c["live_quality_change"])
+                if not f0.get("pre") and float(f0.get("ratio") or 0) < float(c["live_quality_ratio"]):
+                    strong = False
+                if nw0.get("ok") and not nw0.get("items"):   # 공시를 확인했는데 이유가 없음
+                    strong = False
+                if not strong:
+                    buy_live = False
+                    proof_note = (f"🎯 강한 신호가 아니라 가상으로 (프리장 또는 +{c['live_quality_change']:g}%↑ · 정규장 거래량 {c['live_quality_ratio']:g}배↑ · 이유 있는 급등만 실전 — "
+                                  f"지금 {float(f0.get('change') or 0):+.1f}% · {float(f0.get('ratio') or 0):.1f}배)")
             if style == "surge" and minutes is not None and minutes >= 0:
                 chg0 = float(((cands.get(sym) or {}).get("features") or {}).get("change") or 0)
                 if chg0 < float(c.get("surge_min_change_regular", 0) or 0):
@@ -2329,7 +2346,8 @@ def _summary_one() -> str:
 
 
 # ── 채팅으로 엔진과 대화 (🤖 자동매매 팀) ──
-LABELS = {"live_needs_proof": "검증된 조건만 실전", "live_proof_n": "실전 검증 최소 건수", "time_stop_min": "시간 손절(분)",
+LABELS = {"live_quality": "실전은 강한 신호만", "live_quality_change": "강한 신호 최소 상승률(%)", "live_quality_ratio": "강한 신호 거래량 배수",
+          "swing_live": "스윙 실전", "live_needs_proof": "검증된 조건만 실전", "live_proof_n": "실전 검증 최소 건수", "time_stop_min": "시간 손절(분)",
           "time_stop_up_pct": "시간 손절 최소 상승(%)", "stop_slip_pct": "손절 매도 지정가 여유(%)", "stop_resell_sec": "매도 재주문(초)",
           "surge_min_change_regular": "정규장 급등 최소 상승률(%)", "surge_buy_cutoff_min": "급등주 매수 마감(분)", "regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
           "tod_filter": "지는 시간대 피하기", "max_per_sector": "같은 업종 최대 보유", "backup_on": "매일 백업", "weekly_report": "주간 성적표",

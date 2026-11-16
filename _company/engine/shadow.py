@@ -286,6 +286,14 @@ def ensure(c: dict, market: str, seeds: list[dict] | None = None, force: bool = 
         if vh not in {_phash(v["params"], c) for v in d["variants"]} | set(d["retired"]):
             d["variants"].append(_new_variant("변동성비교", vb, "스윙 고점 대비: 종목 변동성 자동(3~8%) vs 일괄 기준"))
             changed = True
+        # 💰 이긴 거래 더 크게: +5% 넘으면 고점 대비 기준을 넓혀 더 들고 가기 (실전과 비교 · 나으면 자동 교체)
+        have_ = {_phash(v["params"], c) for v in d["variants"]} | set(d["retired"])
+        for nm, extra in (("넓은익절A", {"trail_wide_after_pct": 5, "trail_wide_pct": 6}),
+                          ("넓은익절B", {"trail_pct": 4, "trail_wide_after_pct": 5, "trail_wide_pct": 8})):
+            wb = _clean({**base, **extra}, c)
+            if wb and _phash(wb, c) not in have_ and not any(v["name"] == nm for v in d["variants"]):
+                d["variants"].append(_new_variant(nm, wb, "+5% 넘으면 고점 대비 기준 넓혀 더 들고 가기"))
+                have_.add(_phash(wb, c)); changed = True
         if seeds:
             have = {_phash(v["params"], c) for v in d["variants"]}
             for sd in seeds[:6]:
