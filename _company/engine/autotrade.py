@@ -943,17 +943,33 @@ WHY_KEYS = (("rb_pullback", "고점 후 눌림 {:.2f}%"), ("rb_from_low", "바�
 
 def why_buy_text(feat: dict, est: dict | None, price: float, reason: str, ai_why: str = "") -> str:
     """📝 매수 근거를 수치로 (학습·복기용 · 절대 공란 아님)"""
-    parts = []
+    def _num(*ks):
+        for k in ks:
+            v = feat.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return float(v)
+        return None
+    # 핵심 5개는 맨 앞에 고정 (없으면 '?'로 표시 · 300자 자르기에도 남게)
+    chg, vr, r5, fh = _num("change"), _num("ratio", "vol_ratio"), _num("run5"), _num("from_high")
+    ev = est.get("ev") if est else feat.get("ev")
+    core = [f"급등 {chg:+.1f}%" if chg is not None else "급등 ?",
+            f"거래량 {vr:.1f}배" if vr is not None else "거래량 ?",
+            f"5분 추세 {r5:+.2f}%" if r5 is not None else "5분 추세 ?",
+            f"고점 대비 {fh:+.2f}%" if fh is not None else "고점 대비 ?",
+            f"기대값 {float(ev):+.2f}%" if isinstance(ev, (int, float)) else "기대값 ?"]
+    parts = ["[" + " · ".join(core) + "]"]
     for k, fmt in WHY_KEYS:
+        if k in ("change", "ratio", "vol_ratio", "run5", "from_high"):
+            continue   # 위에 이미 넣음
         v = feat.get(k)
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             parts.append(fmt.format(v))
-    known = {k for k, _ in WHY_KEYS} | {"p", "ev"}
+    if est:
+        parts.append(f"추정 승률 {float(est.get('p') or 0) * 100:.0f}% ({est.get('n', 0)}건)")
+    known = {k for k, _ in WHY_KEYS} | {"p", "ev", "fx"}
     for k, v in feat.items():   # 스윙 조건 등 나머지 수치
         if k not in known and isinstance(v, (int, float)) and not isinstance(v, bool):
             parts.append(f"{k} {v:g}")
-    if est:
-        parts.append(f"추정 승률 {float(est.get('p') or 0) * 100:.0f}% · 기대 {float(est.get('ev') or 0):+.2f}% ({est.get('n', 0)}건)")
     parts.append(f"현재가 {price:g}")
     txt = " · ".join(parts) + f" | 규칙: {reason[:60]}"
     return (txt + (f" | AI: {ai_why[:80]}" if ai_why else ""))[:300]
@@ -1114,10 +1130,11 @@ def _sell_kind(reason: str) -> str:
     r = reason or ""
     for key, label in (("AI 판단", "🤖 AI 판단"), ("안전장치", "AI 익절 안전장치"), ("손절", "손절"), ("나눠 팔기", "나눠 익절"),
                        ("익절", "익절"), ("고점", "고점 대비 하락"), ("본전", "본전 정리"), ("마감", "마감 정리"),
-                       ("20일선", "20일선 이탈"), ("보유 일수", "최대 보유 일수"), ("공시", "공시 악재")):
+                       ("장 끝", "마감 정리"), ("20일선", "20일선 이탈"), ("일 보유", "시간 초과"), ("보유 일수", "시간 초과"),
+                       ("공시", "공시 악재")):
         if key in r:
             return label
-    return r.split(":")[0][:30] or "기타"
+    return r.split(":")[0][:30] or "사유 기록 없음"
 
 
 def _fill_text(rec: dict, delta: float, fill_px: float, bp: dict, fx: float, gain: float, today: float) -> str:
@@ -1602,11 +1619,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     f_note = f"📉 직전 5분 하락 중 (5분 상승 {run5_f:+.2f}%) → 안 삼"
                     _note_buy_skip(sym, f_note)
                     results.append(f"{sym}: {f_note}"); continue
+                if run5_f is not None:
+                    chase_m = {"run5": run5_f}   # 📝 직전 5분 추세를 why_buy 에 (고점 필터 값이 있으면 그걸로 덮임)
             if style == "surge" and c.get("chase_filter", True):   # 🧗 고점 추격 필터 (진입 직후 역행 방지)
                 try:
-                    ok_c, chase_m, chase_note = chase_check(sym, price, minutes, c)
+                    ok_c, ch_m, chase_note = chase_check(sym, price, minutes, c)
                 except Exception as e:
-                    ok_c, chase_m, chase_note = True, {}, f"고점 확인 오류({type(e).__name__})"
+                    ok_c, ch_m, chase_note = True, {}, f"고점 확인 오류({type(e).__name__})"
+                chase_m = {**chase_m, **(ch_m or {})}   # 5분 추세 값 유지
                 if not ok_c:
                     _note_skip(sym, f"🧗 {chase_note}")
                     results.append(f"{sym}: 🧗 {chase_note} → 안 삼"); continue
@@ -1729,7 +1749,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             try:   # 📝 매수 근거를 수치로 반드시 기록
                 feat["why_buy"] = why_buy_text(feat, est, price, reason, why)
             except Exception:
-                feat["why_buy"] = f"현재가 {price:g} | 규칙: {reason[:60]}"
+                feat["why_buy"] = f"현재가 {price:g} | 규칙: {reason[:60]}" + (f" | 기대값 {float(est['ev']):+.2f}%" if est and isinstance(est.get("ev"), (int, float)) else "")
             nnote = news.note(nw)
             if c["prob_sizing"] and est["ev"] < 0 and not (style == "surge" and not buy_live):   # 2호 가상 탐색은 1호 실전 한도를 안 깎음
                 with _lock:
@@ -2903,7 +2923,8 @@ def _cross_review(day: str, market: str) -> str:
         f = t.get("features") or {}
         return {"sym": t["sym"], "pnl": t["pnl_pct"], "exit": t.get("exit_kind"), "mfe": t["mfe"], "mae": t["mae"],
                 "why_buy": (f.get("why_buy") or f.get("ai_decide") or ""), "change": f.get("change"), "ratio": f.get("ratio"),
-                "from_high": f.get("from_high"), "pullback5": f.get("pullback5"), "mode": t["mode"]}
+                "from_high": f.get("from_high"), "pullback5": f.get("pullback5"), "run5": f.get("run5"), "ev": f.get("ev"),
+                "mode": t["mode"]}
     by = {LANES[st]: [_row(t) for t in ts if tl._ts(t) == st] for st in LANES}
     c = config()
     prompt = ("두 자동매매 AI 의 오늘 거래예요. " + " / ".join(f"{LANES[st]}: {lane_mode(c, st)}" for st in LANES) + "\n"

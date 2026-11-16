@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 import statistics as st
 import threading
 import uuid
@@ -213,11 +214,20 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
         _save(d)
 
 
+EXIT_KINDS = (("안전장치", "수익 지키기"), ("AI 판단", "AI 판단"), ("🤖 AI", "AI 판단"), ("손절", "손절"), ("본전", "본전 정리"),
+              ("고점 대비", "수익 지키기"), ("익절", "익절"), ("마감", "마감 정리"), ("장 끝", "마감 정리"),
+              ("일 보유", "시간 초과"), ("보유 일수", "시간 초과"), ("시간 초과", "시간 초과"),
+              ("20일선", "추세 이탈"), ("추세 이탈", "추세 이탈"), ("공시", "공시 악재"))
+
+
 def _kind(reason: str) -> str:
-    for key, name in (("AI 판단", "AI 판단"), ("손절", "손절"), ("본전", "본전 정리"), ("익절", "익절"), ("고점 대비", "수익 지키기"), ("마감", "마감 정리")):
-        if key in reason:
+    """청산 사유 분류 — '기타' 대신 규칙 이름이라도 남김 (복기용)"""
+    r = reason or ""
+    for key, name in EXIT_KINDS:   # 순서 중요: 안전장치·AI 를 익절·손절보다 먼저
+        if key in r:
             return name
-    return "기타"
+    head = re.sub(r"^\[[^\]]*\]\s*", "", r.splitlines()[0] if r.strip() else "").split(":")[0].split("(")[0].strip()[:20]
+    return head or "사유 기록 없음"
 
 
 def _update_guard(d: dict, t: dict, cfg: dict) -> None:
