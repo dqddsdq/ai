@@ -332,6 +332,9 @@ FLASH_EXIT_DROP = -2.0    # 1분 안에 -2% 이상 급락
 FLASH_CRASH_PCT = -5.0    # 반등 진입: 1~3분 안에 -5% 이상 급락
 FLASH_CRASH_VOL = 3.0     #   그때 거래량 직전 평균의 3배 이상
 FLASH_HOLD_VOL = 0.5      #   반등 1분봉 거래량이 급락 때 최대의 50% 이상 (거래량 유지)
+VE_VOL = 3.0              # 📈 거래량 증가 초기 진입: 1분봉 거래량이 직전 평균의 3배 이상
+VE_MAX_RISE = 3.0         #   급증 시작 전 종가 대비 상승폭 3% 이하 (초입만)
+VE_PEAK_KEEP = 0.8        #   마지막 봉 거래량이 최근 급증 봉 최대의 80% 미만이면 '정점 후 감소' → 제외
 
 
 def _vbase(bars: list[dict]) -> float | None:
@@ -383,6 +386,39 @@ def flash_rebound_signal(bars: list[dict], price: float) -> dict | None:
         return {"low": low, "crash_t": win[-1]["t"], "drop": round(drop, 1), "vol": round(vmax / base, 1),
                 "why": f"{w}분 {drop:+.1f}%·거래량 {vmax / base:.1f}배 → 반등"}
     return None
+
+
+def vol_early_signal(bars: list[dict], price: float) -> dict | None:
+    """📈 거래량 증가 초기 진입 (그림자 검증 전용). bars = 오늘 다 끝난 1분봉(오래된→최신).
+    최근 1~3봉에서 거래량이 직전 평균의 VE_VOL 배↑로 막 늘기 시작 + 시작 전 대비 상승 0~VE_MAX_RISE% + VWAP 위.
+    거래량 정점 뒤 줄어드는 중이면 제외. 신호면 {start_t, vol, rise, vwap_gap, hi_gap, why}"""
+    if len(bars) < 16 or not price:
+        return None
+    base = _vbase(bars[:-3])
+    if not base:
+        return None
+    rec = bars[-3:]
+    hits = [i for i, b in enumerate(rec) if b["v"] >= base * VE_VOL]
+    if not hits:
+        return None
+    if any(b["v"] >= base * VE_VOL for b in bars[-6:-3]):   # 이미 그 전부터 급증 중 → 초기 아님
+        return None
+    vmax = max(b["v"] for b in rec[hits[0]:])
+    if rec[-1]["v"] < vmax * VE_PEAK_KEEP:   # 거래량 정점 뒤 감소 구간 제외
+        return None
+    ref = bars[-4 + hits[0]]["c"]            # 급증 시작 직전 봉 종가
+    rise = (price / ref - 1) * 100 if ref else 0
+    if rise <= 0 or rise > VE_MAX_RISE:
+        return None
+    pv = sum((b["h"] + b["l"] + b["c"]) / 3 * b["v"] for b in bars)
+    vs = sum(b["v"] for b in bars)
+    vwap = pv / vs if vs else 0
+    if not vwap or price <= vwap:
+        return None
+    hi = max(b["h"] for b in bars)
+    vr, vg, hg = rec[-1]["v"] / base, (price / vwap - 1) * 100, (price / hi - 1) * 100
+    return {"start_t": rec[hits[0]]["t"], "vol": round(vr, 1), "rise": round(rise, 2), "vwap_gap": round(vg, 2),
+            "hi_gap": round(hg, 2), "why": f"거래량 {vr:.1f}배 시작·상승 {rise:+.1f}%·VWAP {vg:+.1f}%·고점 대비 {hg:+.1f}%"}
 
 
 # ── 추세 (국장, 하루 한 번) ──

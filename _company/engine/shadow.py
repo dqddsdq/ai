@@ -65,7 +65,9 @@ HOT = [{"key": "A", "name": "급등A 30~50%·손절4%", "lo": 30, "hi": 50, "par
 HOT_REPORT_EVERY = 20   # 조합마다 이 건수 쌓일 때마다 텔레그램 보고
 # 📉 급락 신호 검증용 (가상 전용 · 자동 교체 대상 아님 · 따로 보관 · 실전 매수 조건 안 바꿈)
 FLASH = [{"key": "FX", "name": "급락청산 (현재 규칙+급락 매도)", "origin": "거래량 급감·1분 -2% 급락 시 매도"},
-         {"key": "FR", "name": "급락반등 진입", "origin": "1~3분 -5%·거래량 3배 뒤 반등 진입 · 손절은 급락 저점 아래"}]
+         {"key": "FR", "name": "급락반등 진입", "origin": "1~3분 -5%·거래량 3배 뒤 반등 진입 · 손절은 급락 저점 아래"},
+         {"key": "VE", "name": "거래량 증가 초기 진입 (2호)", "origin": "1분봉 거래량 급증 시작·상승 3% 이하·VWAP 위 (정점 후 감소 제외) · 매도는 현재 규칙"}]
+VE_MAX_SYMS = 30              # 거래량 초기 진입: 한 바퀴에 1분봉 볼 후보 수
 FLASH_REPORT_EVERY = 20
 FLASH_WINDOWS = (5, 15, 30)   # 신호 뒤 최고/최저 기록 구간(분)
 FLASH_MAX_SYMS = 10_000       # 한 바퀴에 반등을 살펴볼 종목 수 (제한 없음 · 조회 속도는 toss.py 가 지킴)
@@ -626,9 +628,14 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
         watch[s] = now
     for s in [s for s, t in watch.items() if now - t > 3600]:
         watch.pop(s)
-    for v in (fx_v, fr_v):
+    ve_v = fv.get("VE")   # 📈 거래량 증가 초기 진입
+    group = [v for v in (fx_v, fr_v, ve_v) if v]
+    for v in group:
         if v["day"] != session_day:
             v["day"], v["buys_today"], v["copied"], v["seen"] = session_day, 0, {}, {}
+            if v is ve_v:   # '현재'와 같게 단타 최고가는 날마다 새로
+                for p in v["pos"].values():
+                    p["high"] = p["avg"]
     # FX: '현재' 조합의 새 단타 진입을 같은 가격으로 따라 삼
     base_v = next((v for v in d["variants"] if _is_base(v)), None)
     if base_v:
@@ -641,7 +648,7 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
             fx_v["pos"][sym] = {**{k: p[k] for k in ("qty", "avg", "style", "buy_day", "sday", "cost0") if k in p},
                                 "high": p["avg"], "partial": False, "got": 0.0, "ets": now}
     # 매도
-    for v in (fx_v, fr_v):
+    for v in group:
         vc = {**c, **v["params"]}
         for sym in list(v["pos"]):
             p, q = v["pos"][sym], quotes.get(sym)
@@ -650,7 +657,9 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
             price = q["price"]
             p["high"] = max(p["high"], price)
             side, why = "", ""
-            if v is fx_v:
+            if v is ve_v:   # 매도는 '현재'와 같은 규칙 (진입 시점만 비교)
+                side, why = signal_surge(price, p["qty"], p["avg"], p["high"], minutes, False, vc, partial_done=p.get("partial", False))
+            elif v is fx_v:
                 bs = _done(sym)
                 if any(_ep(b["t"]) >= p.get("ets", 0) for b in bs[-1:]):   # 산 뒤 끝난 1분봉이 있을 때만
                     why = picker.flash_exit_signal(bs, price)
@@ -703,7 +712,47 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
                                 "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost,
                                 "got": 0.0, "ets": now}
             _signal(fr_v, sym, "rebound", q["price"], sig["why"])
-    _flash_track([fx_v, fr_v])
+    if ve_v and not exits_only and minutes is not None:
+        _ve_buy(ve_v, c, market, cands, quotes, minutes, session_day, f, now)
+    _flash_track(group)
+
+
+def _ve_buy(v: dict, c: dict, market: str, cands: dict, quotes: dict, minutes: int, session_day: str, f: float, now: float) -> None:
+    """📈 거래량 증가 초기 진입: '현재'와 같은 2호 급등 후보(상승률 구간·악재 제외 같음) 중 1분봉 거래량이 막 늘기 시작한 종목만 가상 매수"""
+    from . import picker
+    vc = {**c, **v["params"]}
+    per_pos = VIRTUAL / max(1, int(c["pick_count"]))
+    n = 400 if minutes > 190 else 200
+    t0 = now - (minutes + 1) * 60 if minutes >= 0 else 0
+    pool = [(s, cd) for s, cd in cands.items() if cd.get("style") == "surge"]
+    for sym, cd in sorted(pool, key=lambda kv: -kv[1]["est"]["ev"])[:VE_MAX_SYMS]:
+        if sym in v["pos"] or str((v.get("no_rebuy") or {}).get(sym) or "") >= session_day:
+            continue
+        q, ft, nw = quotes.get(sym), cd.get("features") or {}, cd.get("news") or {}
+        if not q or nw.get("pending") or (nw.get("ok") and nw.get("bad")):
+            continue
+        chg = ft.get("change") or 0
+        if chg < vc["surge_min_change_pct"] or chg > vc["surge_max_change_pct"]:   # '현재'와 같은 상승률 구간
+            continue
+        bs = [b for b in _bars(sym, n) if _ep(b["t"]) >= t0]   # 오늘(정규장) 봉만
+        if bs and now - _ep(bs[-1]["t"]) < 60:   # 만들어지는 봉 제외
+            bs = bs[:-1]
+        sig = picker.vol_early_signal(bs, q["price"])
+        if not sig or v["seen"].get(sym) == sig["start_t"]:
+            continue
+        v["seen"][sym] = sig["start_t"]   # 같은 급증으로 두 번 안 삼
+        lim = q["price"] * (1 + vc["limit_slip_pct"] / 100)
+        px = tl.fill_px(extras.slip_cfg(vc, spread=cd.get("spread_pct")), q["price"], "BUY", lim)   # '현재'와 같은 체결
+        qty = int(per_pos // (px * f))
+        if qty < 1:
+            continue
+        cost = qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
+        v["cash"] -= cost   # 🧪 가상 현금 제한 없음
+        v["buys_today"] += 1
+        v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": "surge", "partial": False,
+                         "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost,
+                         "got": 0.0, "ets": now}
+        _signal(v, sym, "vol_early", q["price"], sig["why"])
 
 
 def _flash_reports(d: dict, market: str) -> list[str]:
@@ -720,7 +769,8 @@ def _flash_reports(d: dict, market: str) -> list[str]:
         win = round(sum(1 for t in fin if _ret(t) > 0) / n * 100)
         avg = _avg(fin)
         total = sum(t["pnl_krw"] for t in v["trades"]) / VIRTUAL * 100
-        line = (f"{flag} [📉 급락 검증] '{v['name']}' 끝난 거래 {n}건 (시작 {v['created'][:10]})\n"
+        tag = "📈 거래량 초기 진입 검증" if v.get("key") == "VE" else "📉 급락 검증"
+        line = (f"{flag} [{tag}] '{v['name']}' 끝난 거래 {n}건 (시작 {v['created'][:10]})\n"
                 f"승률 {win}% · 평균 {avg:+.2f}% · 최대 손실 {min(_ret(t) for t in fin):+.2f}% · 총 {total:+.2f}% (가상 100만 원, 수수료·0.1% 미끄러짐 뺀 값)")
         if base_v:
             bf = [t for t in _fin(base_v) if t["t"] >= v["created"]]
@@ -843,7 +893,7 @@ def overview(c: dict, market: str) -> dict:
     rows.sort(key=lambda r: (r["name"] != "현재", -r["avg_all"] if r["n_all"] >= PRUNE_N else 0, -r["n_all"]))
     hot = [{"id": v["id"], "name": v["name"], "origin": v["origin"], "diff": "30% 초과 급등 검증 (자동 교체 안 함)", **stats(v, 3650), **summary(v)}
            for v in d.get("hot", [])]
-    flash = [{"id": v["id"], "name": v["name"], "origin": v["origin"], "diff": "급락 신호 검증 (자동 교체 안 함)",
+    flash = [{"id": v["id"], "name": v["name"], "origin": v["origin"], "diff": ("거래량 초기 진입 검증" if v.get("key") == "VE" else "급락 신호 검증") + " (자동 교체 안 함)",
               "signals": len(v.get("signals", [])), **stats(v, 3650), **summary(v)} for v in d.get("flash", [])]
     n_rows, rows = len(rows), rows[:50]   # 화면엔 위쪽 50개만 (조합이 많아도 응답 가볍게)
     lines = [f"{r['name']}: {r['n_all']}건 · 승률 {r['win_all']}% · 평균 {r['avg_all']:+.2f}% · 최대 손실 {r['worst']:+.2f}%" for r in rows]
