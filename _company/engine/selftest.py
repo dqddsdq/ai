@@ -152,7 +152,7 @@ def GitHub_동기화는_코드만():
     from . import gitsync
     for p in gitsync.SYNC_PATHS:
         assert not any(n in p for n in gitsync.NEVER), p
-        assert p.startswith("_company/engine") or p.startswith("_company/_agents/trader/") or p == "_company/requirements.txt", p
+        assert p.startswith(("_company/engine", "_company/tests")) or p.startswith("_company/_agents/trader/") or p == "_company/requirements.txt", p
     for n in (".env", "_cache/", "autotrade.json", "sessions/", "memory.md"):
         assert n in gitsync.NEVER, n
 
@@ -412,6 +412,25 @@ def 원인별_수정_분류():
     cs = fixloop.causes(ts, p)
     assert cs[0]["cause"] == "사자마자 떨어짐" and cs[0]["loss_share"] == 80, cs
     assert any(c["cause"] == "이익을 돌려줌" for c in cs)
+
+
+@case
+def 자동_규칙_변경은_하루_1번():
+    import time as _t
+    from . import extras
+    from . import store
+    with tempfile.TemporaryDirectory() as d:
+        orig = extras.RULE_LOG
+        extras.RULE_LOG = Path(d) / "rule.json"
+        try:
+            assert extras.rule_gate(["stop_loss_pct"])[0]
+            extras.rule_record({"stop_loss_pct": 3}, {"stop_loss_pct": 3.5})
+            assert extras.rule_gate(["trail_pct"])[0]                       # 같은 자동 조정(3분 안)은 한 번으로 침
+            dd = store.load(extras.RULE_LOG); dd["items"][0]["ts"] = _t.time() - 600; store.save(extras.RULE_LOG, dd)
+            assert not extras.rule_gate(["trail_pct"])[0]                   # 오늘 또 바꾸려면 막힘
+            assert extras.rule_gate(["mode", "lane_share_surge"])[0]        # 안전·배분은 예외
+        finally:
+            extras.RULE_LOG = orig
 
 
 @case

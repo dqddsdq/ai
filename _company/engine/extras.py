@@ -377,8 +377,9 @@ def after_review(market: str, mode: str, fx: float, s: dict, c: dict) -> list[st
     sw = [f"{p.get('name') or p['symbol']}" for p in ((s.get("swing") or {}).get("picks") or [])[:5]]
     notes = tl.lessons_text(market, 3)
     if c.get("tomorrow_plan", True):
+        gt = gate_text(market, str(s.get("day") or ""))
         m = (f"🗓️ {flag} 내일 계획\n들고 가는 스윙: {', '.join(carry) or '없음'}\n내일 볼 스윙 후보: {', '.join(sw) or '장 전에 새로 골라요'}"
-             + (f"\n오늘 교훈: {notes}" if notes else ""))
+             + (f"\n오늘 {gt}" if gt else "") + (f"\n오늘 교훈: {notes}" if notes else ""))
         notify.send(m); msgs.append(m)
     local = datetime.now(KST)
     if c.get("weekly_report", True) and local.weekday() == (5 if market == "US" else 4):   # 국장 금요일 · 미장 토요일 아침(한국)
@@ -436,3 +437,183 @@ def improve_effect(log=print, restart=None) -> str:
 def promote_edge(n_variants: int) -> float:
     """조합이 많으면 운으로 1등이 나오기 쉬워서, '현재'보다 이만큼(%p) 이상 나아야 교체"""
     return round(0.2 + 0.1 * math.log2(max(1.0, n_variants / 10)), 2)
+
+
+# ── 12. 규칙 변경은 하루 1번 + 나빠지면 그 변경만 되돌림 ──
+RULE_LOG = COMPANY_DIR / "_cache" / "rule_log.json"
+RULE_EXEMPT = {"mode", "lane_swing_mode", "lane_surge_mode", "lane_share_surge", "sim_slip_pct", "usd_krw"}   # 안전·배분·체결 보정은 제한 없음
+RULE_WINDOW_SEC = 180   # 같은 자동 조정 한 번에 여러 값을 바꾸는 건 한 번으로 침
+
+
+def _rlog() -> dict:
+    from . import store
+    d = store.load(RULE_LOG, lambda: {"items": []})
+    d.setdefault("items", [])
+    return d
+
+
+def rule_gate(keys) -> tuple[bool, str]:
+    """자동으로 규칙을 바꿔도 되는지 (오늘 이미 바꿨으면 내일로)"""
+    keys = set(keys) - RULE_EXEMPT
+    if not keys:
+        return True, ""
+    day = datetime.now(KST).strftime("%Y-%m-%d")
+    today = [x for x in _rlog()["items"] if x.get("day") == day and not x.get("revert")]
+    if today and time.time() - float(today[0].get("ts", 0)) > RULE_WINDOW_SEC:
+        return False, "오늘 이미 규칙을 한 번 바꿨어요 (하루 1번 — 뭐 때문에 성적이 바뀌었는지 알 수 있게) → 내일 다시"
+    return True, ""
+
+
+def rule_record(before: dict, after: dict, revert: bool = False) -> None:
+    from . import store
+    keys = {k for k in after if before.get(k) != after.get(k)} - RULE_EXEMPT
+    if not keys:
+        return
+    d = _rlog()
+    day = datetime.now(KST).strftime("%Y-%m-%d")
+    last = d["items"][-1] if d["items"] else None
+    if last and last.get("day") == day and not revert and not last.get("revert") and time.time() - float(last.get("ts", 0)) <= RULE_WINDOW_SEC:
+        for k in keys:   # 같은 한 번의 자동 조정이면 합침
+            last["before"].setdefault(k, before.get(k)); last["after"][k] = after.get(k)
+    else:
+        d["items"].append({"t": _now(), "ts": time.time(), "day": day, "before": {k: before.get(k) for k in keys},
+                           "after": {k: after.get(k) for k in keys}, "revert": revert, "checked": revert})
+    d["items"] = d["items"][-200:]
+    store.save(RULE_LOG, d)
+
+
+def rule_check(log=print) -> str:
+    """규칙 변경 뒤 끝난 거래 8건↑이면: 바뀌기 전 20건보다 평균이 0.5%p 넘게 나쁘고 마이너스면 그 변경만 되돌림"""
+    from . import store
+    from . import autotrade as at
+    d = _rlog()
+    msgs = []
+    with tl._lock:
+        ts = [t for t in tl._load()["trades"] if t["closed"] and t.get("exits")]
+    for it in d["items"]:
+        if it.get("checked"):
+            continue
+        after = [t for t in ts if t["exits"][-1]["t"] >= it["t"]]
+        before = [t for t in ts if t["exits"][-1]["t"] < it["t"]][-20:]
+        if len(after) < 8:
+            continue
+        it["checked"] = True
+        if len(before) < 8:
+            it["result"] = "비교할 이전 거래가 적어서 유지"
+            continue
+        ba, aa = st.mean(t["pnl_pct"] for t in before), st.mean(t["pnl_pct"] for t in after)
+        ev = f"바뀌기 전 {len(before)}건 평균 {ba:+.2f}% → 바뀐 뒤 {len(after)}건 {aa:+.2f}%"
+        if aa < ba - 0.5 and aa < 0:
+            cur = at.config()
+            back = {k: v for k, v in it["before"].items() if cur.get(k) == it["after"].get(k)}   # 그 뒤 다른 값으로 또 바뀐 건 안 건드림
+            if back and at.save_config(back, _by_auto=True, _revert=True).get("ok"):
+                it["result"] = f"나빠져서 되돌림 ({ev})"
+                msgs.append(f"↩️ 자동 규칙 변경 되돌림: {', '.join(f'{k} {it['after'][k]}→{v}' for k, v in back.items())} — {ev}")
+            else:
+                it["result"] = f"나빠졌지만 이미 다른 값으로 바뀜 ({ev})"
+        else:
+            it["result"] = f"유지 ({ev})"
+    store.save(RULE_LOG, d)
+    for m in msgs:
+        log(m)
+        try:
+            from . import notify
+            notify.send(m)
+        except Exception:
+            pass
+    return " / ".join(msgs)
+
+
+def rule_history(n: int = 10) -> list[dict]:
+    return _rlog()["items"][-n:][::-1]
+
+
+# ── 13. 왜 안 샀는지 하루 요약 ──
+GATE_KEYS = [("🧗", "고점 추격"), ("🔄", "반등 대기"), ("🎯 강한", "강한 신호 아님→가상"), ("🛡️", "검증 전→가상"), ("📉 스윙", "스윙→가상"),
+             ("📉", "시장 분위기"), ("🕐", "지는 시간대"), ("🧺", "업종 쏠림"), ("📈 정규장", "정규장 상승률 미달"), ("🕒", "늦은 시간"),
+             ("🔁", "손해 본 종목 재진입 금지"), ("📰", "공시"), ("탐색 매수", "탐색 매수 한도·거래대금"), ("건너뜀", "기대값 마이너스"),
+             ("⛔", "정지 중"), ("⚠️ 토스", "토스 장애"), ("보유 중", "보유 종목 수 한도"), ("매수 횟수 한도", "하루 매수 횟수 한도")]
+GATE_FILE = COMPANY_DIR / "_cache" / "gate_stats.json"
+
+
+def gate_count(market: str, day: str, results: list[str]) -> None:
+    """이번 바퀴 결과 줄에서 '안 산 이유'를 종목별로 모음 (하루 단위 · 종목당 이유별 한 번)"""
+    from . import store
+    hits = []
+    for line in results:
+        sym, sep, rest = line.partition(": ")
+        if not sep or " " in sym or len(sym) > 12 or "주문 보냄" in rest:
+            continue
+        if "가상 체결" in rest and not any(k in rest for k in ("🎯 강한", "🛡️", "📉 스윙")):
+            continue   # 가상 AI 가 정상으로 산 것
+        for key, name in GATE_KEYS:
+            if key in rest:
+                hits.append((sym, name))
+                break
+    if not hits:
+        return
+    d = store.load(GATE_FILE, lambda: {})
+    k = f"{market}:{day}"
+    g = d.setdefault(k, {})
+    for sym, name in hits:
+        lst = g.setdefault(name, [])
+        if sym not in lst:
+            lst.append(sym)
+    for old in sorted(d)[:-20]:
+        d.pop(old)
+    store.save(GATE_FILE, d)
+
+
+def gate_text(market: str, day: str) -> str:
+    from . import store
+    g = store.load(GATE_FILE, lambda: {}).get(f"{market}:{day}") or {}
+    if not g:
+        return ""
+    items = sorted(g.items(), key=lambda kv: -len(kv[1]))
+    return "🚧 안 산 이유(종목 수): " + " · ".join(f"{k} {len(v)}" for k, v in items[:8])
+
+
+# ── 14. 가상 체결 미끄러짐을 실전 체결에 맞춰 자동 보정 ──
+def calibrate_slip(c: dict, s: dict, log=print) -> str:
+    obs = [float(x) for x in (s.get("slip_obs") or [])][-60:]
+    if len(obs) < 10:
+        return ""
+    med = st.median(max(0.0, x) for x in obs)
+    new = round(min(2.0, max(0.05, med)), 3)
+    cur = float(c.get("sim_slip_pct", 0.1))
+    if abs(new - cur) < 0.03:
+        return ""
+    from . import autotrade as at
+    if at.save_config({"sim_slip_pct": new}, _by_auto=True).get("ok"):
+        msg = f"💱 가상 체결 미끄러짐 {cur:g}% → {new:g}% (실전 체결 {len(obs)}건 중앙값 — 가상 성적이 실전과 같게)"
+        log(msg)
+        return msg
+    return ""
+
+
+# ── 15. 관심 종목 (사장님이 찍은 종목도 급등 조건이 맞으면 후보로) ──
+def watch_cands(market: str, c: dict, have: set, minutes) -> dict:
+    out = {}
+    syms = [s for s in (c.get("watchlist") or []) if s not in have and s not in (c.get("exclude") or []) and (s.isdigit()) == (market == "KR")]
+    if not syms or minutes is None:
+        return out
+    try:
+        qs = toss.prices(syms)
+    except Exception:
+        return out
+    for sym in syms:
+        px = (qs.get(sym) or {}).get("price")
+        if not px:
+            continue
+        def prev_close(sym=sym):
+            closes, _, dates = toss.daily(sym, 5)
+            from . import picker
+            return closes[-2] if dates and dates[-1][:10] >= picker.session_date(market) else closes[-1]
+        prev = _cached(("prev", sym), 1800, prev_close)
+        if not prev:
+            continue
+        chg = (float(px) / prev - 1) * 100
+        if chg >= float(c.get("surge_min_change_pct", 5)):
+            out[sym] = {"style": "surge", "features": {"change": round(chg, 1), "ratio": None, "pre": minutes < 0, "minute": minutes, "watch": True},
+                        "reason": f"⭐ 관심 종목 {chg:+.1f}%", "score": chg}
+    return out

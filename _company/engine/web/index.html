@@ -498,6 +498,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       </div>
       <div class="card"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
         <div id="scorecard" class="tlog" style="margin-top:8px;white-space:pre-wrap"></div>
+        <div id="gates" class="muted" style="margin-top:6px;font-size:13px"></div>
+        <div id="rules" class="tlog" style="margin-top:6px"></div>
         <div id="lessons" class="tlog" style="margin-top:8px"></div>
       </div>
       <div class="card"><b>🧪 규칙 실험실</b> <span class="muted" style="font-size:12.5px">규칙 조합 여러 개를 실전과 동시에 가상으로 · 확실히 나은 조합은 실전 규칙으로 자동 교체</span>
@@ -552,6 +554,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label>🤝 2호 실전 전환 조건: 가상 거래 몇 건 이상<input id="t-lane_live_trades" type="number"></label>
           <label class="toggle"><input type="checkbox" id="t-lane_auto_share"> 🤝 잘하는 AI 쪽으로 예산 몫 자동 조정</label>
           <label class="toggle"><input type="checkbox" id="t-lane_auto_live"> 🤝 2호 가상→실전 자동 (연속 손실이면 다시 가상)</label>
+          <label>⭐ 관심 종목 (쉼표로 · 예: NVDA, 005930 — 급등 조건이 맞으면 후보로)<input id="t-watchlist" class="field"></label>
           <label class="toggle"><input type="checkbox" id="t-live_quality"> 🎯 실전 돈은 강한 신호에만 (프리장 또는 크게 오른 급등 · 정규장 거래량 많은 것 · 이유 있는 급등)</label>
           <label>🎯 강한 신호 최소 상승률 (%)<input id="t-live_quality_change" type="number"></label>
           <label>🎯 정규장 강한 신호 거래량 배수<input id="t-live_quality_ratio" type="number" step="0.5"></label>
@@ -1429,6 +1432,7 @@ async function renderTrade(fillForm = true) {
   if (fillForm) {
     $("#t-symbols").value = c.symbols.join(", ");
     TRADE_NUM.forEach(k => $("#t-" + k).value = c[k]); TRADE_SEL.forEach(k => $("#t-" + k).value = c[k]); TRADE_CHK.forEach(k => $("#t-" + k).checked = !!c[k]);
+    $("#t-watchlist").value = (c.watchlist || []).join(", ");
     ["US", "KR"].forEach(m => $("#t-mk-" + m).checked = (c.markets || []).includes(m));
   }
   const pk = d.picks || {};
@@ -1451,6 +1455,9 @@ async function renderTrade(fillForm = true) {
   renderLanes(d.lanes || {}, d.lessons || [], d.halted_lane || {});
   $("#trade-weekend").onclick = async () => { const r = await api("/api/autotrade/weekend", { market: tradeMk() }); alert(r.message); };
   $("#scorecard").textContent = (d.scorecard || {}).text || "아직 기록 없음";
+  $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
+  $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 8건 뒤 나빠지면 그 변경만 되돌림)</span></div>` + d.rules.map(x =>
+    `<div>${esc(x.t.slice(5, 16))} ${x.revert ? "↩️ " : ""}${esc(Object.entries(x.after).map(([k, v]) => `${k} ${x.before[k]}→${v}`).join(", "))} <span class="muted">${esc(x.result || (x.checked ? "" : "효과 확인 중"))}</span></div>`).join("") : "";
   const pf = d.preflight || {};
   $("#trade-pre").innerHTML = (pf.day ? `🩺 실데이터 점검 ${esc(pf.day)} ${esc(pf.at || "")}: ${pf.closed ? "휴장일 — 오늘 매매 안 함" : pf.ok ? "✅ 통과" : "❌ 문제 있음 (오늘 새로 안 삼)"} <details style="display:inline"><summary style="display:inline;cursor:pointer" class="muted">자세히</summary>${(pf.checks || []).map(x => `<div class="muted">${x.ok ? "✅" : (x.critical ? "❌" : "⚠️")} ${esc(x.name)} — ${esc(x.detail)}</div>`).join("")}</details>` : `<span class="muted">🩺 실데이터 점검: 장 열릴 때 자동</span>`)
     + ` <button class="btn" id="trade-pf" style="padding:2px 8px;font-size:12px">지금 점검</button> <button class="btn" id="trade-tg" style="padding:2px 8px;font-size:12px">🔔 텔레그램 시험</button>`;
@@ -1733,6 +1740,7 @@ document.querySelectorAll("#trade-mode button").forEach(btn => btn.onclick = asy
 $("#trade-save").onclick = async () => {
   const body = { symbols: $("#t-symbols").value };
   TRADE_NUM.forEach(k => body[k] = $("#t-" + k).value); TRADE_SEL.forEach(k => body[k] = $("#t-" + k).value); TRADE_CHK.forEach(k => body[k] = $("#t-" + k).checked);
+  body.watchlist = $("#t-watchlist").value;
   body.markets = ["US", "KR"].filter(m => $("#t-mk-" + m).checked);
   const r = await api("/api/autotrade/config", body); alert(r.ok ? "저장했어요" : r.message); renderTrade();
 };

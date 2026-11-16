@@ -53,6 +53,7 @@ DEFAULTS = {
     "pick_count": 3,               # 동시에 들고 갈 최대 종목 수 (예산을 이 수로 나눔)
     "symbols": [],                 # 직접 고른 종목 (auto_pick 끄면 이것만)
     "exclude": [],                 # 절대 사지 않을 종목
+    "watchlist": [],               # ⭐ 관심 종목: 급등 조건(최소 상승률)이 맞으면 후보로 (다른 관문은 똑같이 거침)
     "budget_mode": "all_cash",     # all_cash = 계좌의 그 통화 현금 전부 / fixed = max_total_krw
     "max_total_krw": 100000,       # fixed 일 때 총 투자 한도
     "max_order_krw": 50000,        # 한 번 주문 최대 (두 방식 모두 상한, 0 = 제한 없음)
@@ -332,8 +333,13 @@ def note_user_mode(mode: str) -> None:
         _save(s)
 
 
-def save_config(new: dict, _by_auto: bool = False) -> dict:
+def save_config(new: dict, _by_auto: bool = False, _revert: bool = False) -> dict:
     c, errors = config(), []
+    if _by_auto and not _revert:   # 🧮 자동 규칙 변경은 하루 1번 (안전·배분은 예외)
+        ok_g, why_g = extras.rule_gate([k for k in new if c.get(k) != new[k]])
+        if not ok_g:
+            return {"ok": False, "message": why_g}
+    before_ = dict(c)
     if "mode" in new and not _by_auto and new.get("mode") in CHOICES["mode"]:
         note_user_mode(new["mode"])
     for k, opts in CHOICES.items():
@@ -358,6 +364,13 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
             errors.append("제외 종목 코드가 이상해요")
         else:
             c["exclude"] = list(dict.fromkeys(ex))[:100]
+    if "watchlist" in new:
+        raw = new["watchlist"] if isinstance(new["watchlist"], list) else str(new["watchlist"]).replace(",", " ").split()
+        wl = [toss.symbol(s) for s in raw if str(s).strip()]
+        if any(not re.fullmatch(r"\d{6}|[A-Z][A-Z.\-]{0,9}", x) for x in wl):
+            errors.append("관심 종목 코드가 이상해요 (예: NVDA, 005930)")
+        else:
+            c["watchlist"] = list(dict.fromkeys(wl))[:30]
     if "symbols" in new:
         raw = new["symbols"] if isinstance(new["symbols"], list) else str(new["symbols"]).replace(",", " ").split()
         syms = [toss.symbol(s) for s in raw if s.strip()]
@@ -385,6 +398,11 @@ def save_config(new: dict, _by_auto: bool = False) -> dict:
         return {"ok": False, "message": " · ".join(errors)}
     c.pop("market", None)
     store.save(CONFIG, c)
+    if _by_auto:
+        try:
+            extras.rule_record(before_, c, revert=_revert)
+        except Exception:
+            pass
     event("설정", f"모드 {c['mode']} · {'+'.join({'US': '미장', 'KR': '국장'}[m] for m in c['markets'])} · {STRAT_NAME[c['strategy']]} · "
                 f"{'현금 전부' if c['budget_mode'] == 'all_cash' else '한도 ' + format(c['max_total_krw'], ',') + '원'}"
                 + ("" if c["auto_pick"] else f" · 종목 {', '.join(c['symbols']) or '없음'}"))
@@ -1186,6 +1204,10 @@ def _reconcile(fx: float) -> None:
             if not rec:
                 continue
             delta = filled - float(rec.get("counted", 0))   # 새로 체결된 수량만 (같은 체결 두 번 안 셈·안 보냄)
+            if delta > 0 and rec.get("quote") and not rec.get("counted") and "손절" not in str(rec.get("reason", "")):   # 💱 실제 미끄러짐 (손절은 일부러 낮게 내서 제외)
+                q_ = float(rec["quote"])
+                sl_ = (fill_px / q_ - 1) * 100 if rec["side"] == "BUY" else (q_ / fill_px - 1) * 100
+                s["slip_obs"] = (list(s.get("slip_obs") or []) + [round(sl_, 3)])[-60:]
             if delta > 0:
                 bp = s["bot_pos"].get(rec["symbol"], {"qty": 0.0, "avg": 0.0})
                 f = 1 if _mkt(rec["symbol"]) == "KR" else fx
@@ -1446,6 +1468,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                                               "reason": "[스윙] " + x["reason"], "score": x.get("score", 0), "info": x}
                 if sw.get("picks"):
                     results.append(f"🔎 스윙 후보 {len(sw['picks'])}개 ({sw.get('note', '')})")
+    if c.get("watchlist") and not exits_only:   # ⭐ 관심 종목
+        try:
+            cands.update(extras.watch_cands(market, c, set(cands) | set(pos), minutes))
+        except Exception as e:
+            results.append(f"⭐ 관심 종목 확인 오류: {type(e).__name__}")
     # 🎲 후보마다 기대 수익률 → 높은 순 (단타·스윙 상관없이)
     for sym, cd in cands.items():
         cd["features"].update(style=cd["style"], mkt=market)
@@ -1852,6 +1879,10 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                         lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
         except Exception as e:
             results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
+    try:
+        extras.gate_count(market, s["day"], results)   # 🚧 안 산 이유 하루 요약용
+    except Exception:
+        pass
     return {"ok": True, "mode": mode, "results": results}
 
 
@@ -1861,7 +1892,8 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
     px = toss.order_price(sym, price, side)
     label = f"{sym} {'매수' if side == 'BUY' else '매도'} {qty}주 @ {px}"
     rec = {"t": datetime.now(KST).strftime("%m-%d %H:%M:%S"), "symbol": sym, "side": side, "qty": qty, "price": float(px),
-           "reason": reason, "mode": "live" if live else "paper", "client_order_id": coid, "partial": partial, "chart": chart}
+           "reason": reason, "mode": "live" if live else "paper", "client_order_id": coid, "partial": partial, "chart": chart,
+           "quote": float(quote or price)}
     if side == "BUY":
         rec["features"] = dict(feat or {"style": "surge", "mkt": _mkt(sym)})
         if chart:
@@ -1990,7 +2022,8 @@ def overview() -> dict:
             "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper", c["market"]),
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
             "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {},
-            "scorecard": _scorecard_safe(c, s), "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "halted_lane": s.get("halted_lane") or {}}
+            "scorecard": _scorecard_safe(c, s), "gates": extras.gate_text(c["market"], s["day"]), "rules": extras.rule_history(8),
+            "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "halted_lane": s.get("halted_lane") or {}}
 
 
 def _brief(m: str) -> dict:
@@ -2047,6 +2080,16 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
             _save(s_r)
     except Exception as e:
         event("오류", f"장 마감 알림 실패: {type(e).__name__}: {e}")
+    try:   # ↩️ 자동 규칙 변경 효과 확인 (나빠졌으면 그 변경만 되돌림) · 💱 가상 체결 미끄러짐 보정
+        m_ = extras.rule_check(_log_fn)
+        if m_:
+            event("자동 조정", m_)
+        with _lock:
+            m2 = extras.calibrate_slip(config(), state(), _log_fn)
+        if m2:
+            event("자동 조정", m2)
+    except Exception as e:
+        event("오류", f"규칙 변경 확인 실패: {type(e).__name__}: {e}")
     try:   # 🛠️ 매매 코드 자동 개선 효과 확인 → 나빠졌으면 되돌림
         if c2.get("improve_effect_check", True):
             msg = extras.improve_effect(_log_fn, _restart_fn[0])
@@ -2406,6 +2449,13 @@ def _engine_one() -> str:
                                         + (f" 승률 {v['win_rate']}% 평균 {v['avg']:+.2f}%" if v.get("n") else "") for v in lv.values()))
     try:
         lines.append("📊 " + _scorecard_safe(c, s)["text"].replace("\n", " / "))
+        gt = extras.gate_text(c["market"], s["day"])
+        if gt:
+            lines.append(gt)
+        rh = extras.rule_history(5)
+        if rh:
+            lines.append("🧮 최근 자동 규칙 변경: " + " / ".join(f"{x['t'][5:16]} {', '.join(f'{k} {x['before'].get(k)}→{v}' for k, v in x['after'].items())}"
+                                                       + (f" ({x['result'][:30]})" if x.get("result") else "") for x in rh))
     except Exception:
         pass
     notes = tl.lessons_text(c["market"], 8)
