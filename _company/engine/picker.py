@@ -491,6 +491,7 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
     afford = [x for x in cands if min_price <= prices.get(x, 0) <= max_price]
     log(f"🔎 스윙(추세) 후보 찾기: {len(afford)}개 차트 확인 (동시 {workers}개)")
     today = session_date(market)
+    _pb_found: list[dict] = []   # 눌림 반등 후보 (그림자 검증 전용)
 
     def one(sym):
         try:
@@ -507,6 +508,11 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
         value20 = sum(c * v for c, v in zip(closes[-20:], vols[-20:])) / 20 * fx
         if value20 < cfg["min_trading_value_krw"]:
             return None
+        hist = cs[:-1] if cs[-1]["timestamp"][:10] == today else cs   # 끝난 일봉만 (눌림 검증용)
+        pb = pullback_setup(hist, value20, cfg)   # 🧪 같은 일봉으로 눌림 후보도 (추가 조회 없음)
+        if pb:
+            pb.update(symbol=sym, name=names.get(sym, sym))
+            _pb_found.append(pb)
         ma20, ma60, rsi = sum(series[-20:]) / 20, sum(series[-60:]) / 60, _rsi(series)
         if not (price > ma20 > ma60 and rsi is not None and 45 <= rsi <= cfg["rsi_max_buy"]):
             return None
@@ -531,7 +537,62 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
             pass
         picks.append(c)
     note = f"{len(afford)}개 중 추세 조건 통과 {len(scored)}개 → {len(picks)}개"
-    return {"day": today, "picks": picks, "note": note, "strategy": "trend", "market": market}
+    pbs = []   # 거래대금 큰 순으로 PB_MAX 개 (경고 종목 제외)
+    for x in sorted(_pb_found, key=lambda x: -x["value20"]):
+        if len(pbs) >= PB_MAX:
+            break
+        try:
+            if toss._get(f"/api/v1/stocks/{x['symbol']}/warnings"):
+                continue
+        except toss.TossError:
+            pass
+        pbs.append(x)
+    return {"day": today, "picks": picks, "note": note, "strategy": "trend", "market": market, "pullback": pbs}
+
+
+# ── 🧪 눌림 반등 (그림자 검증 전용 · 일봉 계산만, 조회 없음) ──
+PB_VALUE_X = 3.0        # 거래대금: 최소 기준의 3배 이상 (큰 종목만)
+PB_DIP = (4.0, 15.0)    # 20일 고점 대비 최근 5일 저점 -4~-15% 눌림
+PB_MA_TOUCH = 1.03      # 최근 5일 저점이 20일선 +3% 안까지 내려옴
+PB_R20_MAX = 20.0       # 과열 제외: 20일 상승률 20% 이하
+PB_RSI_MAX = 62         # 과열 제외: RSI 62 이하
+PB_MAX = 20             # 하루 후보 최대 개수
+PB_NEAR_HI = 0.97       # 장중: 20일 고점의 97% 넘으면 고점 근처 → 제외
+PB_DAY_MAX = 5.0        # 장중: 오늘 +5% 넘으면 급등 → 제외
+
+
+def pullback_setup(cs: list[dict], value20: float, cfg: dict) -> dict | None:
+    """상승 추세(20일선>60일선·60일선 오름) 중 20일선 근처까지 눌린 종목. cs = 끝난 일봉(오래된→최신).
+    반등 확인은 장중에 (전일 고가 돌파) 그림자에서 함. 조건 맞으면 기준값, 아니면 None"""
+    if len(cs) < 68 or value20 < cfg["min_trading_value_krw"] * PB_VALUE_X:
+        return None
+    closes = [float(c["closePrice"]) for c in cs]
+    lows = [float(c.get("lowPrice") or c["closePrice"]) for c in cs]
+    highs = [float(c.get("highPrice") or c["closePrice"]) for c in cs]
+    ma20, ma60 = sum(closes[-20:]) / 20, sum(closes[-60:]) / 60
+    ma60_old = sum(closes[-68:-8]) / 60   # 8일 전 60일선
+    if not (ma20 > ma60 and closes[-1] > ma60 and ma60 > ma60_old):
+        return None
+    hi20, lo5 = max(highs[-20:]), min(lows[-5:])
+    dip = (1 - lo5 / hi20) * 100 if hi20 else 0
+    r20 = (closes[-1] / closes[-21] - 1) * 100 if closes[-21] else 0
+    rsi = _rsi(closes)
+    if not (PB_DIP[0] <= dip <= PB_DIP[1] and lo5 <= ma20 * PB_MA_TOUCH and r20 <= PB_R20_MAX
+            and rsi is not None and rsi <= PB_RSI_MAX):
+        return None
+    return {"prev": closes[-1], "prev_high": highs[-1], "hi20": hi20, "ma20": round(ma20, 4), "value20": round(value20),
+            "dip": round(dip, 1), "r20": round(r20, 1), "rsi": round(rsi),
+            "why": f"20일 고점 대비 -{dip:.1f}% 눌림·20일선 근처·RSI {rsi:.0f}·거래대금 {value20 / 1e8:,.0f}억원/일"}
+
+
+def pullback_rebound(pb: dict, price: float) -> str:
+    """장중 반등 확인: 전일 고가 돌파 + 20일선 위 + 고점 근처·오늘 급등 아님. 맞으면 이유, 아니면 ''"""
+    if not price or not pb.get("prev"):
+        return ""
+    chg = (price / pb["prev"] - 1) * 100
+    if price <= pb["prev_high"] or price < pb["ma20"] or price > pb["hi20"] * PB_NEAR_HI or not 0 < chg <= PB_DAY_MAX:
+        return ""
+    return f"[눌림반등] {pb['why']} → 전일 고가 돌파 {chg:+.1f}%"
 
 
 # ── 초반 돌파 감지 (1분봉 기준 VWAP 돌파) ──

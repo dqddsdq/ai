@@ -68,7 +68,8 @@ FLASH = [{"key": "FX", "name": "급락청산 (현재 규칙+급락 매도)", "or
          {"key": "FR", "name": "급락반등 진입", "origin": "1~3분 -5%·거래량 3배 뒤 반등 진입 · 손절은 급락 저점 아래"},
          {"key": "VE", "name": "거래량 증가 초기 진입 (2호)", "origin": "1분봉 거래량 급증 시작·상승 3% 이하·VWAP 위 (정점 후 감소 제외) · 매도는 현재 규칙"},
          {"key": "VW", "name": "거래량 감소+VWAP 아래 매도", "origin": "'현재'와 같이 삼 · 현재 규칙+최근 3봉 거래량 60%↓·VWAP 아래면 매도"},
-         {"key": "OB", "name": "호가 약화 매도", "origin": "'현재'와 같이 삼 · 현재 규칙+매수/매도 잔량 0.5↓(산 직후의 60%↓)면 매도"}]
+         {"key": "OB", "name": "호가 약화 매도", "origin": "'현재'와 같이 삼 · 현재 규칙+매수/매도 잔량 0.5↓(산 직후의 60%↓)면 매도"},
+         {"key": "PB", "name": "눌림 반등 진입 (1호 비교)", "origin": "거래대금 큰 상승 추세 종목이 20일선 근처까지 눌린 뒤 전일 고가 돌파 시 진입 · 과열·고점 근처·급등 제외 · 매도는 현재 스윙 규칙"}]
 EXIT_KEYS = ("FX", "VW", "OB")   # '현재' 단타 진입을 따라 사서 매도 시점만 비교하는 조합
 VE_MAX_SYMS = 30              # 거래량 초기 진입: 한 바퀴에 1분봉 볼 후보 수
 FLASH_REPORT_EVERY = 20
@@ -324,7 +325,8 @@ def _shrink(d: dict, cap: int, keep: list | None = None) -> None:
 
 
 def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, exits_only: bool,
-         signal_surge, signal_swing, market_open, daily_closes, session_day: str, hot: dict | None = None) -> None:
+         signal_surge, signal_swing, market_open, daily_closes, session_day: str, hot: dict | None = None,
+         pullback: list | None = None) -> None:
     """한 바퀴: 조합마다 자기 규칙으로 가상 매도·매수 (실전 엔진이 부름). hot = 30% 초과 급등 후보 (급등 검증 조합 전용)
     모든 조합이 같은 후보·같은 시세를 씀 → 조합이 늘어도 조회·AI 호출은 안 늘어남"""
     from . import toss
@@ -472,6 +474,11 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
             msgs += _flash_reports(d, market)
         except Exception as e:
             print(f"🧪 급락 검증 오류: {type(e).__name__}: {e}")
+        try:   # 🧪 눌림 반등 진입 검증 (오류가 나도 기존 그림자 매매는 그대로)
+            _pb_step(d, c, market, cands, quotes, minutes, exits_only, signal_swing, market_open, _closes,
+                     session_day, 1 if market == "KR" else fx, pullback or [])
+        except Exception as e:
+            print(f"🧪 눌림 반등 검증 오류: {type(e).__name__}: {e}")
         _save(market, d, force=bool(msgs))   # 알림 있으면 바로 저장 (보고 표시 중복 방지)
     if msgs:
         from . import notify
@@ -787,8 +794,72 @@ def _ve_buy(v: dict, c: dict, market: str, cands: dict, quotes: dict, minutes: i
         _signal(v, sym, "vol_early", q["price"], sig["why"])
 
 
+def _pb_step(d: dict, c: dict, market: str, cands: dict, quotes: dict, minutes, exits_only: bool,
+             signal_swing, market_open, closes_fn, session_day: str, f: float, pullback: list) -> None:
+    """🧪 눌림 반등 진입(PB): 스윙 검색이 고른 눌림 후보 중 장중 전일 고가를 돌파한 종목만 가상 매수.
+    매도는 '현재' 스윙 규칙 그대로 (진입 유형만 비교) · 실전 매수 조건과 무관"""
+    from . import picker, toss
+    v = next((x for x in d.get("flash", []) if x.get("key") == "PB"), None)
+    if not v:
+        return
+    if v["day"] != session_day:
+        v["day"], v["buys_today"], v["seen"] = session_day, 0, {}
+    vc = {**c, **v["params"]}
+    # 매도: 스윙 규칙 (밤새 보유)
+    for sym in list(v["pos"]):
+        p, q = v["pos"][sym], quotes.get(sym)
+        if not q:
+            continue
+        price = q["price"]
+        p["high"] = max(p["high"], price)
+        closes = closes_fn(sym)
+        if closes is None:
+            continue
+        days = (datetime.now(KST).date() - datetime.strptime(p["buy_day"], "%Y-%m-%d").date()).days
+        side, why = signal_swing(closes, price, p["qty"], p["avg"], p["high"], days, vc)
+        if side == "SELL" and market_open(sym, "SELL"):
+            _vsell(v, sym, "SELL", price, why, vc, c, market, f, session_day)
+            if _ret(v["trades"][-1]) < 0 and c.get("no_rebuy_after_loss", True):   # 스윙처럼 N일 재진입 금지
+                v["no_rebuy"][sym] = (datetime.now(KST) + timedelta(days=int(c.get("no_rebuy_swing_days", 3)))).strftime("%Y-%m-%d")
+    # 매수: 정규장 10분 뒤부터 (스윙과 같게)
+    if exits_only or minutes is None or minutes < 10 or not pullback:
+        return
+    pbs = [x for x in pullback if x.get("symbol") and x["symbol"] not in v["pos"] and x["symbol"] not in (c.get("exclude") or [])]
+    miss = [x["symbol"] for x in pbs if x["symbol"] not in quotes]
+    if miss:   # 후보 시세는 한 번에 묶어서
+        try:
+            quotes = {**quotes, **toss.prices(miss)}
+        except toss.TossError:
+            pass
+    per_pos = VIRTUAL / max(1, int(c["pick_count"]))
+    for x in pbs:
+        sym = x["symbol"]
+        if str((v.get("no_rebuy") or {}).get(sym) or "") >= session_day or v["seen"].get(sym):
+            continue
+        q = quotes.get(sym)
+        nw = (cands.get(sym) or {}).get("news") or {}
+        if not q or nw.get("pending") or (nw.get("ok") and nw.get("bad")):
+            continue
+        why = picker.pullback_rebound(x, q["price"])
+        if not why:
+            continue
+        v["seen"][sym] = True   # 하루 한 번만
+        px = tl.fill_px(_slip(vc), q["price"], "BUY")
+        qty = int(per_pos // (px * f))
+        if qty < 1:
+            continue
+        cost = qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
+        v["cash"] -= cost   # 🧪 가상 현금 제한 없음
+        v["buys_today"] += 1
+        v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": "swing", "partial": False,
+                         "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost,
+                         "got": 0.0, "ets": time.time()}
+        _signal(v, sym, "pullback", q["price"], why)
+
+
 def _flash_tag(key) -> str:
-    return {"VE": "📈 거래량 초기 진입 검증", "VW": "📉 거래량 감소+VWAP 매도 검증", "OB": "📚 호가 약화 매도 검증"}.get(key, "📉 급락 검증")
+    return {"VE": "📈 거래량 초기 진입 검증", "VW": "📉 거래량 감소+VWAP 매도 검증", "OB": "📚 호가 약화 매도 검증",
+            "PB": "🧪 눌림 반등 진입 검증"}.get(key, "📉 급락 검증")
 
 
 def _flash_reports(d: dict, market: str) -> list[str]:
@@ -808,7 +879,16 @@ def _flash_reports(d: dict, market: str) -> list[str]:
         tag = _flash_tag(v.get("key"))
         line = (f"{flag} [{tag}] '{v['name']}' 끝난 거래 {n}건 (시작 {v['created'][:10]})\n"
                 f"승률 {win}% · 평균 {avg:+.2f}% · 최대 손실 {min(_ret(t) for t in fin):+.2f}% · 총 {total:+.2f}% (가상 100만 원, 수수료·0.1% 미끄러짐 뺀 값)")
-        if base_v:
+        if base_v and v.get("key") == "PB":   # 눌림 반등: 기존 진입(현재 조합 스윙·전체)과 승률·평균 비교
+            for lab, bf in (("1호 스윙", [t for t in _fin(base_v) if t["t"] >= v["created"] and t.get("style") == "swing"]),
+                            ("전체", [t for t in _fin(base_v) if t["t"] >= v["created"]])):
+                if bf:
+                    bw, ba = round(sum(1 for t in bf if _ret(t) > 0) / len(bf) * 100), _avg(bf)
+                    line += (f"\n기존 진입 '현재' {lab}(같은 기간 {len(bf)}건): 승률 {bw}% · 평균 {ba:+.2f}%"
+                             f" → 차이 승률 {win - bw:+d}%p · 평균 {avg - ba:+.2f}%p")
+                else:
+                    line += f"\n기존 진입 '현재' {lab}: 같은 기간 끝난 거래 없음"
+        elif base_v:
             bf = [t for t in _fin(base_v) if t["t"] >= v["created"]]
             if bf:
                 ba = _avg(bf)

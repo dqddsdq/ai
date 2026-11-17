@@ -1617,7 +1617,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         if c["shadow_on"] and not dry:   # 실전에 살 게 없어도 그림자 조합들의 매도는 계속
             try:
                 shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
-                            lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
+                            lambda x: toss.daily(x, 60)[0], s["day"], hot=hot, pullback=_pb_today(s, market))
             except Exception as e:
                 results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
         return {"ok": True, "mode": mode, "results": results + ["지금 살 종목이 없어요"]}
@@ -1990,10 +1990,16 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     if c["shadow_on"] and not dry:   # 🧪 같은 후보·시세로 규칙 조합들을 가상으로
         try:
             shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
-                        lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
+                        lambda x: toss.daily(x, 60)[0], s["day"], hot=hot, pullback=_pb_today(s, market))
         except Exception as e:
             results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
     return {"ok": True, "mode": mode, "results": results}
+
+
+def _pb_today(s: dict, market: str) -> list:
+    """🧪 오늘 스윙 검색이 같이 고른 눌림 반등 후보 (그림자 검증 전용 · 실전은 안 삼)"""
+    sw = s.get("swing") or {}
+    return (sw.get("pullback") or []) if sw.get("day") == picker.session_date(market) and sw.get("market", market) == market else []
 
 
 def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float, partial: bool = False,
