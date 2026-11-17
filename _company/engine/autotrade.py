@@ -2365,6 +2365,11 @@ def hourly_text() -> str:
                 lines.append("  " + tl.rebound_text(m))
             except Exception:
                 pass
+            try:   # ⏱️ 1초 감시 초반 신호 결과 (가상)
+                from . import watch1s
+                lines.append("  " + watch1s.summary(m))
+            except Exception:
+                pass
             # 지난 1시간 오류·정지
             bad = [e for e in s["events"] if e.get("kind") in ("오류", "정지", "긴급 정지", "주문 거절")
                    and (_ago_sec(e.get("t", "")) if _ago_sec(e.get("t", "")) is not None else 1e9) <= 3600]
@@ -2501,6 +2506,11 @@ def start(log_fn=print) -> None:
 
     _thread = threading.Thread(target=loop, daemon=True, name="autotrade")
     _thread.start()
+    try:   # ⏱️ 2호 급등 후보 1초 감시 (가상 기록만, 주문 없음)
+        from . import watch1s
+        watch1s.start(log_fn)
+    except Exception as e:
+        log_fn(f"🤖 [오류] 1초 감시 시작: {type(e).__name__}: {e}")
 
 
 ASK_WORDS = re.compile(r"자동\s*매매|봇|자동으로\s*(산|판|사|팔)|알아서\s*(산|판)|오늘\s*(매매|거래|수익|손익)|이번\s*달\s*(수익|목표)")
