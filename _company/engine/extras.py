@@ -617,3 +617,30 @@ def watch_cands(market: str, c: dict, have: set, minutes) -> dict:
             out[sym] = {"style": "surge", "features": {"change": round(chg, 1), "ratio": None, "pre": minutes < 0, "minute": minutes, "watch": True},
                         "reason": f"⭐ 관심 종목 {chg:+.1f}%", "score": chg}
     return out
+
+
+# ── 🧹 시험 때 섞인 가짜 교훈 지우기 (2026-11-15 개발 시험 4줄이 GitHub 로 PC 에 들어감) ──
+FAKE_NOTES = ("급등 초입에만 진입", "스윙은 20일선 이탈 전 정리", "[1호 일반(스윙)에게] 익절이 너무 빠름",
+              "[2호 급등주(단타)에게] 거래량 확인 좋았음")
+
+
+def purge_test_notes() -> int:
+    """팀 기억(memory.md) · 공유 노트(lessons.json) 에서 위 가짜 교훈만 정확히 지움. 지운 줄 수"""
+    from . import store
+    n = 0
+    mem = COMPANY_DIR / "_agents" / "trader" / "memory.md"
+    if mem.exists():
+        lines = mem.read_text(encoding="utf-8").split("\n")
+        keep = [x for x in lines if not any(x.rstrip().endswith("📒 교훈(미장): " + f) for f in FAKE_NOTES)]
+        if len(keep) != len(lines):
+            n += len(lines) - len(keep)
+            mem.write_text("\n".join(keep), encoding="utf-8")
+    with tl._lock:
+        d = store.load(tl.LESSONS, lambda: {"items": []})
+        items = d.get("items", [])
+        good = [x for x in items if str(x.get("text", "")).strip() not in FAKE_NOTES]
+        if len(good) != len(items):
+            n += len(items) - len(good)
+            d["items"] = good
+            store.save(tl.LESSONS, d)
+    return n

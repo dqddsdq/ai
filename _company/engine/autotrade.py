@@ -2254,6 +2254,12 @@ def start(log_fn=print) -> None:
     if _thread and _thread.is_alive():
         return
     _resume_note()   # 자동 재시작이었으면 이어받은 상태 기록
+    try:
+        n_ = extras.purge_test_notes()
+        if n_:
+            event("정리", f"🧹 시험용 가짜 교훈 {n_}줄을 학습 노트에서 지웠어요")
+    except Exception:
+        pass
 
     def tick(m: str, timers: dict) -> None:
         for msg in store.recovered():
