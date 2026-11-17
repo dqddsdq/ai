@@ -7,3 +7,23 @@ node_modules/
 *.log
 .cache/
 Thumbs.db
+__pycache__/
+*.pyc
+
+# 비밀 키
+.env
+_company/.env
+!.env.example
+
+# 캐시·업로드 이미지 (토큰, 화면 캡처)
+_company/_cache/
+_company/_shared/tool_requests.json
+_company/_shared/improvements.json
+_company/_shared/autotrade.json
+
+# 대화 기록 (런타임)
+_company/sessions/
+
+# 설정 백업·팀 기억 (PC 런타임 — 새로 올리지 않음)
+_company/_shared/autotrade.json.bak
+_company/_shared/backup/
