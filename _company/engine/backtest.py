@@ -13,6 +13,7 @@ from __future__ import annotations
 import itertools
 import json
 import statistics as st
+import time
 from datetime import datetime, timedelta, timezone
 
 from . import picker, toss
@@ -26,6 +27,21 @@ VOL_STEPS = {False: [2, 3, 6], True: [0.1, 0.2, 0.5]}                        # �
 SWING_GRID = {"swing_stop_pct": [4, 6, 8], "swing_trail_pct": [5, 8, 12]}
 TP_STEPS = [8, 10, 15, 20]          # 2단계: 남은 물량 전부 익절(%)
 MAX_STEPS = [15, 20, 25, 30]        # 2단계: 급등 최대 상승률(%) — 실전 상한보다 큰 값은 안 씀
+SURGE_SAMPLES = 60                  # 단타 표본 수 (평소)
+SURGE_SAMPLES_BOOST = 200           # 표본 확보 기간 단타 표본 수
+BOOST_LIVE_N = 30                   # 실전 끝난 거래가 이보다 적으면 '표본 확보 기간'
+BOOST_GAP_SEC = 0.3                 # 확보 기간에 새로 받는 1분봉 사이 쉬는 시간 (실전 조회 먼저)
+SHADOW_BLOCK = 200                  # 그림자 '현재' 규칙 기록 비교 단위(건)
+
+
+def boost_period(market: str) -> bool:
+    """표본 확보 기간: 이 시장 실전 끝난 거래가 BOOST_LIVE_N 건 미만 (기록·비교용만, 매매엔 영향 없음)"""
+    from . import tradelearn as tl
+    try:
+        n = sum(1 for t in tl._load()["trades"] if t.get("closed") and t.get("mode") == "live" and tl._tm(t) == market)
+    except Exception:
+        return False
+    return n < BOOST_LIVE_N
 
 
 def _file(m: str):
@@ -328,17 +344,32 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
             if x.get("pick_px") and x.get("t"):
                 samples.append({"sym": sym, "day": day, "t": x["t"], "px": x["pick_px"], "change": x.get("change") or 0,
                                 "pre": bool(x.get("pre")), "ratio": x.get("ratio")})
-    samples = samples[-60:]
+    boost = boost_period(market)
+    cap = SURGE_SAMPLES_BOOST if boost else SURGE_SAMPLES
+    samples = samples[-cap:]
     cost = tl.rt_cost(cfg, market)   # 사고팔기 한 번 비용(%)
-    log(f"📼 {'미장' if market == 'US' else '국장'} 백테스트: 단타 표본 {len(samples)}개 1분봉 받는 중")
-    paths = []
-    for s in samples:
+    log(f"📼 {'미장' if market == 'US' else '국장'} 백테스트: 단타 표본 {len(samples)}개 1분봉 받는 중"
+        + (" (표본 확보 기간)" if boost else ""))
+    paths, cut = [], False
+    for s in reversed(samples):   # 최근 것부터 (호출 제한으로 줄여도 최근 표본은 남게)
+        if len(paths) >= cap:
+            break
+        cached = (CACHE / f"{market}_{s['sym']}_{s['day']}.json").exists()
+        if boost and not cached:
+            time.sleep(BOOST_GAP_SEC)   # 실전 손절 확인 조회가 먼저 가게 천천히
         try:
             p = _minute_path(s["sym"], s["day"], _parse_kst(s["t"]), market)
-        except (toss.TossError, ValueError):
+        except (toss.TossError, ValueError) as e:
             p = []
+            if boost and "너무 잦아요" in str(e):   # 호출 제한 → 목표를 줄이고 잠깐 쉼
+                cap = max(SURGE_SAMPLES, len(paths) + (cap - len(paths)) // 2)   # 남은 목표 절반으로 (평소 60개 아래로는 안 줄임)
+                cut = True
+                time.sleep(3)
         if p:
             paths.append((s, p))
+    paths.reverse()
+    if cut:
+        log(f"📼 호출 제한으로 단타 표본을 {len(paths)}개로 줄였어요")
     def _rets(prm):   # 이 조합의 진입 기준(최소·최대 상승률·거래량)으로 거른 표본의 수익률 (수수료·세금 빼고)
         out_ = []
         hi = prm.get("surge_max_change_pct", cfg.get("surge_max_change_pct", 1e9))
@@ -421,11 +452,22 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
         rp = replay(cfg, market, signal_surge, log)
     except Exception as e:
         rp = {"note": f"과거 복기 실패: {type(e).__name__}: {e}"}
-    out = {"replay": rp,"day": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "market": market, "surge_samples": len(paths),
+    sb = {}
+    if boost:   # 🧪 표본 확보 기간: 그림자 '현재' 규칙 기록을 200건 단위로 (최근 묶음 vs 앞 묶음, 표시만)
+        try:
+            from . import shadow
+            sb = shadow.base_blocks(market, SHADOW_BLOCK)
+        except Exception:
+            sb = {}
+    out = {"replay": rp, "boost": boost, "shadow_base": sb, "rate_cut": cut,
+           "day": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "market": market, "surge_samples": len(paths),
            "baseline": _score(base_rets, len(paths)) if paths else {}, "top": results[:8],
            "swing_samples": len(sw_samples), "swing_top": sw_results[:3],
            "note": (f"단타 표본 {len(paths)}개 · 조합 {len(results)}개 비교" if paths else "단타 표본이 아직 없어요 (며칠 돌리면 쌓여요)")
-                   + (f" · 스윙 표본 {len(sw_samples)}일" if sw_samples else "")}
+                   + (f" · 스윙 표본 {len(sw_samples)}일" if sw_samples else "")
+                   + (" · 표본 확보 기간" + (" (호출 제한으로 줄임)" if cut else "") if boost else "")
+                   + (f" · 그림자 '현재' 최근 {sb['last']['n']}건 평균 {sb['last']['avg']:+.2f}%"
+                      + (f" / 앞 {sb['prev']['n']}건 {sb['prev']['avg']:+.2f}%" if sb['prev']['n'] else "") if sb.get("last", {}).get("n") else "")}
     _file(market).write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     log(f"📼 백테스트 끝: {out['note']}")
     return out

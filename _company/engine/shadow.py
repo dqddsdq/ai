@@ -533,17 +533,25 @@ def _ep(t) -> float:
         return 0.0
 
 
+BARS_COOL_SEC = 60   # 호출 제한(429) 걸리면 가상 쪽 1분봉 조회를 이만큼 쉼 (실전 손절 확인 먼저)
+_bars_cool = [0.0]
+
+
 def _bars(sym: str, n: int = 40) -> list[dict]:
     """1분봉 (기존 chart.candles 재사용 · 45초 캐시 · 실패하면 빈 목록)"""
     k = (sym, n)
     hit = _bars_cache.get(k)
     if hit and time.time() - hit[0] < 45:
         return hit[1]
+    if time.time() < _bars_cool[0]:   # 쉬는 중: 새로 안 부르고 예전 값(없으면 빈 목록)
+        return hit[1] if hit else []
     try:
         from . import chart
         bs = chart.candles(sym, "1m", n)
-    except Exception:
+    except Exception as e:
         bs = []
+        if "너무 잦아요" in str(e):
+            _bars_cool[0] = time.time() + BARS_COOL_SEC
     if len(_bars_cache) > 200:
         _bars_cache.clear()
     _bars_cache[k] = (time.time(), bs)
@@ -918,6 +926,19 @@ def base_samples(market: str) -> list[dict]:
             return []
         return [{"sym": t["sym"], "day": t.get("day", ""), "pnl_pct": _ret(t), "features": dict(t["features"]), "closed": True}
                 for t in v.get("trades", []) if t.get("final") and isinstance(t.get("features"), dict)][-200:]
+
+
+def base_blocks(market: str, size: int = 200) -> dict:
+    """'현재' 조합 끝난 거래를 size 건 단위로: 최근 묶음 vs 바로 앞 묶음 (기록·비교용만)"""
+    with _lock:
+        d = store.load(_file(market))
+        v = next((v for v in d.get("variants") or [] if _is_base(v)), None)
+        fin = _fin(v) if v else []
+    def blk(ts):
+        rs = [_ret(t) for t in ts]
+        return {"n": len(rs), "avg": round(st.mean(rs), 2) if rs else 0,
+                "win": round(sum(1 for r in rs if r > 0) / len(rs) * 100) if rs else 0}
+    return {"size": size, "total": len(fin), "last": blk(fin[-size:]), "prev": blk(fin[-2 * size:-size])}
 
 
 def hot_cands(c: dict, market: str, fx: float, log=print) -> dict:
