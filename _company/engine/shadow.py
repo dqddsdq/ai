@@ -417,6 +417,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                         rec["trade_pct"] = round(((p.get("got", 0) + got) / p["cost0"] - 1) * 100, 2)
                     if p.get("ft"):
                         rec["features"], rec["day"] = p["ft"], p.get("sday", "")
+                    if p.get("bmin") is not None:   # 산 시각(장 시작 후 분) · 구간별 보고용
+                        rec["minute"] = p["bmin"]
                     v["trades"].append(rec)
                     v["pos"].pop(sym)
                     if _ret(rec) < 0 and c.get("no_rebuy_after_loss", True):   # 실전과 같게: 손해 본 종목 재진입 금지 (단타 그날 · 스윙 N일)
@@ -463,6 +465,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 v["buys_today"] += 1
                 v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False, "fit": fit,
                                  "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost, "got": 0.0,
+                                 "bmin": minutes,
                                  "ft": {**{k: ft.get(k) for k in ("change", "ratio", "pre", "r20", "rsi") if ft.get(k) is not None},
                                         "style": cd["style"], "mkt": market}}
         d["rr"] = (k0 + max(0, done - len(first))) % len(rest) if rest else 0

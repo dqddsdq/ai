@@ -370,7 +370,7 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
     paths.reverse()
     if cut:
         log(f"📼 호출 제한으로 단타 표본을 {len(paths)}개로 줄였어요")
-    def _rets(prm):   # 이 조합의 진입 기준(최소·최대 상승률·거래량)으로 거른 표본의 수익률 (수수료·세금 빼고)
+    def _rets(prm, detail=None):   # 이 조합의 진입 기준(최소·최대 상승률·거래량)으로 거른 표본의 수익률 (수수료·세금 빼고)
         out_ = []
         hi = prm.get("surge_max_change_pct", cfg.get("surge_max_change_pct", 1e9))
         for s, path in paths:
@@ -382,6 +382,12 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
             r = _sim_surge(path, s["px"], prm, cfg, signal_surge, market)
             if r is not None:
                 out_.append(r - cost)
+                if detail is not None:   # 구간별 보고용: 시각·상승률·시간대·수익률
+                    try:
+                        mn = picker.session_minutes(market, _parse_kst(s["t"]), extended=market == "US")
+                    except Exception:
+                        mn = None
+                    detail.append({"t": s["t"], "chg": s["change"], "min": mn, "ret": round(r - cost, 2)})
         return out_
 
     results = []
@@ -417,7 +423,8 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
     # 현재 규칙 기준선 (같은 진입 기준으로 거름)
     cur = {k: cfg[k] for k in ("stop_loss_pct", "partial_tp_pct", "take_profit_pct", "trail_pct", "surge_min_change_pct",
                                "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio")}
-    base_rets = _rets(cur) if paths else []
+    base_detail: list[dict] = []
+    base_rets = _rets(cur, base_detail) if paths else []
     # 스윙
     sw_results = []
     sw_samples = [h for h in swing_hist if h.get("day", "") >= since_day][-20:]
@@ -461,7 +468,7 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
             sb = {}
     out = {"replay": rp, "boost": boost, "shadow_base": sb, "rate_cut": cut,
            "day": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "market": market, "surge_samples": len(paths),
-           "baseline": _score(base_rets, len(paths)) if paths else {}, "top": results[:8],
+           "baseline": _score(base_rets, len(paths)) if paths else {}, "base_samples": base_detail, "top": results[:8],
            "swing_samples": len(sw_samples), "swing_top": sw_results[:3],
            "note": (f"단타 표본 {len(paths)}개 · 조합 {len(results)}개 비교" if paths else "단타 표본이 아직 없어요 (며칠 돌리면 쌓여요)")
                    + (f" · 스윙 표본 {len(sw_samples)}일" if sw_samples else "")

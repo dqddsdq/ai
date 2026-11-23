@@ -446,6 +446,65 @@ def scorecard_text(market: str, sc: dict) -> str:
     return "\n".join(L)
 
 
+# ── 8-1. 구간별 엣지: 그림자·백테스트를 급등폭·시간대로 나눠 봄 (보고 전용 · 주문·설정 안 바꿈) ──
+CHG_BANDS = (("0~8%", -1e9, 8), ("8~20%", 8, 20), ("20~30%", 20, 30), ("30~50%", 30, 50), ("50%+", 50, 1e9))
+EDGE_MIN_N = 20   # 구간 표본 최소 건수
+
+
+def _edge_cells(rows: list) -> dict:
+    """rows: [(시각, 상승률|None, 분|None, 수익률)] → 구간별 건수·평균·앞/뒤 절반 평균"""
+    groups: dict = {}
+    for t, chg, mn, r in rows:
+        if chg is not None:
+            band = next((k for k, lo, hi in CHG_BANDS if lo <= float(chg) < hi), "")
+            groups.setdefault(f"급등 {band}", []).append((t, r))
+        if mn is not None:
+            groups.setdefault(f"시간 {tod_bucket(mn)}", []).append((t, r))
+    out = {}
+    for g, xs in groups.items():
+        rs = [r for _, r in sorted(xs, key=lambda x: str(x[0]))]   # 오래된 것부터 → 앞 절반 / 뒤 절반
+        h = len(rs) // 2
+        out[g] = {"n": len(rs), "avg": round(st.mean(rs), 2),
+                  "front": round(st.mean(rs[:h]), 2) if h else 0.0, "back": round(st.mean(rs[h:]), 2)}
+    return out
+
+
+def edge_report(market: str) -> dict:
+    """출처별(그림자 '현재'·급등 검증 조합·백테스트 현재 규칙) 구간 성적 + 통과 구간 (20건↑·앞뒤 모두 플러스)"""
+    src: dict = {}
+    try:
+        from . import shadow
+        with shadow._lock:
+            d = shadow._load(market)
+            vs = [v for v in d["variants"] if shadow._is_base(v)] + list(d.get("hot") or [])
+            for v in vs:
+                rows = [(t.get("t", ""), (t.get("features") or {}).get("change"), t.get("minute"), shadow._ret(t))
+                        for t in v.get("trades", []) if t.get("final") and t.get("style") != "swing"]
+                src["그림자 '현재'" if shadow._is_base(v) else f"그림자 {v.get('name', '')}"] = _edge_cells(rows)
+    except Exception:
+        pass
+    try:
+        from . import backtest as bt
+        rows = [(x.get("t", ""), x.get("chg"), x.get("min"), float(x["ret"])) for x in (bt.load(market).get("base_samples") or [])]
+        src["백테스트(현재 규칙)"] = _edge_cells(rows)
+    except Exception:
+        pass
+    ok = [(s, g, x) for s, cells in src.items() for g, x in cells.items()
+          if x["n"] >= EDGE_MIN_N and x["front"] > 0 and x["back"] > 0]
+    return {"sources": src, "pass": ok, "checked": sum(len(c) for c in src.values()),
+            "enough": sum(1 for c in src.values() for x in c.values() if x["n"] >= EDGE_MIN_N)}
+
+
+def edge_text(market: str) -> str:
+    r = edge_report(market)
+    L = [f"🎯 구간별 엣지 (표본 {EDGE_MIN_N}건↑ · 앞·뒤 기간 모두 플러스만 · 참고용, 설정 자동 변경 없음)"]
+    for s, g, x in sorted(r["pass"], key=lambda z: -z[2]["avg"]):
+        L.append(f"  {s} · {g}: {x['n']}건 평균 {x['avg']:+.2f}% (앞 {x['front']:+.2f}% / 뒤 {x['back']:+.2f}%)")
+    if not r["pass"]:
+        L.append(f"  통과한 구간 없음 (살펴본 구간 {r['checked']}개 · {EDGE_MIN_N}건 넘은 구간 {r['enough']}개)")
+    return "\n".join(L)
+
+
 # ── 9. 장 마감 뒤: 내일 계획 · 주간 성적표 · 연말 세금 알림 ──
 def after_review(market: str, mode: str, fx: float, s: dict, c: dict) -> list[str]:
     from . import notify
@@ -463,6 +522,10 @@ def after_review(market: str, mode: str, fx: float, s: dict, c: dict) -> list[st
     if c.get("weekly_report", True) and local.weekday() == (5 if market == "US" else 4):   # 국장 금요일 · 미장 토요일 아침(한국)
         sc = scorecard(market, mode, fx, float((s.get("month") or {}).get("start") or 0), s.get("orders", []))
         m = "📊 주간 성적표\n" + scorecard_text(market, sc)
+        try:   # 🎯 구간별 엣지 (실패해도 성적표는 그대로)
+            m += "\n" + edge_text(market)
+        except Exception as e:
+            m += f"\n🎯 구간별 엣지 계산 실패: {type(e).__name__}"
         notify.send(m); msgs.append(m)
     if market == "US" and local.month == 12 and local.day >= 10 and mode == "live":
         key = f"tax_notice_{local.year}"
