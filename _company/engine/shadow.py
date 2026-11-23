@@ -69,8 +69,11 @@ FLASH = [{"key": "FX", "name": "급락청산 (현재 규칙+급락 매도)", "or
          {"key": "VE", "name": "거래량 증가 초기 진입 (2호)", "origin": "1분봉 거래량 급증 시작·상승 3% 이하·VWAP 위 (정점 후 감소 제외) · 매도는 현재 규칙"},
          {"key": "VW", "name": "거래량 감소+VWAP 아래 매도", "origin": "'현재'와 같이 삼 · 현재 규칙+최근 3봉 거래량 60%↓·VWAP 아래면 매도"},
          {"key": "OB", "name": "호가 약화 매도", "origin": "'현재'와 같이 삼 · 현재 규칙+매수/매도 잔량 0.5↓(산 직후의 60%↓)면 매도"},
-         {"key": "PB", "name": "눌림 반등 진입 (1호 비교)", "origin": "거래대금 큰 상승 추세 종목이 20일선 근처까지 눌린 뒤 전일 고가 돌파 시 진입 · 과열·고점 근처·급등 제외 · 매도는 현재 스윙 규칙"}]
-EXIT_KEYS = ("FX", "VW", "OB")   # '현재' 단타 진입을 따라 사서 매도 시점만 비교하는 조합
+         {"key": "PB", "name": "눌림 반등 진입 (1호 비교)", "origin": "거래대금 큰 상승 추세 종목이 20일선 근처까지 눌린 뒤 전일 고가 돌파 시 진입 · 과열·고점 근처·급등 제외 · 매도는 현재 스윙 규칙"},
+         {"key": "ST", "name": "정체 조기 청산", "origin": "'현재'와 같이 삼 · 현재 규칙+산 뒤 10분 안에 +0.3% 못 가면 매도"}]
+EXIT_KEYS = ("FX", "VW", "OB", "ST")   # '현재' 단타 진입을 따라 사서 매도 시점만 비교하는 조합
+STALL_MIN, STALL_TP_PCT = 10, 0.3     # 정체 조기 청산: 산 뒤 N분 안에 최고가가 +X% 못 가면 매도 (가상 전용)
+STALL_CAND_N, STALL_CAND_EDGE = 20, 0.3   # 짝 비교 이만큼 쌓이고 평균이 이만큼(%p) 나으면 '적용 후보' (자동 적용 안 함)
 VE_MAX_SYMS = 30              # 거래량 초기 진입: 한 바퀴에 1분봉 볼 후보 수
 FLASH_REPORT_EVERY = 20
 FLASH_WINDOWS = (5, 15, 30)   # 신호 뒤 최고/최저 기록 구간(분)
@@ -648,8 +651,9 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
         watch.pop(s)
     ve_v = fv.get("VE")   # 📈 거래량 증가 초기 진입
     vw_v, ob_v = fv.get("VW"), fv.get("OB")   # 📉 거래량 감소+VWAP 아래 · 📚 호가 약화 매도
-    copiers = [v for v in (fx_v, vw_v, ob_v) if v]
-    group = [v for v in (fx_v, fr_v, ve_v, vw_v, ob_v) if v]
+    st_v = fv.get("ST")   # ⏱ 정체 조기 청산
+    copiers = [v for v in (fx_v, vw_v, ob_v, st_v) if v]
+    group = [v for v in (fx_v, fr_v, ve_v, vw_v, ob_v, st_v) if v]
     for v in group:
         if v["day"] != session_day:
             v["day"], v["buys_today"], v["copied"], v["seen"] = session_day, 0, {}, {}
@@ -667,7 +671,7 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
                 cv["copied"][sym] = mark
                 cv["cash"] -= p["cost0"]   # 🧪 가상 현금 제한 없음
                 cv["pos"][sym] = {**{k: p[k] for k in ("qty", "avg", "style", "buy_day", "sday", "cost0") if k in p},
-                                  "high": p["avg"], "partial": False, "got": 0.0, "ets": now}
+                                  "high": p["avg"], "partial": False, "got": 0.0, "ets": now, "bt": _now()}
     n_today = 400 if (minutes or 0) > 190 else 200
     t_open = now - ((minutes or 0) + 1) * 60 if minutes is not None and minutes >= 0 else 0
     # 매도
@@ -711,6 +715,12 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
                     _signal(v, sym, "exit", price, why)
                 else:
                     side, why = signal_surge(price, p["qty"], p["avg"], p["high"], minutes, False, vc, partial_done=p.get("partial", False))
+            elif v is st_v:
+                side, why = signal_surge(price, p["qty"], p["avg"], p["high"], minutes, False, vc, partial_done=p.get("partial", False))
+                if side != "SELL" and minutes is not None and not p.get("partial") \
+                        and now - p.get("ets", now) >= STALL_MIN * 60 and p["high"] < p["avg"] * (1 + STALL_TP_PCT / 100):
+                    side, why = "SELL", f"정체 {STALL_MIN}분 +{STALL_TP_PCT:g}% 못 감"   # 기존 손절·익절 먼저, 아니면 정체 매도
+                    _signal(v, sym, "exit", price, why)
             else:
                 if price < p["stop"]:
                     side, why = "SELL", f"급락 저점 {p['stop']:g} 이탈 손절"
@@ -721,7 +731,10 @@ def _flash_step(d: dict, c: dict, market: str, cands: dict, hot: dict, quotes: d
                 elif now - p.get("ets", now) > REB_MAX_MIN * 60:
                     side, why = "SELL", f"{REB_MAX_MIN}분 경과"
             if side in ("SELL", "SELL_PART") and market_open(sym, "SELL"):
+                bt = p.get("bt", "")
                 _vsell(v, sym, side, price, why, vc, c, market, f, session_day)
+                if side == "SELL" and bt and v["trades"]:
+                    v["trades"][-1]["bt"] = bt   # 짝 비교용: 따라 산 시각
     # FR 매수
     if not exits_only and minutes is not None:
         vc = {**c, **fr_v["params"]}
@@ -867,7 +880,39 @@ def _pb_step(d: dict, c: dict, market: str, cands: dict, quotes: dict, minutes, 
 
 def _flash_tag(key) -> str:
     return {"VE": "📈 거래량 초기 진입 검증", "VW": "📉 거래량 감소+VWAP 매도 검증", "OB": "📚 호가 약화 매도 검증",
-            "PB": "🧪 눌림 반등 진입 검증"}.get(key, "📉 급락 검증")
+            "PB": "🧪 눌림 반등 진입 검증", "ST": "⏱ 정체 조기 청산 검증"}.get(key, "📉 급락 검증")
+
+
+def _stall_pair(d: dict) -> dict | None:
+    """정체 조기 청산(ST) vs '현재' 같은 진입 짝 비교: ST 거래마다 같은 종목·따라 산 뒤 처음 끝난 '현재' 단타 거래와 맞춤"""
+    st_v = next((v for v in d.get("flash", []) if v.get("key") == "ST"), None)
+    base_v = next((v for v in d["variants"] if _is_base(v)), None)
+    if not st_v or not base_v:
+        return None
+    bf = [t for t in _fin(base_v) if t.get("style") == "surge"]
+    used, pairs = set(), []
+    for t in _fin(st_v):
+        if not t.get("bt"):
+            continue
+        m = next((i for i, b in enumerate(bf) if i not in used and b["sym"] == t["sym"] and b["t"] >= t["bt"]), None)
+        if m is not None:
+            used.add(m)
+            pairs.append((_ret(t), _ret(bf[m])))
+    n = len(pairs)
+    if not n:
+        return {"n": 0, "cand": False}
+    a, b = st.mean(x for x, _ in pairs), st.mean(y for _, y in pairs)
+    return {"n": n, "st": round(a, 2), "base": round(b, 2), "diff": round(a - b, 2),
+            "cand": n >= STALL_CAND_N and a - b >= STALL_CAND_EDGE}
+
+
+def _stall_txt(sp: dict | None) -> str:
+    if not sp or not sp["n"]:
+        return " · 짝 비교: 아직 없음"
+    s = (f" · 같은 진입 짝 {sp['n']}건: 정체청산 평균 {sp['st']:+.2f}% vs 기존 {sp['base']:+.2f}% (차이 {sp['diff']:+.2f}%p)")
+    if sp["cand"]:
+        return s + " → ✅ 적용 후보 (자동 적용 안 함, 사장님 판단)"
+    return s + f" → 후보 기준: {STALL_CAND_N}건↑ · +{STALL_CAND_EDGE:g}%p↑"
 
 
 def _flash_reports(d: dict, market: str) -> list[str]:
@@ -909,6 +954,8 @@ def _flash_reports(d: dict, market: str) -> list[str]:
                 parts.append(f"{w}분 최고 {st.mean(x['hi_pct'] for x in xs):+.1f}%/최저 {st.mean(x['lo_pct'] for x in xs):+.1f}%")
         if parts:
             line += f"\n신호 {len(sg)}건 뒤 평균: " + " · ".join(parts)
+        if v.get("key") == "ST":
+            line += "\n" + _stall_txt(_stall_pair(d))[3:]
         if v.get("key") == "OB":
             pb = extras.book_probe()
             line += f"\n호가 잔량 확인: {'받음' if pb.get('ok') else '못 받음'} ({pb.get('why', '')}) · 못 받으면 현재 규칙으로만 팜"
@@ -1035,8 +1082,10 @@ def overview(c: dict, market: str) -> dict:
            for v in d.get("hot", [])]
     pb = extras.book_probe()
     ob_txt = f" · 호가 잔량 {'받음' if pb.get('ok') else '아직 확인 전' if pb.get('ok') is None else '못 받음'}: {pb.get('why', '')}"
+    st_txt = _stall_txt(_stall_pair(d))
     flash = [{"id": v["id"], "name": v["name"], "origin": v["origin"],
-              "diff": _flash_tag(v.get("key"))[2:] + " (자동 교체 안 함)" + (ob_txt if v.get("key") == "OB" else ""),
+              "diff": _flash_tag(v.get("key"))[2:] + " (자동 교체 안 함)" + (ob_txt if v.get("key") == "OB" else "")
+                      + (st_txt if v.get("key") == "ST" else ""),
               "signals": len(v.get("signals", [])), **stats(v, 3650), **summary(v)} for v in d.get("flash", [])]
     n_rows, rows = len(rows), rows[:50]   # 화면엔 위쪽 50개만 (조합이 많아도 응답 가볍게)
     lines = [f"{r['name']}: {r['n_all']}건 · 승률 {r['win_all']}% · 평균 {r['avg_all']:+.2f}% · 최대 손실 {r['worst']:+.2f}%" for r in rows]
