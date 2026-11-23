@@ -433,7 +433,30 @@ def event(kind: str, text: str, **extra) -> None:
 
 
 NOTIFY_KINDS = {"교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
-                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교", "검증 요약"}   # 🔔 텔레그램으로 보낼 기록 종류
+                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교", "검증 요약", "월 수익"}   # 🔔 텔레그램으로 보낼 기록 종류
+
+MONTH_ALERT_PCT = 20.0   # 🎉 이번 달 실현 수익률이 이걸 처음 넘으면 알림 (시장별 월 1회, 알림만)
+
+
+def _month_alert() -> None:
+    """이번 달 실현 수익률(시작 예산 대비) +20% 첫 돌파 알림 — 모드·설정은 안 바꿈"""
+    try:
+        m = cur_market(); key = datetime.now(KST).strftime("%Y-%m")
+        with _lock:
+            s = state(); mo = s.get("month") or {}
+            start = float(mo.get("start") or 0)
+            if mo.get("key") != key or start <= 0 or mo.get("alert20"):
+                return
+            realized = float(mo.get("realized", 0))
+            pct = realized / start * 100
+            if pct <= MONTH_ALERT_PCT:
+                return
+            mo["alert20"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M"); _save(s)   # 이번 달 한 번만
+        st_ = tl.month_closed_stats(m, key)
+        event("월 수익", f"이번 달 실현 수익률 {pct:+.1f}% (시작 예산 {start:,.0f}원 대비 {realized:+,.0f}원) — +{MONTH_ALERT_PCT:g}% 첫 돌파 · "
+              f"끝난 거래 {st_['n']}건 · 승률 {st_['win_rate']}% ({st_['wins']}승) · 알림만, 모드는 그대로예요")
+    except Exception as e:
+        _log_fn(f"🤖 [오류] 월 수익 알림: {type(e).__name__}: {e}")
 
 
 def _mkt(sym: str) -> str:
@@ -1219,6 +1242,8 @@ def _reconcile(fx: float) -> None:
             event("체결", msg or f"{o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {delta:g}주 @ {fill_px:g}", symbol=o["symbol"])
             if stop_msg:
                 event("손절 기록", stop_msg, symbol=o["symbol"])
+            if o["side"] != "BUY":
+                _month_alert()   # 🎉 이번 달 +20% 첫 돌파 알림
             if o["side"] != "BUY":   # 🚀 급등 전략 확대 조건 도달 보고 (보고만, 비중은 안 바꿈)
                 try:
                     gm = tl.hot_goal_check(_mkt(o["symbol"]))
@@ -2070,6 +2095,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
     event("실전 주문" if live else "가상 주문", f"{label} — {reason}", symbol=sym, **({"chart": chart} if chart else {}))
     if not live and side != "BUY":   # 🔄 가상 매도 뒤 반등 진입 비교 보고
         _rebound_report(sym)
+        _month_alert()   # 🎉 이번 달 +20% 첫 돌파 알림
     return f"{sym}: {'✅ 주문 보냄' if live else '📝 가상 체결'} {label} — {reason}"
 
 

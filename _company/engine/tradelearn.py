@@ -715,6 +715,16 @@ def trades_since(mode: str, since: str, market: str | None = None) -> list[dict]
         return [t for t in _load()["trades"] if t["mode"] == mode and t["closed"] and t["entry_time"] >= since and (not market or _tm(t) == market)]
 
 
+def month_closed_stats(market: str, month_key: str) -> dict:
+    """그 달(YYYY-MM)에 끝난 거래의 건수·승률 (실전+가상, 읽기만)"""
+    with _lock:
+        ts = [t for t in _load()["trades"] if t["closed"] and t.get("exits") and _tm(t) == market
+              and str(t["exits"][-1].get("t", "")).startswith(month_key)]
+    n = len(ts)
+    wins = sum(1 for t in ts if float(t.get("pnl_pct") or 0) > 0)
+    return {"n": n, "wins": wins, "win_rate": round(wins / n * 100) if n else 0}
+
+
 # ── 🚀 30% 초과 급등주 전략만의 실전 성적 ──
 def hot_stats(market: str, mode: str = "live") -> dict:
     """누적 수익률 = 실현 손익 합 ÷ 투입 원금 합 (수수료·세금 포함), 건수, 승률, 최고점 대비 최대 하락(누적 수익률 곡선, %p)"""
