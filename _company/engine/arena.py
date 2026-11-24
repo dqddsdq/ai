@@ -183,6 +183,132 @@ def sit_stats(a: dict, half_life: float = HALF_LIFE_DAYS) -> dict:
     return {k: {"n": len(v), "avg": round(_wavg(v, half_life), 2)} for k, v in by.items()}
 
 
+# ── 🧮 모든 판단 채점 · 🚫 AI 별 자동 거름망 ──
+# 후보마다 '참가자 각자의 익절·손절·보유 시간으로 샀다면' 결과를 시세로 계산 (AI 호출 없음)
+# → 산 것뿐 아니라 '안 산다' 한 것도 채점 (놓친 기회) · 표본 충분히 지는 구간은 그 AI 에게 안 물어봄
+PROBE_MAX = 80        # 동시에 지켜보는 후보 최대
+GRADED_KEEP = 800     # 채점 끝난 후보 보관
+FILTER_MIN = 10       # 그 구간에서 '산다' 결과가 이만큼↑ 이고
+FILTER_LOSS = 0.5     #   평균이 -이 % 이하면 그 AI 는 그 구간에서 거름
+UNBLOCK_N = 8         # 최근 그 구간 후보(내 규칙으로 샀다면) 이만큼↑ 이 평균 플러스면 거름 풀기
+EXPLORE = 0.15        # 걸러진 구간도 이 확률로 물어봄 (계속 배우게)
+MISS_PCT = 1.0        # '안 산다' 했는데 이만큼↑ 올랐으면 놓친 기회
+
+
+def buckets(cd: dict, sit: str = "") -> list[str]:
+    """후보를 묶는 구간 이름들 (상승률·거래량·프리장·상황)"""
+    f = cd.get("features") or {}
+    out = []
+    try:
+        chg = float(f["change"])
+        out.append("상승 " + ("~20%" if chg < 20 else "20~40%" if chg < 40 else "40%+"))
+    except (KeyError, TypeError, ValueError):
+        pass
+    try:
+        ratio = float(f["ratio"])
+        out.append("거래량 " + ("3배 미만" if ratio < 3 else "3~10배" if ratio < 10 else "10배+"))
+    except (KeyError, TypeError, ValueError):
+        pass
+    if "pre" in f:
+        out.append("프리장" if f.get("pre") else "정규장")
+    if sit:
+        out.append(sit)
+    return out
+
+
+def _grade_index(d: dict) -> dict:
+    """{참가자id: {"yes": [...], "no": [...], "by": {구간: {"yes": [...], "all": [...]}}}} — 채점 기록 한 번 훑어서 (최근 순서 유지)"""
+    idx: dict[str, dict] = {}
+    for g in d.get("graded") or []:
+        for aid, ret in (g.get("res") or {}).items():
+            e = idx.setdefault(aid, {"yes": [], "no": [], "by": {}})
+            v = (g.get("votes") or {}).get(aid)
+            if v is True:
+                e["yes"].append(ret)
+            elif v is False:
+                e["no"].append(ret)
+            for k in g.get("keys") or []:
+                b = e["by"].setdefault(k, {"yes": [], "all": []})
+                b["all"].append(ret)
+                if v is True:
+                    b["yes"].append(ret)
+    return idx
+
+
+def blocked_key(e: dict | None, keys: list[str]) -> str:
+    """이 후보 구간 중 그 AI 가 걸러지는 구간 (없으면 '')"""
+    if not e:
+        return ""
+    for k in keys:
+        b = e["by"].get(k)
+        if not b:
+            continue
+        ys, al = b["yes"][-20:], b["all"][-15:]
+        if len(ys) >= FILTER_MIN and st.mean(ys) <= -FILTER_LOSS and not (len(al) >= UNBLOCK_N and st.mean(al) > 0):
+            return k
+    return ""
+
+
+def card(e: dict | None, tp: float = 0) -> dict:
+    """판단 성적표: 산 것·안 산 것 평균, 놓친 기회, 판단력(산 것 − 안 산 것)"""
+    if not e:
+        return {"yes_n": 0, "no_n": 0}
+    ys, ns = e["yes"][-60:], e["no"][-60:]
+    out = {"yes_n": len(ys), "no_n": len(ns), "yes_avg": round(st.mean(ys), 2) if ys else None,
+           "no_avg": round(st.mean(ns), 2) if ns else None, "missed": sum(1 for x in ns if x >= MISS_PCT)}
+    if ys and ns:
+        out["skill"] = round(out["yes_avg"] - out["no_avg"], 2)
+    return out
+
+
+def _card_line(e: dict | None, keys: list[str]) -> str:
+    """판단할 때 AI 에게 붙일 자기 기록 한 줄 (숫자만 · 매번 새로 계산 — 요약이 흐려질 일 없음)"""
+    cd_ = card(e)
+    if not cd_["yes_n"] and not cd_["no_n"]:
+        return ""
+    parts = [f"산 것 {cd_['yes_n']}건 {cd_['yes_avg']:+.1f}%" if cd_["yes_n"] else "산 것 없음"]
+    if cd_["no_n"]:
+        parts.append(f"안 산 것 {cd_['no_n']}건 {cd_['no_avg']:+.1f}% (놓친 +{MISS_PCT:g}%↑ {cd_['missed']}건)")
+    here = []
+    for k in keys:
+        b = (e or {}).get("by", {}).get(k)
+        if b and len(b["yes"]) >= 3:
+            here.append(f"{k} 산 것 {len(b['yes'])}건 {st.mean(b['yes'][-20:]):+.1f}%")
+    return "내 기록: " + " · ".join(parts) + (" / 이 종목 구간: " + " · ".join(here[:3]) if here else "")
+
+
+def _probe_tick(d: dict, market: str, quotes: dict, minutes, day: str, now: float) -> int:
+    """지켜보는 후보마다 참가자별로 '샀다면' 정리 → 다 끝나면 채점 기록으로. 바뀐 것 수 (0 이면 저장 안 해도 됨)"""
+    done = 0
+    n0 = len(d.get("probes") or [])
+    people = _all(d)
+    keep = []
+    for pr in d.get("probes") or []:
+        px = float(quotes.get(pr["sym"]) or 0)
+        over = pr["day"] != day or (minutes is not None and minutes >= 380)
+        if px:
+            pr["last"] = px
+        px = px or (float(pr.get("last") or 0) if over else 0)
+        if px:
+            r = (px / pr["px"] - 1) * 100
+            mins = (now - pr["t"]) / 60
+            for a in people:
+                if a["id"] not in pr["res"] and (r >= a["tp"] or r <= -a["sl"] or mins >= a["hold"] or over):
+                    pr["res"][a["id"]] = round(_ret(pr["px"], px, market), 3)
+                    done += 1
+        if over and not px:   # 시세를 한 번도 못 받음 → 버림
+            continue
+        if all(a["id"] in pr["res"] for a in people):
+            d.setdefault("graded", []).append({"sym": pr["sym"], "day": pr["day"], "t": _now(), "keys": pr["keys"],
+                                               "votes": pr["votes"], "res": pr["res"]})
+            done += 1
+        else:
+            keep.append(pr)
+    d["probes"] = keep[-PROBE_MAX:]
+    d["graded"] = (d.get("graded") or [])[-GRADED_KEEP:]
+    return done + (n0 - len(d["probes"]))
+
+
 # ── 매 바퀴 ──
 def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, price_fn=None, ai_fn=None) -> list[str]:
     """보유 정리 + 새 후보 AI 판단 시작. 결과 줄 목록"""
@@ -194,7 +320,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     cands = {k: v for k, v in (cands or {}).items() if (v.get("style") or "surge") == "surge"}   # 단타 후보만
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
-        held = {s for a in _all(d) for s in a["pos"]}
+        held = {s for a in _all(d) for s in a["pos"]} | {p["sym"] for p in d.get("probes") or []}   # 채점 중인 후보 시세도
         need = [s for s in held if not quotes.get(s)]
     if need and price_fn:
         try:
@@ -220,6 +346,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
                                         "mins": round(mins), "t": _now(), "sit": p.get("sit", "")})
                     del a["pos"][sym]
                     out.append(f"🏟️ {a['name']} {sym} {why} {ret:+.2f}%")
+        changed = _probe_tick(d, market, quotes, minutes, day, now) > 0   # 🧮 '샀다면' 채점 (AI 호출 없음)
+        changed |= any(k != day for k in d["seen"])
         # 새 후보 → 참가자 전원 판단 (한 종목 하루 1번)
         calls = d["calls"].get(day, 0)
         seen = d["seen"].setdefault(day, [])
@@ -236,7 +364,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
             calls += 1; seen.append(s); start.append(s)
         d["calls"][day] = calls
         due = voice_due(c, d, day) if out else {}
-        _save(market, d)
+        if out or start or changed or due:   # ⚡ 바뀐 게 있을 때만 파일 쓰기 (매 바퀴 수백 KB 쓰지 않게 · 메모리엔 이미 반영)
+            _save(market, d)
     if due and _voice:   # 🗣️ 의견 생긴 AI → 뒤에서 물어보고 바로 채팅으로
         try:
             _voice(c, market, due)
@@ -249,8 +378,21 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     return out
 
 
+_notes_cache: dict[str, tuple[float, str]] = {}
+
+
 def _notes(market: str) -> str:
-    """📒 모든 AI 가 같이 보는 노트: 공유 교훈(1호·2호·생존전·주말 공부) + 자동매매 팀 기억의 교훈"""
+    """📒 모든 AI 가 같이 보는 노트 (1분 보관 — 판단마다 파일 다시 읽지 않게)"""
+    hit = _notes_cache.get(market)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    txt = _notes_raw(market)
+    _notes_cache[market] = (time.time(), txt)
+    return txt
+
+
+def _notes_raw(market: str) -> str:
+    """공유 교훈(1호·2호·생존전·주말 공부) + 자동매매 팀 기억의 교훈"""
     out = []
     try:
         from . import tradelearn as tl
@@ -280,37 +422,62 @@ def _ctrl_p(d: dict) -> float:
 
 def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn) -> None:
     try:
-        with _lock:
-            alive = [{"id": a["id"], "name": a["name"],
-                      "persona": a["persona"] + (f" (스스로 정한 규칙: {' / '.join(a['habits'])})" if a.get("habits") else "")}
-                     for a in load(market)["alive"]]
-        e = cd.get("est") or {}
-        notes = _notes(market)
-        prompt = ("AI 생존전: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매).\n"
-                  f"종목 {sym} 현재가 {price} · 고른 이유: {cd.get('reason', '')}\n"
-                  + (f"학습 추정: 승률 {float(e.get('p', 0)) * 100:.0f}% · 기대 수익 {float(e.get('ev', 0)):+.2f}%\n" if e else "")
-                  + (f"공유 노트(모든 AI 가 같이 배운 것 — 각자 성격에 맞게 참고): {notes}\n" if notes else "")
-                  + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" for a in alive)
-                  + '\n형식: {"참가자id": true/false, ...} (성격에 맞을 때만 true)')
-        r = ai_fn(prompt) if ai_fn else None
-        if not isinstance(r, dict):
-            return
         sit = _situation_now(c, market)
+        keys = buckets(cd, sit)
         with _lock:
             d = load(market)
-            yes = [a["id"] for a in d["alive"] if r.get(a["id"]) is True]
+            idx = _grade_index(d)
+            asked, skipped = [], {}
+            for a in d["alive"]:
+                bk = blocked_key(idx.get(a["id"]), keys)
+                if bk and random.random() >= EXPLORE:
+                    skipped[a["id"]] = bk   # 🚫 이 구간에서 계속 진 AI → 안 물어보고 '안 삼'
+                    continue
+                asked.append({"id": a["id"], "name": a["name"],
+                              "persona": a["persona"] + (f" (스스로 정한 규칙: {' / '.join(a['habits'])})" if a.get("habits") else ""),
+                              "rec": _card_line(idx.get(a["id"]), keys)})
+        r: dict = {}
+        if asked:   # 다 걸러졌으면 AI 를 안 부름 (빠르고 비용 0)
+            e = cd.get("est") or {}
+            notes = _notes(market)
+            prompt = ("AI 생존전: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매). "
+                      "'내 기록' 은 그 참가자의 지난 판단 결과예요 — 자기 기록에서 지는 패턴이면 피하세요.\n"
+                      f"종목 {sym} 현재가 {price} · 구간: {', '.join(keys) or '모름'} · 고른 이유: {cd.get('reason', '')}\n"
+                      + (f"학습 추정: 승률 {float(e.get('p', 0)) * 100:.0f}% · 기대 수익 {float(e.get('ev', 0)):+.2f}%\n" if e else "")
+                      + (f"공유 노트: {notes}\n" if notes else "")
+                      + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" + (f" | {a['rec']}" if a["rec"] else "") for a in asked)
+                      + '\n형식: {"참가자id": true/false, ...} (성격에 맞을 때만 true)')
+            got = ai_fn(prompt) if ai_fn else None
+            if not isinstance(got, dict):
+                return
+            r = got
+        with _lock:
+            d = load(market)
+            ids_asked = {a["id"] for a in asked}
+            yes = [a["id"] for a in d["alive"] if a["id"] in ids_asked and r.get(a["id"]) is True]
             for a in d["alive"]:
                 if a["id"] in yes and sym not in a["pos"] and len(a["pos"]) < MAX_POS:
                     a["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit}
             ctrl = d["ctrl"]   # 🎲 대조군: 같은 후보를 같은 빈도로 무작위 매수
-            if sym not in ctrl["pos"] and len(ctrl["pos"]) < MAX_POS and random.random() < _ctrl_p(d):
+            ctrl_buy = random.random() < _ctrl_p(d)
+            if ctrl_buy and sym not in ctrl["pos"] and len(ctrl["pos"]) < MAX_POS:
                 ctrl["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit}
             vs = d["vote_stats"]
-            vs["asked"] = int(vs.get("asked", 0)) + len(d["alive"]); vs["yes"] = int(vs.get("yes", 0)) + len(yes)
+            vs["asked"] = int(vs.get("asked", 0)) + len(asked); vs["yes"] = int(vs.get("yes", 0)) + len(yes)
             v = d.setdefault("votes", {})
             for k in [k for k in v if k != day]:
                 v.pop(k, None)
             v.setdefault(day, {})[sym] = yes
+            # 🧮 채점 시작: 물어본 AI 는 찬반, 걸러진 AI 는 None (구간 성적엔 '샀다면' 으로 들어감)
+            votes = {a["id"]: (a["id"] in yes) if a["id"] in ids_asked else None for a in d["alive"]}
+            votes["ctrl"] = ctrl_buy
+            d.setdefault("probes", []).append({"sym": sym, "px": price, "t": time.time(), "day": day, "keys": keys, "votes": votes, "res": {}})
+            if skipped:
+                sv = d.setdefault("saved", {})
+                if sv.get("day") != day:
+                    sv.clear(); sv.update(day=day, asks=0, calls=0)
+                sv["asks"] = int(sv.get("asks", 0)) + len(skipped)
+                sv["calls"] = int(sv.get("calls", 0)) + (0 if asked else 1)
             _save(market, d)
     except Exception:
         pass
@@ -441,10 +608,14 @@ def board(market: str, c: dict | None = None) -> list[dict]:
     live = d.get("live") or []
     weights = d.get("weights") or {}
     ca = _ctrl_avg(d, c)
+    idx = _grade_index(d)
+    all_keys = sorted({k for g in d.get("graded") or [] for k in g.get("keys") or []})
 
     def row(a: dict, is_ctrl: bool = False) -> dict:
         sc = score(a, half_life=hl)
-        return {"name": a["name"], "gen": a.get("gen", 1), "ctrl": is_ctrl,
+        e = idx.get(a["id"])
+        blocks = [] if is_ctrl else [k for k in all_keys if blocked_key(e, [k])]
+        return {"name": a["name"], "gen": a.get("gen", 1), "ctrl": is_ctrl, "card": card(e), "blocks": blocks,
                 "live": (live.index(a["id"]) + 1) if a["id"] in live else 0,
                 "weight": round(float(weights.get(a["id"], 0)) * 100) if a["id"] in live else 0,
                 "persona": a["persona"], "tp": a["tp"], "sl": a["sl"], "hold": a["hold"], "held": len(a["pos"]),
@@ -523,8 +694,15 @@ RULE_BOUNDS = {"tp": (0.5, 30.0), "sl": (0.5, 20.0), "hold": (5, 390)}
 MAX_HABITS = 3   # AI 마다 스스로 정한 규칙 최대 개수 (판단할 때 성격 뒤에 붙음)
 
 
-def _brief(a: dict, ctrl_avg: float, hl: float) -> str:
-    """의견 쓸 때 볼 자기 성적 요약 한 덩어리"""
+def _brief(a: dict, ctrl_avg: float, hl: float, e: dict | None = None) -> str:
+    """의견 쓸 때 볼 자기 성적 요약 한 덩어리 (+ 모든 판단 채점 · 걸러진 구간)"""
+    cl = _card_line(e, sorted((e or {}).get("by", {}), key=lambda k: -len(e["by"][k]["yes"]))[:4]) if e else ""
+    blocks = [k for k in (e or {}).get("by", {}) if blocked_key(e, [k])]
+    extra = (f"\n  판단 채점: {cl}" if cl else "") + (f"\n  🚫 지금 걸러지는 구간(계속 져서 안 물어봄): {', '.join(blocks)}" if blocks else "")
+    return _brief_core(a, ctrl_avg, hl) + extra
+
+
+def _brief_core(a: dict, ctrl_avg: float, hl: float) -> str:
     sc = score(a, half_life=hl)
     ts = a["trades"][-30:]
     whys: dict[str, int] = {}
@@ -559,12 +737,13 @@ def opinions(c: dict, market: str, ai_fn=None, setting_keys: str = "", only: dic
         ca = _ctrl_avg(d, c)
         alive = [dict(a) for a in d["alive"] if only is None or a["id"] in only]
         ctrl_sc = score(d["ctrl"], half_life=hl)
+        idx = _grade_index(d)
     if not alive:
         return []
     notes = _notes(market)
     prompt = (VOICE_PROMPT + f"\n\n시장: {'미장' if market == 'US' else '국장'} · 🎲 무작위 대조군: {ctrl_sc['n']}건 최근 평균 {ctrl_sc['wavg']:+.2f}%\n"
               + (f"공유 노트: {notes}\n" if notes else "") + (f"바꿀 수 있는 설정키: {setting_keys}\n" if setting_keys else "")
-              + "참가자:\n" + "\n".join(_brief(a, ca, hl)
+              + "참가자:\n" + "\n".join(_brief(a, ca, hl, idx.get(a["id"]))
                                          + (f"\n  지금 묻는 이유: {only[a['id']]}" if only and only.get(a["id"]) else "")
                                          + (f"\n  지난번에 한 말: {a['last_opinion']}" if a.get("last_opinion") else "") for a in alive))
     r = (ai_fn or ai_json)(prompt)
@@ -675,8 +854,11 @@ def set_rules(market: str, ai_id: str, changes: dict | None = None, habit: str =
 
 def overview(market: str, c: dict | None = None) -> dict:
     d = load(market)
+    sv = d.get("saved") or {}   # 거름망으로 아낀 물음 (그 장 날짜 기준 · 새 날 첫 판단 때 0부터)
     return {"board": board(market, c), "champion": d.get("champion"), "text": text(market),
-            "situation": _situation_now(c, market), "ctrl_p": round(_ctrl_p(d) * 100)}
+            "situation": _situation_now(c, market), "ctrl_p": round(_ctrl_p(d) * 100),
+            "graded": len(d.get("graded") or []), "probes": len(d.get("probes") or []),
+            "saved": {"day": sv.get("day", ""), "asks": int(sv.get("asks", 0)), "calls": int(sv.get("calls", 0))} if sv else {}}
 
 
 def ai_json(prompt: str) -> dict | None:

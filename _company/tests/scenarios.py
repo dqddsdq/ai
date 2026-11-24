@@ -556,6 +556,60 @@ def 노트_정리_회의는_서로_의견을_주고받고_다수가_동의한_�
 
 
 @case
+def 생존전은_안_산_판단까지_채점하고_계속_지는_구간은_안_물어봄(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    c = {**at.config(), "arena_on": True}
+    d = arena.load("US", 2)
+    a0, a1 = d["alive"][0]["id"], d["alive"][1]["id"]
+    d["alive"][0]["tp"] = d["alive"][1]["tp"] = 4.0
+    arena._save("US", d)
+    cd = {"style": "surge", "reason": "t", "features": {"change": 45, "ratio": 12, "pre": True}}
+    prompts = []
+    ai = lambda p: (prompts.append(p), {a0: True, a1: False})[1]
+    # ① 채점: a0 '산다' · a1 '안 산다' → 둘 다 '샀다면' 으로 계산 → +5% 가면 a1 은 놓친 기회
+    arena._decide(c, "US", "ZZ", cd, 100.0, "D1", ai)
+    assert len(arena.load("US")["probes"]) == 1
+    arena.step(c, "US", {}, {"ZZ": {"price": 105.0}}, 30, "D1")
+    d = arena.load("US")
+    assert not d["probes"] and len(d["graded"]) == 1, (d.get("probes"), d.get("graded"))
+    g = d["graded"][0]
+    assert g["votes"][a0] is True and g["votes"][a1] is False and set(g["res"]) >= {a0, a1, "ctrl"}, g
+    idx = arena._grade_index(d)
+    assert arena.card(idx[a1])["missed"] == 1, "안 산 것 중 오른 걸 놓친 기회로 못 셈"
+    assert "상승 40%+" in g["keys"] and "프리장" in g["keys"], g["keys"]
+    # ② 거름망: a0 가 '상승 40%+' 에서 '산다' 12번 다 -2% → 그 구간 후보는 a0 에게 안 물어봄
+    bad = [{"sym": f"B{i}", "day": "D0", "t": "", "keys": ["상승 40%+"], "votes": {a0: True, a1: False}, "res": {a0: -2.0, a1: -2.0, "ctrl": -2.0}} for i in range(12)]
+    d["graded"] = bad + d["graded"]; arena._save("US", d)
+    old_ex = arena.EXPLORE; arena.EXPLORE = 0.0
+    try:
+        prompts.clear()
+        arena._decide(c, "US", "YY", cd, 100.0, "D1", ai)
+        assert prompts and a0 not in prompts[-1] and a1 in prompts[-1], "걸러진 AI 에게 또 물어봄"
+        assert "내 기록:" in prompts[-1], "판단할 때 자기 기록을 안 보여 줌"
+        assert arena.load("US")["votes"]["D1"]["YY"] == [], "걸러진 AI 가 산 걸로 됨"
+        # 둘 다 걸러지면 AI 를 아예 안 부름
+        d = arena.load("US")
+        for x in d["graded"][:12]:
+            x["votes"][a1] = True
+        arena._save("US", d)
+        prompts.clear()
+        arena._decide(c, "US", "XX", cd, 100.0, "D1", ai)
+        assert not prompts, "다 걸러졌는데 AI 를 부름"
+        assert arena.load("US")["saved"]["calls"] == 1
+        # ③ 거름망 풀기: 그 구간 후보가 최근 (내 규칙으로 샀다면) 플러스로 바뀌면 다시 물어봄
+        d = arena.load("US")
+        d["graded"] += [{"sym": f"G{i}", "day": "D1", "t": "", "keys": ["상승 40%+"], "votes": {a0: None, a1: None}, "res": {a0: 3.0, a1: 3.0, "ctrl": 3.0}} for i in range(15)]
+        arena._save("US", d)
+        prompts.clear()
+        arena._decide(c, "US", "WW", cd, 100.0, "D1", ai)
+        assert prompts and a0 in prompts[-1], "시장이 바뀌었는데 거름망이 안 풀림"
+        assert any(r.get("blocks") == [] for r in arena.board("US", c) if not r["ctrl"])
+    finally:
+        arena.EXPLORE = old_ex
+
+
+@case
 def 생존전_AI_id_는_안_겹치고_예전에_겹친_것도_고쳐짐(at, picker, tmp):
     fresh(at, picker, tmp, arena_size=10)
     from engine import arena, store

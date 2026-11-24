@@ -1474,10 +1474,20 @@ function arenaHtml(ar) {
           ${r.edge == null ? "" : `<span class="ar-edge ${r.edge > 0 ? "up" : "down"}">대조군 대비 ${r.edge > 0 ? "+" : ""}${(+r.edge).toFixed(2)}%p</span>`}</div>
         <div class="ar-nums">${r.n}건 · 최근 평균 <b>${pct(r.wavg ?? r.avg ?? 0)}</b> · 승률 ${r.win}% · 보유 ${r.held}</div>
         <div class="ar-sub">익절 ${r.tp}% · 손절 ${r.sl}% · 최대 ${r.hold}분 — ${esc(r.persona)}</div>
+        ${cardHtml(r.card)}
         ${Object.keys(r.sits || {}).length ? `<div class="ar-sits">${sits(r)}</div>` : ""}
+        ${(r.blocks || []).length ? `<div class="ar-sits">${r.blocks.map(k => `<span class="ar-sit down" title="이 구간에서 '산다' 결과가 계속 마이너스라 이 AI 에겐 안 물어봐요 (가끔은 물어봐서 다시 배움)">🚫 ${esc(k)}</span>`).join("")}</div>` : ""}
       </div></div>`;
+  const cardHtml = c => {   // 🧮 모든 판단 채점: 산 것 vs 안 산 것
+    if (!c || (!c.yes_n && !c.no_n)) return "";
+    const f = (n, a) => n ? `${n}건 ${pct(a)}` : "없음";
+    return `<div class="ar-sub" title="후보마다 이 AI 의 익절·손절·보유 시간으로 '샀다면' 결과를 계산해서 매긴 판단 성적이에요">🧮 판단 채점: 산 것 ${f(c.yes_n, c.yes_avg)} · 안 산 것 ${f(c.no_n, c.no_avg)}`
+      + (c.no_n ? ` · 놓친 기회 ${c.missed}건` : "") + (c.skill != null ? ` · <b class="ar-edge ${c.skill > 0 ? "up" : "down"}">판단력 ${c.skill > 0 ? "+" : ""}${(+c.skill).toFixed(2)}%p</b>` : "") + `</div>`;
+  };
+  const sv = ar.saved || {};
   return (ch ? `<div class="ar-head">🏆 1등 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${pct(ch.avg)} · 승률 ${ch.win}%</div>` : "")
     + `<div class="ar-head muted">🧭 지금 상황: <b>${esc(ar.situation || "장 밖")}</b> · 🎲 대조군은 후보의 ${ar.ctrl_p ?? 35}% 를 무작위로 삼</div>`
+    + `<div class="ar-head muted">🧮 채점 끝난 후보 ${ar.graded ?? 0}개 · 지켜보는 중 ${ar.probes ?? 0}개${sv.asks ? ` · 🚫 거름망으로 오늘 ${sv.asks}번 안 물어봄${sv.calls ? ` (AI 호출 ${sv.calls}번 아낌)` : ""}` : ""}</div>`
     + rows.map(row).join("") + (ctrl ? row(ctrl) : "");
 }
 $("#notes-council").onclick = async () => {   // 📒 노트 정리 회의 지금
