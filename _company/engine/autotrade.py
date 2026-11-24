@@ -44,7 +44,7 @@ CONFIG = SHARED_DIR / "autotrade.json"
 STATE = COMPANY_DIR / "_cache" / "autotrade_state.json"
 KST = timezone(timedelta(hours=9))
 DEFAULTS = {
-    "v": 5,                        # 설정 형식 버전 (예전 기본값 자동 갱신용)
+    "v": 6,                        # 설정 형식 버전 (예전 기본값 자동 갱신용)
     "mode": "off",
     "markets": ["US", "KR"],       # 동시에 돌릴 시장 (국장 09:00~15:30 · 미장 프리장 포함 저녁~새벽, 시장마다 기록·한도·정지 따로)
     "market": "US",                # (내부용) 지금 처리 중인 시장 — 설정 화면에서는 markets 를 씀
@@ -111,7 +111,7 @@ DEFAULTS = {
     "mode_down_month_pct": 8.0,    # 또는 이번 달 이 % 이상 손실이면 가상으로
     "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
     "arena_on": True,              # 🏟️ AI 생존전: 성격 다른 AI 들이 가상으로만 매매 → 매주 꼴찌 탈락·1등 변형 투입
-    "arena_size": 5, "arena_ai_per_day": 40, "arena_min_trades": 20,   #    참가자 수 · 하루 AI 판단 횟수 · 탈락 판정 최소 거래
+    "arena_size": 10, "arena_ai_per_day": 60, "arena_min_trades": 20,   #    참가자 수 · 하루 AI 판단 횟수 · 탈락 판정 최소 거래
     "arena_promote": True,         #    🏆 챔피언 전략을 2호 급등주 AI 판단에 참고로 붙임 (실전 관문은 그대로)
     "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
     "shadow_count": 1000,          #   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
@@ -182,7 +182,7 @@ NUMS = {"shadow_count": (2, 1000), "promote_min_trades": (3, 200), "promote_marg
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
         "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (5, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "live_proof_n": (3, 200), "live_quality_change": (0, 100), "live_quality_ratio": (0, 100), "time_stop_min": (0, 240), "time_stop_up_pct": (0, 10), "stop_slip_pct": (0.3, 5),
-        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "arena_size": (2, 8), "arena_ai_per_day": (0, 300), "arena_min_trades": (5, 200), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
+        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "arena_size": (2, 12), "arena_ai_per_day": (0, 300), "arena_min_trades": (5, 200), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
         "chase_near_high_pct": (0.1, 10), "chase_min_pullback_pct": (0, 5), "chase_run5_max_pct": (0.5, 20),
         "rebound_pullback_pct": (0.3, 10), "rebound_pullback_max_pct": (2, 30), "rebound_up_bars": (1, 3)}
 CHOICES = {"lane_swing_mode": ("live", "paper", "off"), "lane_surge_mode": ("live", "paper", "off"), "ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
@@ -322,7 +322,10 @@ def config() -> dict:
     if int(c.get("v", 1)) < 5:   # 손절 확인 10초 → 5초 (손절이 늦게 체결되던 문제)
         if c.get("exit_check_sec") in (10, 10.0, None):
             out["exit_check_sec"] = 5
-    out["v"] = 5
+    if int(c.get("v", 1)) < 6:   # 🏟️ 생존전 참가자 5 → 10
+        if c.get("arena_size") in (5, None):
+            out["arena_size"] = 10
+    out["v"] = 6
     return out
 
 

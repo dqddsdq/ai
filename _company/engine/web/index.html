@@ -496,7 +496,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       <div class="card"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
         <div id="lanes" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>🏟️ AI 생존전</b> <span class="muted" style="font-size:12.5px">가상 전용 · 같은 후보를 성격 다른 AI 들이 각자 판단 · 매주 토요일 꼴찌 탈락, 1등 변형 투입</span>
+      <div class="card"><b>🏟️ AI 생존전</b> <span class="muted" style="font-size:12.5px">가상 전용 · 같은 후보를 성격 다른 AI 들이 각자 판단 · 매주 토요일 아침 성적 발표 · 하위 최대 2명 탈락, 1등 변형 투입 · 모두 같은 공유 노트</span>
         <div id="arena" class="tlog" style="margin-top:8px"></div>
       </div>
       <div class="card"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
@@ -604,7 +604,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-shadow_on"> 🧪 그림자 가상 매매 (규칙 조합 여러 개 동시에 가상으로)</label>
         <div class="trade-grid"><label>그림자 조합 수 (2~1000)<input id="t-shadow_count" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 생존전 (성격 다른 AI 들이 가상으로만 매매 → 매주 꼴찌 탈락·1등 변형 투입)</label>
-        <div class="trade-grid"><label>참가자 수 (2~8)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수<input id="t-arena_ai_per_day" type="number"></label><label>탈락 판정 최소 거래<input id="t-arena_min_trades" type="number"></label></div>
+        <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수<input id="t-arena_ai_per_day" type="number"></label><label>탈락 판정 최소 거래<input id="t-arena_min_trades" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_promote"> 🏆 챔피언 전략을 2호 급등주 AI 판단에 참고로 (실전 관문은 그대로)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-backtest_on"> 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로</label>

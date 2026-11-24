@@ -2,10 +2,11 @@
 
 - 가상 전용: 이 파일은 주문 함수를 절대 부르지 않음 (시세는 실전 엔진이 넘겨준 것 + 읽기 전용 조회만)
 - 후보: 실전 엔진이 매 바퀴 고른 후보(규칙 관문 통과한 것)를 그대로 받음
+- 📒 모든 AI 가 같은 공유 노트(1호·2호·생존전·주말 공부 교훈 + 팀 기억 교훈)를 보고 판단
 - AI 호출: 후보 한 종목당 1번에 참가자 전원이 같이 판단 (하루 arena_ai_per_day 번까지 · 실전 AI 판단 한도와 따로)
 - 매도: 참가자마다 자기 익절·손절·최대 보유 시간 + 마감 전 정리 (단타)
 - 체결: 0.1% 불리하게 + 수수료·세금 (실전 가상 매매와 같게)
-- 매주 토요일(주말 공부): 거래 arena_min_trades 건↑ 참가자끼리 비교 → 꼴찌(평균 마이너스·1등보다 0.3%p↑ 나쁨) 탈락,
+- 매주 토요일 아침(주말 공부) 성적 발표(텔레그램): 거래 arena_min_trades 건↑ 참가자끼리 비교 → 하위 최대 2명(평균 마이너스·1등보다 0.3%p↑ 나쁨) 탈락,
   1등을 살짝 바꾼 새 AI 로 채움 · 탈락 이유는 공유 노트에 교훈으로
 - 🏆 1등이 거래 충분 + 앞·뒤 절반 모두 플러스면 '챔피언' → 2호 급등주 AI 판단에 그 전략을 참고로 붙임
   (실전 매수는 여전히 기존 관문·실전 증명을 다 통과해야 함 — 돈 흐름은 그대로)
@@ -41,6 +42,8 @@ SEEDS = [
     {"name": "추세 추종", "persona": "고점을 계속 높이며 오르는 강한 추세만. 길게 들고 가서 크게 먹음.", "tp": 8.0, "sl": 4.0, "hold": 240},
     {"name": "역발상", "persona": "남들이 다 사는 과열(+50%↑)은 피하고, 덜 오른 +10~25% 구간의 탄탄한 종목만.", "tp": 4.0, "sl": 2.5, "hold": 120},
     {"name": "속공", "persona": "오르는 속도가 가장 빠른 순간에만 짧게 타고 바로 나옴.", "tp": 1.5, "sl": 1.0, "hold": 15},
+    {"name": "돌파", "persona": "장 초반 고점·전일 고점을 거래량과 함께 뚫는 순간만. 뚫지 못하면 안 삼.", "tp": 5.0, "sl": 2.5, "hold": 120},
+    {"name": "통계파", "persona": "학습 기록의 비슷한 거래 표본이 많고 승률 50%↑일 때만. 차트 모양보다 숫자를 믿음.", "tp": 3.0, "sl": 2.0, "hold": 90},
 ]
 
 
@@ -61,7 +64,7 @@ def _new(seed: dict, gen: int = 1, parent: str = "") -> dict:
 def load(m: str, size: int | None = None) -> dict:
     d = store.load(_file(m), lambda: {})
     d.setdefault("alive", []); d.setdefault("dead", []); d.setdefault("seen", {}); d.setdefault("calls", {}); d.setdefault("champion", None)
-    used = {a["name"] for a in d["alive"]}
+    used = {a["name"] for a in d["alive"]} | {x["name"] for x in d["dead"]}   # 탈락한 전략은 다시 안 들어옴
     for s in SEEDS if size else []:
         if len(d["alive"]) >= size:
             break
@@ -95,7 +98,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     quotes = {k: float(v) for k, v in quotes.items() if v}
     cands = {k: v for k, v in (cands or {}).items() if (v.get("style") or "surge") == "surge"}   # 단타 후보만
     with _lock:
-        d = load(market, int(c.get("arena_size", 5)))
+        d = load(market, int(c.get("arena_size", 10)))
         held = {s for a in d["alive"] for s in a["pos"]}
         need = [s for s in held if not quotes.get(s)]
     if need and price_fn:
@@ -106,7 +109,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
             pass
     now = time.time()
     with _lock:
-        d = load(market, int(c.get("arena_size", 5)))
+        d = load(market, int(c.get("arena_size", 10)))
         for a in d["alive"]:
             for sym, p in list(a["pos"].items()):
                 px = float(quotes.get(sym) or 0)
@@ -145,6 +148,26 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     return out
 
 
+def _notes(market: str) -> str:
+    """📒 모든 AI 가 같이 보는 노트: 공유 교훈(1호·2호·생존전·주말 공부) + 자동매매 팀 기억의 교훈"""
+    out = []
+    try:
+        from . import tradelearn as tl
+        out.append(tl.lessons_text(market, 10))
+    except Exception:
+        pass
+    try:
+        mem = (COMPANY_DIR / "_agents" / "trader" / "memory.md").read_text(encoding="utf-8")
+        tag = "교훈(미장)" if market == "US" else "교훈(국장)"
+        ls = [x.split(tag + ":", 1)[1].strip() for x in mem.splitlines() if tag + ":" in x]
+        from .extras import FAKE_NOTES
+        ls = [x for x in ls if x not in FAKE_NOTES]
+        out.append(" / ".join(dict.fromkeys(ls[-8:])))
+    except Exception:
+        pass
+    return " / ".join(x for x in out if x)[:1500]
+
+
 def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn) -> None:
     try:
         with _lock:
@@ -153,6 +176,7 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
         prompt = ("AI 생존전: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매).\n"
                   f"종목 {sym} 현재가 {price} · 고른 이유: {cd.get('reason', '')}\n"
                   + (f"학습 추정: 승률 {float(e.get('p', 0)) * 100:.0f}% · 기대 수익 {float(e.get('ev', 0)):+.2f}%\n" if e else "")
+                  + (f"공유 노트(모든 AI 가 같이 배운 것 — 각자 성격에 맞게 참고): {_notes(market)}\n" if _notes(market) else "")
                   + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" for a in alive)
                   + '\n형식: {"참가자id": true/false, ...} (성격에 맞을 때만 true)')
         r = ai_fn(prompt) if ai_fn else None
@@ -228,17 +252,23 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
         return ""
     min_n = int(c.get("arena_min_trades", 20))
     with _lock:
-        d = load(market, int(c.get("arena_size", 5)))
+        d = load(market, int(c.get("arena_size", 10)))
         ok = [a for a in d["alive"] if len(a["trades"]) >= min_n]
     msg = []
     if len(ok) >= 2:
         ok.sort(key=lambda a: -score(a)["avg"])
-        best, worst = ok[0], ok[-1]
-        sb, sw = score(best), score(worst)
-        if sw["avg"] < 0 and sb["avg"] - sw["avg"] >= 0.3:
+        best = ok[0]
+        sb = score(best)
+        if add_lesson and sb["avg"] > 0:
+            add_lesson(market, f"[생존전 1등] '{best['persona'][:80]}' 전략이 {sb['n']}건 평균 {sb['avg']:+.2f}% 로 1등", "AI 생존전")
+        n_cut = 2 if len(ok) >= 6 else 1   # 참가자 많으면 한 주에 최대 2명
+        for worst in [a for a in ok[::-1] if a is not best][:n_cut]:
+            sw = score(worst)
+            if not (sw["avg"] < 0 and sb["avg"] - sw["avg"] >= 0.3):
+                continue
             seed = _mutate(best, random.Random(), ai_fn, lessons)
             with _lock:
-                d = load(market, int(c.get("arena_size", 5)))
+                d = load(market)
                 d["alive"] = [a for a in d["alive"] if a["id"] != worst["id"]]
                 d["dead"].append({"name": worst["name"], "persona": worst["persona"], "gen": worst["gen"], **sw, "t": _now()})
                 d["alive"].append(_new(seed, best["gen"] + 1, best["name"]))
@@ -264,8 +294,11 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
                     _save(market, d)
                     msg.append("🏆 챔피언 내림 (1등 성적이 꾸준하지 않음)")
     else:
-        msg.append(f"아직 거래 {min_n}건 넘은 참가자가 {len(ok)}명이라 탈락 판정은 다음에")
-    return "🏟️ AI 생존전: " + " · ".join(msg)
+        msg.append(f"아직 거래 {min_n}건 넘은 참가자가 {len(ok)}명이라 탈락 판정은 다음 주에")
+    rows = board(market)   # 📣 성적 발표: 전원 순위 (탈락·교체 뒤)
+    rank = [f"{i + 1}. {r['name']}{'' if r['gen'] == 1 else ' (' + str(r['gen']) + '세대)'} — {r['n']}건 평균 {r['avg']:+.2f}% 승률 {r['win']}%"
+            + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(rows)]
+    return "🏟️ AI 생존전 주간 성적 발표\n" + "\n".join(rank) + ("\n" + "\n".join(msg) if msg else "")
 
 
 def overview(market: str) -> dict:
