@@ -6,10 +6,11 @@
 - AI 호출: 후보 한 종목당 1번에 참가자 전원이 같이 판단 (하루 arena_ai_per_day 번까지 · 실전 AI 판단 한도와 따로)
 - 매도: 참가자마다 자기 익절·손절·최대 보유 시간 + 마감 전 정리 (단타)
 - 체결: 0.1% 불리하게 + 수수료·세금 (실전 가상 매매와 같게)
-- 매주 토요일 아침(주말 공부) 성적 발표(텔레그램): 거래 arena_min_trades 건↑ 참가자끼리 비교 → 하위 최대 2명(평균 마이너스·1등보다 0.3%p↑ 나쁨) 탈락,
-  1등을 살짝 바꾼 새 AI 로 채움 · 탈락 이유는 공유 노트에 교훈으로
-- 🏆 1등이 거래 충분 + 앞·뒤 절반 모두 플러스면 '챔피언' → 2호 급등주 AI 판단에 그 전략을 참고로 붙임
-  (실전 매수는 여전히 기존 관문·실전 증명을 다 통과해야 함 — 돈 흐름은 그대로)
+- 매주 토요일 아침(주말 공부) 성적 발표(텔레그램) · 탈락 없음 — 전원 가상 매매로 계속 같이 공부
+- 💰 실전 자격: 거래 arena_min_trades 건↑ · 최근 평균 플러스 · 앞·뒤 절반 모두 플러스인 참가자 중 상위 arena_live_n(2)명
+  → 이 AI 가 '산다'고 한 종목은 실전 엔진이 실전으로 매수 (주문은 실전 엔진이 기존 안전장치 그대로: 현금만·봇 장부·손실 한도·추격 확인)
+  → 매일 복기 때 평균이 마이너스로 떨어지면 바로 자격 내림 (가상으로 돌아가 다시 공부)
+- 🏆 1등 전략은 2호 급등주 AI 판단에도 참고로 붙임
 기록: _cache/arena_{US|KR}.json
 """
 
@@ -184,14 +185,80 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
             return
         with _lock:
             d = load(market)
+            yes = [a["id"] for a in d["alive"] if r.get(a["id"]) is True]
             for a in d["alive"]:
-                if r.get(a["id"]) is True and sym not in a["pos"] and len(a["pos"]) < MAX_POS:
+                if a["id"] in yes and sym not in a["pos"] and len(a["pos"]) < MAX_POS:
                     a["pos"][sym] = {"px": price, "t": time.time(), "day": day}
+            v = d.setdefault("votes", {})
+            for k in [k for k in v if k != day]:
+                v.pop(k, None)
+            v.setdefault(day, {})[sym] = yes
             _save(market, d)
     except Exception:
         pass
     finally:
         _pending.pop(f"{market}:{sym}", None)
+        if _wake:
+            try:
+                _wake(market)
+            except Exception:
+                pass
+
+
+_wake = None   # 판단 끝나면 실전 엔진을 바로 한 바퀴 (autotrade 가 넣어 줌)
+
+
+def kick(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn=None) -> bool:
+    """실전 엔진이 후보를 처음 봤을 때 바로 생존전 판단 시작 (하루 한 종목 1번 · 하루 횟수 안에서)"""
+    with _lock:
+        d = load(market)
+        seen = d["seen"].setdefault(day, [])
+        calls = int(d["calls"].get(day, 0))
+        if sym in seen or f"{market}:{sym}" in _pending or calls >= int(c.get("arena_ai_per_day", 60)):
+            return f"{market}:{sym}" in _pending
+        seen.append(sym); d["calls"] = {day: calls + 1}
+        _save(market, d)
+    _pending[f"{market}:{sym}"] = time.time()
+    threading.Thread(target=_decide, args=(c, market, sym, cd, price, day, ai_fn or ai_json), daemon=True, name="arena-ai").start()
+    return True
+
+
+def live_vote(market: str, day: str, sym: str) -> tuple[str, dict | None]:
+    """실전 자격 AI 의 판단: ('pending'|'unseen'|'no'|'yes', 찬성한 실전 AI)"""
+    if f"{market}:{sym}" in _pending:
+        return "pending", None
+    d = load(market)
+    live = d.get("live") or []
+    if not live:
+        return "no", None
+    v = (d.get("votes") or {}).get(day, {})
+    if sym not in v:
+        return ("no" if sym in d["seen"].get(day, []) else "unseen"), None
+    by = {a["id"]: a for a in d["alive"]}
+    for i, aid in enumerate(live):
+        if aid in v[sym] and aid in by:
+            return "yes", {"id": aid, "name": by[aid]["name"], "rank": i + 1}
+    return "no", None
+
+
+def _qualified(a: dict, min_n: int) -> bool:
+    ts = a["trades"][-max(min_n, 30):]
+    h = len(ts) // 2
+    return len(a["trades"]) >= min_n and _avg(ts) > 0 and _avg(ts[:h]) > 0 and _avg(ts[h:]) > 0
+
+
+def recheck(c: dict, market: str) -> str:
+    """매일 복기: 실전 자격 AI 중 성적이 떨어진 AI 는 바로 자격 내림"""
+    min_n = int(c.get("arena_min_trades", 20))
+    with _lock:
+        d = load(market)
+        by = {a["id"]: a for a in d["alive"]}
+        drop = [i for i in d.get("live") or [] if i not in by or not _qualified(by[i], min_n)]
+        if not drop:
+            return ""
+        d["live"] = [i for i in d["live"] if i not in drop]
+        _save(market, d)
+    return "🏟️ 실전 자격 내림: " + ", ".join(by[i]["name"] if i in by else i for i in drop) + " (성적이 떨어져서 가상으로 다시 공부)"
 
 
 # ── 성적 ──
@@ -204,7 +271,8 @@ def score(a: dict, n: int = 30) -> dict:
 
 def board(market: str) -> list[dict]:
     d = load(market)
-    rows = [{"name": a["name"], "gen": a["gen"], "persona": a["persona"], "tp": a["tp"], "sl": a["sl"], "hold": a["hold"],
+    live = d.get("live") or []
+    rows = [{"name": a["name"], "gen": a["gen"], "live": (live.index(a["id"]) + 1) if a["id"] in live else 0, "persona": a["persona"], "tp": a["tp"], "sl": a["sl"], "hold": a["hold"],
              "held": len(a["pos"]), **score(a)} for a in d["alive"]]
     return sorted(rows, key=lambda r: (-(r["n"] >= 5), -r["avg"]))
 
@@ -213,10 +281,9 @@ def text(market: str) -> str:
     rows = board(market)
     if not rows:
         return ""
-    d = load(market)
-    ch = d.get("champion") or {}
-    return ("🏟️ AI 생존전(가상): " + " · ".join(r["name"] + ("" if r["gen"] == 1 else f"({r['gen']}세대)") + f" {r['n']}건 {r['avg']:+.2f}%" for r in rows)
-            + (f" · 🏆 {ch['name']}" if ch.get("name") else "") + (f" · 탈락 {len(d['dead'])}" if d["dead"] else ""))
+    ch = load(market).get("champion") or {}
+    return ("🏟️ AI 생존전: " + " · ".join(("💰" if r["live"] else "") + r["name"] + f" {r['n']}건 {r['avg']:+.2f}%" for r in rows)
+            + (f" · 🏆 {ch['name']}" if ch.get("name") else "") + (" · 💰=실전 자격" if any(r["live"] for r in rows) else ""))
 
 
 def champion_text(market: str) -> str:
@@ -228,82 +295,48 @@ def champion_text(market: str) -> str:
 
 
 # ── 매주: 탈락·교체 ──
-def _mutate(best: dict, rnd: random.Random, ai_fn=None, lessons: str = "") -> dict:
-    seed = {"name": best["name"].split("·")[0] + "·변형", "persona": best["persona"],
-            "tp": round(max(1.0, min(15.0, best["tp"] * rnd.uniform(0.8, 1.25))), 1),
-            "sl": round(max(0.8, min(8.0, best["sl"] * rnd.uniform(0.8, 1.25))), 1),
-            "hold": int(max(10, min(390, best["hold"] * rnd.uniform(0.7, 1.4))))}
-    if ai_fn:
-        try:
-            r = ai_fn(f"AI 생존전 1등 전략: '{best['persona']}' (평균 {score(best)['avg']:+.2f}%).\n"
-                      f"공유 노트: {lessons[:800]}\n이 전략을 한 가지만 바꿔 더 나아질 것 같은 새 전략을 한 줄로.\n"
-                      '형식: {"name": "짧은 이름(6자 이내)", "persona": "한 줄"}')
-            if isinstance(r, dict) and str(r.get("persona", "")).strip():
-                seed["persona"] = str(r["persona"]).strip()[:200]
-                seed["name"] = (str(r.get("name") or "").strip()[:8] or seed["name"])
-        except Exception:
-            pass
-    return seed
-
-
 def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "") -> str:
-    """주말 공부: 꼴찌 탈락 → 1등 변형으로 채움 · 챔피언 정하기. 한 줄 요약"""
+    """주말 공부(토요일 아침): 전원 성적 발표 · 탈락 없음 · 상위 arena_live_n 명에게 실전 자격"""
     if not c.get("arena_on"):
         return ""
     min_n = int(c.get("arena_min_trades", 20))
+    n_live = int(c.get("arena_live_n", 2))
+    msg = []
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
-        ok = [a for a in d["alive"] if len(a["trades"]) >= min_n]
-    msg = []
-    if len(ok) >= 2:
-        ok.sort(key=lambda a: -score(a)["avg"])
-        best = ok[0]
-        sb = score(best)
-        if add_lesson and sb["avg"] > 0:
-            add_lesson(market, f"[생존전 1등] '{best['persona'][:80]}' 전략이 {sb['n']}건 평균 {sb['avg']:+.2f}% 로 1등", "AI 생존전")
-        n_cut = 2 if len(ok) >= 6 else 1   # 참가자 많으면 한 주에 최대 2명
-        for worst in [a for a in ok[::-1] if a is not best][:n_cut]:
-            sw = score(worst)
-            if not (sw["avg"] < 0 and sb["avg"] - sw["avg"] >= 0.3):
-                continue
-            seed = _mutate(best, random.Random(), ai_fn, lessons)
-            with _lock:
-                d = load(market)
-                d["alive"] = [a for a in d["alive"] if a["id"] != worst["id"]]
-                d["dead"].append({"name": worst["name"], "persona": worst["persona"], "gen": worst["gen"], **sw, "t": _now()})
-                d["alive"].append(_new(seed, best["gen"] + 1, best["name"]))
-                _save(market, d)
-            msg.append(f"❌ {worst['name']} 탈락({sw['n']}건 {sw['avg']:+.2f}%) → 🆕 {seed['name']} 투입(1등 {best['name']} 변형)")
-            if add_lesson:
-                add_lesson(market, f"[생존전] '{worst['persona'][:80]}' 전략은 {sw['n']}건 평균 {sw['avg']:+.2f}% 로 탈락", "AI 생존전")
-        # 🏆 챔피언: 1등이 앞·뒤 절반 모두 플러스
-        ts = best["trades"][-max(min_n, 30):]
-        h = len(ts) // 2
-        if _avg(ts[:h]) > 0 and _avg(ts[h:]) > 0:
-            with _lock:
-                d = load(market)
-                d["champion"] = {"name": best["name"], "persona": best["persona"], "tp": best["tp"], "sl": best["sl"],
-                                 "hold": best["hold"], "t": _now(), **sb}
-                _save(market, d)
-            msg.append(f"🏆 챔피언 {best['name']} ({sb['n']}건 평균 {sb['avg']:+.2f}% · 승률 {sb['win']}%)")
+        alive = sorted(d["alive"], key=lambda a: -score(a)["avg"])
+        q = [a for a in alive if _qualified(a, min_n)][:n_live]
+        old = set(d.get("live") or [])
+        d["live"] = [a["id"] for a in q]
+        best = q[0] if q else None
+        if best:
+            sb = score(best)
+            d["champion"] = {"name": best["name"], "persona": best["persona"], "tp": best["tp"], "sl": best["sl"],
+                             "hold": best["hold"], "t": _now(), **sb}
         else:
-            with _lock:
-                d = load(market)
-                if d.get("champion"):
-                    d["champion"] = None   # 1등이 앞·뒤 모두 플러스가 아니면 챔피언 내림
-                    _save(market, d)
-                    msg.append("🏆 챔피언 내림 (1등 성적이 꾸준하지 않음)")
+            d["champion"] = None
+        _save(market, d)
+    new = [a["name"] for a in q if a["id"] not in old]
+    gone = [a["name"] for a in alive if a["id"] in old and a["id"] not in d["live"]]
+    if q:
+        msg.append("💰 실전 자격: " + ", ".join(f"{i + 1}등 {a['name']}" for i, a in enumerate(q)) + (f" (새로: {', '.join(new)})" if new else ""))
     else:
-        msg.append(f"아직 거래 {min_n}건 넘은 참가자가 {len(ok)}명이라 탈락 판정은 다음 주에")
-    rows = board(market)   # 📣 성적 발표: 전원 순위 (탈락·교체 뒤)
-    rank = [f"{i + 1}. {r['name']}{'' if r['gen'] == 1 else ' (' + str(r['gen']) + '세대)'} — {r['n']}건 평균 {r['avg']:+.2f}% 승률 {r['win']}%"
+        msg.append(f"💰 실전 자격 아직 없음 (거래 {min_n}건↑ · 평균 플러스 · 앞뒤 절반 모두 플러스인 AI 가 나오면)")
+    if gone:
+        msg.append("⬇️ 가상으로: " + ", ".join(gone))
+    if add_lesson and best:
+        add_lesson(market, f"[생존전 1등] '{best['persona'][:80]}' 전략이 {score(best)['n']}건 평균 {score(best)['avg']:+.2f}%", "AI 생존전")
+    rows = board(market)   # 📣 성적 발표: 전원 순위
+    live = set(d["live"])
+    ids = {a["name"]: a["id"] for a in d["alive"]}
+    rank = [f"{i + 1}. {'💰' if ids.get(r['name']) in live else '📘'} {r['name']} — {r['n']}건 평균 {r['avg']:+.2f}% 승률 {r['win']}%"
             + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(rows)]
-    return "🏟️ AI 생존전 주간 성적 발표\n" + "\n".join(rank) + ("\n" + "\n".join(msg) if msg else "")
+    return "🏟️ AI 생존전 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + "\n".join(msg)
 
 
 def overview(market: str) -> dict:
     d = load(market)
-    return {"board": board(market), "champion": d.get("champion"), "dead": d["dead"][-5:], "text": text(market)}
+    return {"board": board(market), "champion": d.get("champion"), "text": text(market)}
 
 
 def ai_json(prompt: str) -> dict | None:

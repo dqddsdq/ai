@@ -247,6 +247,59 @@ def 하루_손실_한도_넘으면_새로_안_삼_정리는_계속(at, picker, t
     assert at.state().get("halted_today"), "정지가 안 걸림"
 
 
+def _arena_setup(live_idx, vote_idx):
+    from engine import arena
+    d = arena.load("US", 3)
+    for i, a in enumerate(d["alive"]):
+        a["trades"] = [{"sym": "X", "day": "D", "ret": 1.0 if i == 0 else -0.5, "why": "t", "mins": 5, "t": ""} for _ in range(30)]
+    d["live"] = [d["alive"][live_idx]["id"]]
+    arena._save("US", d)
+    yes = d["alive"][vote_idx]["id"]
+    arena.ai_json = lambda prompt: {yes: True}
+
+
+def _arena_wait():
+    from engine import arena
+    for _ in range(100):
+        if not arena._pending:
+            return
+        time.sleep(0.05)
+
+
+@case
+def 생존전_상위_AI_가_사면_실전으로(at, picker, tmp):
+    fresh(at, picker, tmp, live_needs_proof=True, lane_surge_mode="paper", arena_size=3)
+    _arena_setup(0, 0)
+    r = at.run_once()
+    assert any("생존전 AI 들이 판단 중" in x for x in r["results"]), r["results"][:8]
+    _arena_wait()
+    at.run_once()
+    buys = [s for s, _ in posted("BUY")]
+    assert buys, ("상위 AI 가 샀는데 실전 주문이 안 나감", at.state().get("events", [])[-3:])
+    assert all(s != "AAPL" for s in buys), "사장님 주식을 건드림"
+    assert set(at.state().get("arena_live_pos") or {}) <= set(buys)
+
+
+@case
+def 생존전_자격_없는_AI_판단은_가상으로만(at, picker, tmp):
+    fresh(at, picker, tmp, live_needs_proof=True, lane_surge_mode="paper", arena_size=3)
+    _arena_setup(0, 1)   # 실전 자격은 0번, 산다고 한 건 1번
+    at.run_once(); _arena_wait(); at.run_once()
+    assert posted("BUY") == [], ("자격 없는 AI 판단으로 실전 주문이 나감", posted("BUY"))
+    from engine import arena
+    arena.ai_json = lambda prompt: None
+
+
+@case
+def 생존전_실전_끄면_실전_주문_없음(at, picker, tmp):
+    fresh(at, picker, tmp, live_needs_proof=True, lane_surge_mode="paper", arena_size=3, arena_live=False)
+    _arena_setup(0, 0)
+    at.run_once(); _arena_wait(); at.run_once()
+    assert posted("BUY") == [], ("생존전 실전을 껐는데 실전 주문이 나감", posted("BUY"))
+    from engine import arena
+    arena.ai_json = lambda prompt: None
+
+
 def main() -> int:
     print("🧪 매매 흐름 시나리오 시험")
     at, picker, tmp, _ = setup()
