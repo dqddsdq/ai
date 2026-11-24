@@ -195,10 +195,47 @@ EXPLORE = 0.15        # 걸러진 구간도 이 확률로 물어봄 (계속 배�
 MISS_PCT = 1.0        # '안 산다' 했는데 이만큼↑ 올랐으면 놓친 기회
 
 
+SPIKE_VOL = 3.0       # ⏱️ 1분봉 거래량이 직전 평균의 이만큼↑ 이면 '거래량 폭발' 시작
+LATE_MIN = 30         #   폭발 뒤 이 분↑ 지나서
+LATE_CHG = 15.0       #   이미 오늘 이 %↑ 올랐으면 '늦은 진입'
+
+
+def spike_minutes(sym: str, now: float | None = None) -> float | None:
+    """⏱️ 오늘 거래량 폭발(1분봉) 시작 뒤 지난 분 — 1분봉 캐시 재사용 · 못 찾으면 None"""
+    try:
+        from . import shadow
+        bs = shadow._bars(sym, 120)
+        now = now or time.time()
+        for i in range(10, len(bs)):
+            ep = shadow._ep(bs[i]["t"])
+            if not ep or now - ep > 400 * 60:   # 오늘 장 밖 봉은 제외
+                continue
+            prev = bs[max(0, i - 20):i]
+            base = sum(x["v"] for x in prev) / len(prev)
+            if base > 0 and bs[i]["v"] >= base * SPIKE_VOL:
+                return round(max(0.0, (now - ep) / 60), 1)
+    except Exception:
+        pass
+    return None
+
+
+def entry_keys(spike_min, chg) -> list[str]:
+    """⏱️ 진입 시점 구간 (폭발 뒤 경과 · 늦은 진입 여부)"""
+    if spike_min is None:
+        return []
+    out = ["폭발 후 " + ("~10분" if spike_min < 10 else "10~30분" if spike_min < LATE_MIN else "30분+")]
+    try:
+        late = spike_min >= LATE_MIN and float(chg) >= LATE_CHG
+    except (TypeError, ValueError):
+        late = False
+    out.append("늦은 진입" if late else "제때 진입")
+    return out
+
+
 def buckets(cd: dict, sit: str = "") -> list[str]:
-    """후보를 묶는 구간 이름들 (상승률·거래량·프리장·상황)"""
+    """후보를 묶는 구간 이름들 (상승률·거래량·프리장·상황·진입 시점)"""
     f = cd.get("features") or {}
-    out = []
+    out = entry_keys(cd.get("spike_min"), f.get("change"))
     try:
         chg = float(f["change"])
         out.append("상승 " + ("~20%" if chg < 20 else "20~40%" if chg < 40 else "40%+"))
@@ -300,7 +337,8 @@ def _probe_tick(d: dict, market: str, quotes: dict, minutes, day: str, now: floa
             continue
         if all(a["id"] in pr["res"] for a in people):
             d.setdefault("graded", []).append({"sym": pr["sym"], "day": pr["day"], "t": _now(), "keys": pr["keys"],
-                                               "votes": pr["votes"], "res": pr["res"]})
+                                               "votes": pr["votes"], "res": pr["res"],
+                                               "spike_min": pr.get("spike_min"), "chg": pr.get("chg")})
             done += 1
         else:
             keep.append(pr)
@@ -343,7 +381,9 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
                 if why:
                     ret = _ret(p["px"], px, market)
                     a["trades"].append({"sym": sym, "day": p.get("day", day), "ret": round(ret, 3), "why": why,
-                                        "mins": round(mins), "t": _now(), "sit": p.get("sit", "")})
+                                        "mins": round(mins), "t": _now(), "sit": p.get("sit", ""),
+                                        "spike_min": p.get("spike_min"), "chg": p.get("chg"),
+                                        "late": "늦은 진입" in entry_keys(p.get("spike_min"), p.get("chg"))})
                     del a["pos"][sym]
                     out.append(f"🏟️ {a['name']} {sym} {why} {ret:+.2f}%")
         changed = _probe_tick(d, market, quotes, minutes, day, now) > 0   # 🧮 '샀다면' 채점 (AI 호출 없음)
@@ -423,7 +463,10 @@ def _ctrl_p(d: dict) -> float:
 def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn) -> None:
     try:
         sit = _situation_now(c, market)
-        keys = buckets(cd, sit)
+        chg = (cd.get("features") or {}).get("change")
+        spk = spike_minutes(sym) if chg is not None else None   # ⏱️ 거래량 폭발 뒤 경과 분 (상승률 있는 후보만)
+        ent = {"spike_min": spk, "chg": chg}   # 산 시점 기록 (늦은 진입 채점용)
+        keys = buckets({**cd, "spike_min": spk}, sit)
         with _lock:
             d = load(market)
             idx = _grade_index(d)
@@ -443,6 +486,8 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
             prompt = ("AI 생존전: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매). "
                       "'내 기록' 은 그 참가자의 지난 판단 결과예요 — 자기 기록에서 지는 패턴이면 피하세요.\n"
                       f"종목 {sym} 현재가 {price} · 구간: {', '.join(keys) or '모름'} · 고른 이유: {cd.get('reason', '')}\n"
+                      + (f"진입 시점: 거래량 폭발 뒤 {spk:.0f}분 · 오늘 {float(chg):+.1f}% (폭발 뒤 {LATE_MIN}분↑ + 오늘 +{LATE_CHG:g}%↑ 면 늦은 진입)\n"
+                         if spk is not None and chg is not None else "")
                       + (f"학습 추정: 승률 {float(e.get('p', 0)) * 100:.0f}% · 기대 수익 {float(e.get('ev', 0)):+.2f}%\n" if e else "")
                       + (f"공유 노트: {notes}\n" if notes else "")
                       + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" + (f" | {a['rec']}" if a["rec"] else "") for a in asked)
@@ -457,11 +502,11 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
             yes = [a["id"] for a in d["alive"] if a["id"] in ids_asked and r.get(a["id"]) is True]
             for a in d["alive"]:
                 if a["id"] in yes and sym not in a["pos"] and len(a["pos"]) < MAX_POS:
-                    a["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit}
+                    a["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit, **ent}
             ctrl = d["ctrl"]   # 🎲 대조군: 같은 후보를 같은 빈도로 무작위 매수
             ctrl_buy = random.random() < _ctrl_p(d)
             if ctrl_buy and sym not in ctrl["pos"] and len(ctrl["pos"]) < MAX_POS:
-                ctrl["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit}
+                ctrl["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit, **ent}
             vs = d["vote_stats"]
             vs["asked"] = int(vs.get("asked", 0)) + len(asked); vs["yes"] = int(vs.get("yes", 0)) + len(yes)
             v = d.setdefault("votes", {})
@@ -471,7 +516,7 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
             # 🧮 채점 시작: 물어본 AI 는 찬반, 걸러진 AI 는 None (구간 성적엔 '샀다면' 으로 들어감)
             votes = {a["id"]: (a["id"] in yes) if a["id"] in ids_asked else None for a in d["alive"]}
             votes["ctrl"] = ctrl_buy
-            d.setdefault("probes", []).append({"sym": sym, "px": price, "t": time.time(), "day": day, "keys": keys, "votes": votes, "res": {}})
+            d.setdefault("probes", []).append({"sym": sym, "px": price, "t": time.time(), "day": day, "keys": keys, "votes": votes, "res": {}, **ent})
             if skipped:
                 sv = d.setdefault("saved", {})
                 if sv.get("day") != day:
@@ -711,6 +756,10 @@ def _brief_core(a: dict, ctrl_avg: float, hl: float) -> str:
     mins = round(st.mean(t.get("mins", 0) for t in ts)) if ts else 0
     sits = " · ".join(f"{k} {v['n']}건 {v['avg']:+.2f}%" for k, v in sorted(sit_stats(a, hl).items(), key=lambda x: -x[1]["n"])[:4])
     habits = " / ".join(a.get("habits") or [])
+    late = [t for t in ts if t.get("late") is True]   # ⏱️ 늦은 진입 vs 제때 진입 성적
+    ontime = [t for t in ts if t.get("late") is False and t.get("spike_min") is not None]
+    if late or ontime:
+        sits += (" · " if sits else "") + " · ".join(f"{nm} {len(g)}건 {_avg(g):+.2f}%" for nm, g in (("늦은 진입", late), ("제때 진입", ontime)) if g)
     return (f"- {a['id']} ({a['name']}) 성격: {a['persona']}\n"
             f"  지금 규칙: 익절 {a['tp']}% 손절 {a['sl']}% 최대 {a['hold']}분" + (f" · 스스로 정한 규칙: {habits}" if habits else "") + "\n"
             f"  성적: {sc['n']}건 · 최근 평균 {sc['wavg']:+.2f}% · 승률 {sc['win']}% · 대조군 대비 {sc['wavg'] - ctrl_avg:+.2f}%p · 평균 보유 {mins}분\n"
