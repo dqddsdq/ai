@@ -552,7 +552,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="lab-shadow" class="tlog" style="margin-top:8px"></div>
         <div id="lab-bt-out" class="tlog" style="margin-top:8px"></div>
       </div>
-      <div class="card" data-tt="log"><b>📚 학습·복기</b> <button class="btn" id="trade-weekend" style="float:right;padding:3px 10px;margin-left:6px">📚 지금 공부하기</button><button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
+      <div class="card" data-tt="log"><b>📚 학습·복기</b> <button class="btn" id="notes-council" style="float:right;padding:3px 10px;margin-left:6px;font-size:12px">📒 지금 노트 정리</button><button class="btn" id="trade-weekend" style="float:right;padding:3px 10px;margin-left:6px">📚 지금 공부하기</button><button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
         <div id="learn-today" style="margin-top:6px;font-size:13.5px"></div>
         <div id="learn-props" style="margin-top:8px"></div>
         <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13.5px">최근 복기 자세히</summary><div id="learn-review" class="tlog" style="margin-top:6px"></div></details>
@@ -648,6 +648,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 생존전 (성격 다른 AI 들이 같은 후보를 각자 판단 · 토요일 아침 성적 발표)</label>
         <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수<input id="t-arena_ai_per_day" type="number"></label><label>실전 자격 최소 거래<input id="t-arena_min_trades" type="number"></label><label>실전 자격 인원 (0~5)<input id="t-arena_live_n" type="number"></label><label>실전 예산 중 생존전 몫(%)<input id="t-arena_live_pct" type="number"></label><label>🎲 대조군보다 나아야 할 폭 (%p)<input id="t-arena_ctrl_margin" type="number" step="0.1"></label><label>⏳ 성적 반감 일수 (이만큼 지나면 절반 무게)<input id="t-arena_half_life_days" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_live"> 💰 상위 AI(거래 충분·평균 플러스·앞뒤 절반 모두 플러스)가 '산다'고 하면 실전 매수 — 나머지는 가상으로 공부 (실전 모드일 때만 · 현금만·봇 장부·손실 한도 그대로)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-notes_council"> 📒 주말 공부 끝에 AI 셋이 회의해서 공유 노트 정리 (다수 동의한 것만 핵심 노트 · 원본 보관 · 채팅에서 되돌리기)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_voice"> 🗣️ 생존전 AI 가 의견이 생기면 바로 채팅으로 (거래가 쌓이거나 연속 손실일 때 물어봄 · 할 말 없으면 안 옴 · 적용은 직접)</label>
         <div class="trade-grid"><label>의견 물어볼 거래 간격 (건)<input id="t-arena_voice_every" type="number"></label><label>하루 최대 의견 수 (AI 한 명은 하루 1번)<input id="t-arena_voice_per_day" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_promote"> 🏆 1등 전략을 2호 급등주 AI 판단에도 참고로</label>
@@ -1452,7 +1453,7 @@ async function renderToolsPage() {
 // ── 자동매매 ──
 const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day", "arena_min_trades", "arena_live_n", "arena_live_pct", "arena_ctrl_margin", "arena_half_life_days", "arena_voice_every", "arena_voice_per_day","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades", "regime_half_pct", "regime_stop_pct", "max_per_sector", "live_quality_change", "live_quality_ratio", "live_proof_n", "time_stop_min", "time_stop_up_pct", "stop_slip_pct", "surge_min_change_regular", "surge_buy_cutoff_min"];
-const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_voice", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
+const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_voice", "notes_council", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 // 🏟️ 생존전 표: 순위 · 실전/가상 · 대조군 대비 · 비중 · 상황별
 function arenaHtml(ar) {
@@ -1474,6 +1475,12 @@ function arenaHtml(ar) {
     + `<div class="ar-head muted">🧭 지금 상황: <b>${esc(ar.situation || "장 밖")}</b> · 🎲 대조군은 후보의 ${ar.ctrl_p ?? 35}% 를 무작위로 삼</div>`
     + rows.map(row).join("") + (ctrl ? row(ctrl) : "");
 }
+$("#notes-council").onclick = async () => {   // 📒 노트 정리 회의 지금
+  const b = $("#notes-council"); b.disabled = true;
+  try { const r = await api("/api/autotrade/notes-council", {}); b.textContent = r.ok ? "📒 회의 중… (채팅으로 와요)" : "📒 " + (r.message || "실패"); if (r.ok) setTimeout(loadConvs, 180000); }
+  catch (e) { b.textContent = "📒 요청 실패"; }
+  setTimeout(() => { b.disabled = false; b.textContent = "📒 지금 노트 정리"; }, 20000);
+};
 $("#arena-voice").onclick = async () => {   // 🗣️ 생존전 AI 의견 지금 받기
   const b = $("#arena-voice"), o = $("#arena-voice-out"); b.disabled = true;
   try { const r = await api("/api/autotrade/arena-voice", {}); o.textContent = r.message || (r.ok ? "요청했어요" : "실패했어요"); if (r.ok) setTimeout(loadConvs, 90000); }
@@ -1539,7 +1546,7 @@ async function renderTrade(fillForm = true) {
   $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
   renderLearn(d.learn || {});
   renderLab(d.lab || {});
-  renderLanes(d.lanes || {}, d.lessons || [], d.halted_lane || {});
+  renderLanes(d.lanes || {}, d.lessons || [], d.halted_lane || {}, d.notes_core || {});
   $("#trade-weekend").onclick = async () => { const r = await api("/api/autotrade/weekend", { market: tradeMk() }); alert(r.message); };
   $("#scorecard").textContent = (d.scorecard || {}).text || "아직 기록 없음";
   const ar = d.arena || {}, ch = ar.champion;
@@ -1592,11 +1599,19 @@ function tradeActionCard(a, container) {
   el.querySelector('[data-a="ok"]').onclick = () => send(false);
   el.querySelector('[data-a="no"]').onclick = () => send(true);
 }
-function renderLanes(L, lessons, halted) {
+function renderLanes(L, lessons, halted, core) {
   const modeKo = { live: "🔴 실전", paper: "📝 가상", off: "⏸️ 쉼" };
   $("#lanes").innerHTML = Object.entries(L).map(([st, v]) => `<div class="chk" style="margin-bottom:4px"><b>${esc(v.name)}</b> ${modeKo[v.mode] || v.mode}${v.mode === "live" && !v.live ? ' <span class="muted">(전체 모드가 실전이 아니라 지금은 가상)</span>' : ""} · 예산 몫 ${v.share}%
     · 최근 ${v.days}일 ${v.n || 0}건${v.n ? ` · 승률 ${v.win_rate}% · 평균 ${v.avg > 0 ? "+" : ""}${v.avg}% · 합 ${v.sum > 0 ? "+" : ""}${v.sum}%` : ""}${v.n_paper ? ` <span class="muted">(가상 ${v.n_paper}건)</span>` : ""}${halted[st] ? ` <span class="tb">⛔ 오늘 정지</span>` : ""}</div>`).join("")
     || `<div class="muted">아직 기록 없음</div>`;
+  if ((core?.items || []).length) {   // 📒 노트 정리 회의가 합의한 핵심 노트 + 그 뒤 새 교훈
+    const newer = lessons.filter(x => (x.t || "") > (core.t || ""));
+    $("#lessons").innerHTML = `<div><b>📒 핵심 노트</b> <span class="muted">(${esc((core.t || "").slice(5, 16))} 노트 정리 회의 합의 · 교훈 ${core.n_src || "?"}개 → ${core.items.length}개 · AI 들이 판단할 때 읽음)</span></div>`
+      + core.items.map((x, i) => `<div>${i + 1}. ${esc(x.text)} <span class="muted">찬성 ${esc(x.votes || "")}${x.evidence ? " · " + esc(x.evidence) : ""}</span></div>`).join("")
+      + ((core.split || []).length ? `<div class="muted">⚖️ 의견 갈림 ${core.split.length}개 (핵심 노트엔 안 넣음): ${core.split.map(x => esc(x.text)).join(" / ")}</div>` : "")
+      + (newer.length ? `<div><b>그 뒤 새 교훈</b></div>` + newer.map(x => `<div>${esc(x.t.slice(5, 16))} ${esc(x.text)}</div>`).join("") : "");
+    return;
+  }
   $("#lessons").innerHTML = lessons.length ? `<div><b>📒 공유 노트</b> <span class="muted">(교차 복기 교훈 · 두 AI 가 판단할 때 같이 읽음)</span></div>` + lessons.map(x => `<div>${esc(x.t.slice(5, 16))} ${esc(x.text)}</div>`).join("") : `<div class="muted">📒 공유 노트: 첫 교차 복기(장 마감 후) 뒤에 생겨요</div>`;
 }
 function renderLab(L) {

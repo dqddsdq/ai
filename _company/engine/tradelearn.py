@@ -802,7 +802,47 @@ def lessons(market: str | None = None, n: int = 10) -> list[dict]:
 
 
 def lessons_text(market: str | None, n: int = 6) -> str:
+    """AI 들이 판단할 때 읽는 공유 노트.
+    📒 노트 정리 회의가 합의한 핵심 노트가 있으면: 핵심 노트(중요한 순) 앞 n개 + 그 뒤 새로 생긴 교훈 몇 개
+    없으면: 최근 교훈 n개"""
+    c = core(market) if market else {}
+    if c.get("items"):
+        newer = [x for x in lessons(market, 50) if x.get("t", "") > c.get("t", "")][: max(1, n // 3)]
+        return " / ".join([x["text"] for x in c["items"][:n]] + [x["text"] for x in newer[::-1]])
     return " / ".join(x["text"] for x in lessons(market, n)[::-1])
+
+
+# ── 📒 핵심 노트 (노트 정리 회의 합의본 · 원본 교훈은 그대로 보관) ──
+CORE = COMPANY_DIR / "_cache" / "notes_core.json"
+
+
+def core(market: str) -> dict:
+    """{"t": 정리한 시각, "items": [{"text", "from", "evidence", "votes"}], ...} — 없으면 {}"""
+    with _lock:
+        return (store.load(CORE, lambda: {}).get(market) or {}).get("cur") or {}
+
+
+def set_core(market: str, items: list[dict], **meta) -> None:
+    with _lock:
+        d = store.load(CORE, lambda: {})
+        slot = d.setdefault(market, {})
+        if slot.get("cur"):
+            slot["prev"] = slot["cur"]
+        slot["cur"] = {"t": _now(), "items": items, **meta}
+        store.save(CORE, d)
+
+
+def undo_core(market: str) -> dict:
+    """마지막 정리 되돌리기 (그 전 핵심 노트로 · 없으면 핵심 노트 없이 최근 교훈으로)"""
+    with _lock:
+        d = store.load(CORE, lambda: {})
+        slot = d.get(market) or {}
+        if not slot.get("cur"):
+            return {"ok": False, "message": "되돌릴 정리가 없어요"}
+        slot["cur"], slot["prev"] = slot.get("prev"), None
+        d[market] = slot
+        store.save(CORE, d)
+    return {"ok": True, "message": "노트 정리를 되돌렸어요" + ("" if slot["cur"] else " (이제 최근 교훈을 그대로 읽어요)")}
 
 
 def last_review_text(mode: str, market: str | None = None) -> str:

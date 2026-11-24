@@ -122,7 +122,7 @@ def setup():
     picker.us_symbols = lambda log=print: list(U)
     picker._base_file = lambda m: tmp / f"base_{m}.json"
     at.CONFIG, at.STATE = tmp / "c.json", tmp / "s.json"
-    tl.FILE, tl.LESSONS = tmp / "j.json", tmp / "l.json"
+    tl.FILE, tl.LESSONS, tl.CORE = tmp / "j.json", tmp / "l.json", tmp / "core.json"
     shadow._file = lambda m: tmp / f"sh_{m}.json"
     extras.RULE_LOG, extras.GATE_FILE = tmp / "rule.json", tmp / "gate.json"
     extras.index_change = lambda m: 0.0
@@ -441,6 +441,59 @@ def 채팅_답변_중에_온_생존전_의견이_안_사라짐(at, picker, tmp):
         assert texts[-1] == "답변" and any(t == "왜?" for t in texts), texts
     finally:
         ag.SESSIONS_DIR, arena_voice._file = old_sd, old_vf
+
+
+@case
+def 노트_정리_회의는_서로_의견을_주고받고_다수가_동의한_것만_핵심_노트로(at, picker, tmp):
+    fresh(at, picker, tmp)
+    from engine import agents as ag, notes_council as nc, tradelearn as tl, web
+    for i in range(8):
+        tl.add_lesson("US", f"교훈 {i}: 기대값 마이너스면 진입 보류", "시험")
+    calls = []
+
+    def fake(role, prompt):
+        calls.append(role)
+        if role == "editor" and "반대 의견" not in prompt:   # ① 초안
+            return {"notes": [{"id": "N1", "text": "기대값 마이너스면 진입 보류", "from": ["L1", "L2", "L3"], "evidence": "음수 기대 20건 평균 -2.1%"},
+                              {"id": "N2", "text": "느낌 좋으면 크게 산다", "from": ["L4"]},
+                              {"id": "N3", "text": "장 초반 30분은 금액 절반", "from": ["L5"]}], "drop": [{"from": ["L6"], "why": "중복"}], "comment": "초안"}
+        if role == "editor":   # ③ 반대 반영 — N3 를 구체적으로 고침
+            assert "느낌 좋으면" in prompt and "근거 없음" in prompt, "정리 담당이 반대 의견을 못 받음"
+            return {"notes": [{"id": "N1", "text": "기대값 마이너스면 진입 보류", "from": ["L1"]},
+                              {"id": "N2", "text": "느낌 좋으면 크게 산다", "from": ["L4"]},
+                              {"id": "N3", "text": "정규장 시작 30분은 금액 50%", "from": ["L5"]}], "comment": "N3 고침, N2 는 유지"}
+        revised = "정규장 시작 30분" in prompt
+        if role == "skeptic":
+            return {"votes": {"N1": {"ok": True, "why": "숫자 있음"}, "N2": {"ok": False, "why": "근거 없음"},
+                              "N3": {"ok": revised, "why": "구간 애매" if not revised else "좋음", "fix": "정규장 시작 30분으로"}}, "comment": "N2 반대"}
+        if role == "trader":
+            if not revised:
+                assert "🔍 검증 담당 의견" in prompt, "현장 담당이 검증 담당 말을 못 봄 (대화 아님)"
+            return {"votes": {"N1": {"ok": True}, "N2": {"ok": False, "why": "실행 불가"}, "N3": {"ok": revised}}, "comment": "동의"}
+
+    old_sd = ag.SESSIONS_DIR
+    ag.SESSIONS_DIR = tmp / "sessions3"
+    try:
+        r = nc.run_and_post(at.config(), "US", ai_fn=fake)
+        assert r["ok"], r
+        assert calls.count("editor") == 2 and calls.count("skeptic") == 2, calls   # 초안 → 투표 → 고침 → 다시 투표
+        texts = [n["text"] for n in r["agreed"]]
+        assert texts == ["기대값 마이너스면 진입 보류", "정규장 시작 30분은 금액 50%"], texts
+        assert [n["text"] for n in r["split"]] == ["느낌 좋으면 크게 산다"], "둘 다 반대한 건 핵심 노트에서 빠져야 함"
+        notes = tl.lessons_text("US", 6)
+        assert "정규장 시작 30분" in notes and "느낌 좋으면" not in notes, notes
+        assert len(tl.lessons("US", 80)) == 8, "원본 교훈이 지워짐"
+        conv = web.load_conv(r["conversation_id"])
+        assert len(conv["messages"]) >= 6, len(conv["messages"])   # 안내 + 초안 + 투표 2 + 고침 + 투표 2 + 결과
+        card = conv["messages"][-1]["trade_actions"][0]
+        assert card["type"] == "notes_undo"
+        assert at.apply_action(card)["ok"] and not tl.core("US"), "되돌리기가 안 됨"
+    finally:
+        ag.SESSIONS_DIR = old_sd
+    # 교훈이 적으면 회의 안 함
+    fresh(at, picker, tmp)
+    tl.add_lesson("US", "하나뿐", "시험")
+    assert not nc.run(at.config(), "US", ai_fn=fake)["ok"]
 
 
 @case

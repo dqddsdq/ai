@@ -286,6 +286,9 @@ class Handler(BaseHTTPRequestHandler):
             if not c.get("arena_on"):
                 return self._json({"ok": False, "message": "AI 생존전이 꺼져 있어요"})
             return self._json(arena_voice.run_bg(c, at.markets()))
+        if path == "/api/autotrade/notes-council":   # 📒 노트 정리 회의 지금 (뒤에서 · 채팅으로 옴)
+            from . import notes_council
+            return self._json(notes_council.run_bg(at.config(), at.markets()))
         if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
             return self._json(at.unhalt())
         if path == "/api/autotrade/review":

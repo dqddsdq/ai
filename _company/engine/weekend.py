@@ -163,6 +163,12 @@ def run(log=print) -> dict:
                 except Exception as e:
                     r["score"] = f"성적표 실패 {type(e).__name__}"
                 r["ai"] = _ai_review(m, r)
+                if at.config().get("notes_council", True):   # 📒 이번 주 교훈까지 넣고 AI 셋이 회의해서 공유 노트 정리
+                    try:
+                        from . import notes_council
+                        r["notes"] = notes_council.run_and_post(at.config(), m, log=log).get("message", "")
+                    except Exception as e:
+                        r["notes"] = f"노트 정리 실패: {type(e).__name__}"
                 store.save(_file(f"weekend_{m}.json"), {"t": datetime.now(KST).isoformat(timespec="seconds"), **r})
                 out[m] = r
                 flag = "🇺🇸 미장" if m == "US" else "🇰🇷 국장"
@@ -173,7 +179,7 @@ def run(log=print) -> dict:
                        + (f"\n{r['fixloop']}" if r.get("fixloop") else "") + (" (그림자에 추가)" if r.get("fix_seed") else "")
                        + (f"\n📈 {pt}" if pt else "") + (f"\n{r['arena']}" if r.get("arena") else "")
                        + (f"\n🔎 놓친 종목 {ms['missed']['n']}개 평균 최고 {ms['missed']['up_avg']:+.1f}% vs 산 종목 {ms['bought']['n']}개 {ms['bought'].get('up_avg', 0):+.1f}%" if ms["missed"].get("n") else "")
-                       + (f"\n🤖 {r['ai']}" if r.get("ai") else ""))
+                       + (f"\n🤖 {r['ai']}" if r.get("ai") else "") + (f"\n📒 {r['notes']}" if r.get("notes") else ""))
                 notify.send(msg[:3500])
                 at.event("주말 공부", msg[:400])
         _mark_done()
