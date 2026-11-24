@@ -118,7 +118,7 @@ VOTE_FMT = '{"votes": {"N1": {"ok": true, "why": "한 줄", "fix": "이렇게 �
 def run(c: dict, market: str, ai_fn=None, log=print) -> dict:
     """회의 한 번. 결과 + 대화 기록(turns). 합의된 게 있으면 핵심 노트로 저장"""
     ask = ai_fn or _ask
-    src = tl.lessons(market, 80)[::-1]   # 오래된 → 최근
+    src = [x for x in tl.lessons(market, 80)[::-1] if x.get("kind") != "owner_ref"]   # 오래된 → 최근 · 사장님 참고 의견은 핵심 노트로 안 올림
     if len(src) < MIN_LESSONS:
         return {"ok": False, "message": f"교훈이 {len(src)}개라 아직 정리할 만큼 안 쌓였어요 ({MIN_LESSONS}개부터)", "turns": []}
     ids = {f"L{i + 1}": x for i, x in enumerate(src)}

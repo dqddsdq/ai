@@ -574,6 +574,13 @@ class Handler(BaseHTTPRequestHandler):
                                                        if pv.claude_cli() else pv.LOGIN_HELP))})
         cid = body.get("conversation_id")
         conv = load_conv(cid) if cid else new_conv(text)
+        try:   # 🗣️ '1호야 …' · '@눌림목 …' 처럼 AI 를 부르면 그 AI 가 읽기 전용으로 답함
+            from . import ai_ask
+            who = ai_ask.match(text)
+        except Exception:
+            who = None
+        if who:
+            return self._ask_ai(conv, who, text, body)
         agent_id = ag.TRADER
         override = body.get("model") or None
         conv["agent"] = agent_id
@@ -637,6 +644,56 @@ class Handler(BaseHTTPRequestHandler):
                                             "steps": t.get("steps", []), "tool_status": tl.status(t) if t else ""})
         save_conv_merged(conv, base)   # 답변 만드는 사이 붙은 🗣️ 생존전 의견 등은 살림
         log("  ✅ 답변 완료")
+        LIVE.pop(conv["id"], None)
+        self._live = None
+        self._send("done", {"conversation_id": conv["id"]})
+
+    def _ask_ai(self, conv: dict, who: dict, text: str, body: dict):
+        """🗣️ 지정한 AI(1호·2호·생존전) 이름으로 답 — 읽기 전용: [적용] 카드·개선 제안·도구 요청 안 만듦"""
+        from . import ai_ask
+        agent_id = ag.TRADER
+        conv["agent"] = agent_id
+        spec = pv.parse_model(body.get("model") or ag.Agent(agent_id).model_spec())
+        log(f"💬 🗣️ {who['name']} 에게: {text[:40]}")
+        history = chat_history(conv)[-8:]
+        while history and history[0]["role"] != "user":   # 첫 메시지는 사용자 것이어야 함
+            history.pop(0)
+        if history and history[-1]["role"] == "user":
+            history[-1]["content"] += "\n\n" + text
+        else:
+            history.append({"role": "user", "content": text})
+        base = len(conv["messages"])
+        conv["messages"].append({"role": "user", "content": text, "images": []})
+        base = save_conv_merged(conv, base)
+        self._live = LIVE.setdefault(conv["id"], {})
+        self._live.clear(); self._live.update(text="", status=f"{who['name']} 답변 준비 중", t=time.time(), done=False, started=time.time())
+        self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
+                            "model": str(spec), "reason": "", "sources": [], "team": 1, "router_model": "", "member_model": ""})
+        ok, used = ai_ask.take()
+        head = f"**🗣️ {who['name']}** · 읽기 전용 답변 (오늘 AI 지정 질문 {used}/{ai_ask.ASK_PER_DAY})\n\n"
+        if not ok:
+            reply = (f"**🗣️ {who['name']}**\n\n오늘 AI 지정 질문 한도({ai_ask.ASK_PER_DAY}번)를 다 썼어요. "
+                     "내일 다시 물어보시거나, AI 이름 없이 물으면 자동매매 팀이 답해요.")
+        else:
+            self._send("status", {"text": f"🗣️ {who['name']} 기록 모으는 중..."})
+            self._send("delta", {"text": head})
+            try:
+                system = ai_ask.system_prompt(who)
+                ans = pv.chat(spec, system, history, on_text=lambda t: self._send("delta", {"text": t}),
+                              effort=body.get("effort") or "low", on_activity=lambda a: self._send("activity", a))
+            except BaseException:
+                ai_ask.refund()   # 실패는 한도로 안 셈
+                raise
+            reply = head + ans.strip()
+        note = ai_ask.save_opinion(who, text)
+        if note:
+            reply += f"\n\n📒 공유 노트에 기록했어요 (참고용 · 규칙은 안 바뀜): {note}"
+            log(f"  📒 {note[:60]}")
+        self._send("replace", {"text": reply})
+        conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id, "model": str(spec), "sources": [],
+                                 "drafts": [], "steps": [], "asked_ai": who["name"]})
+        save_conv_merged(conv, base)
+        log("  ✅ 답변 완료 (읽기 전용)")
         LIVE.pop(conv["id"], None)
         self._live = None
         self._send("done", {"conversation_id": conv["id"]})

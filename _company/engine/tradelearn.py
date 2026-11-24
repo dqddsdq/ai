@@ -795,6 +795,16 @@ def add_lesson(market: str, text: str, by: str = "") -> None:
         pass
 
 
+def add_owner_note(market: str, text: str, to: str) -> str:
+    """💬 사장님 참고 의견 — 검증 전이라 '교훈'과 구분해서 공유 노트에만 (팀 기억엔 안 넣음). 기록한 문구 반환"""
+    line = f"💬 사장님 참고 의견(→{to[:20]}, 검증 전): {text.strip()[:240]}"
+    with _lock:
+        d = store.load(LESSONS, lambda: {"items": []})
+        d["items"] = (d["items"] + [{"t": _now(), "market": market, "text": line, "by": "owner", "kind": "owner_ref"}])[-200:]
+        store.save(LESSONS, d)
+    return line
+
+
 def lessons(market: str | None = None, n: int = 10) -> list[dict]:
     with _lock:
         items = store.load(LESSONS, lambda: {"items": []}).get("items", [])
