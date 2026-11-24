@@ -444,6 +444,65 @@ def 채팅_답변_중에_온_생존전_의견이_안_사라짐(at, picker, tmp):
 
 
 @case
+def 제안_현황은_대기_적용_바꾼_뒤_성적을_모으고_하루_한_번만_보내고_노트는_안_건드림(at, picker, tmp):
+    fresh(at, picker, tmp)
+    from engine import agents as ag, digest, improve as im, notify, tradelearn as tl, web
+    old = (ag.SESSIONS_DIR, im.HISTORY, digest.SENT, notify.send)
+    sent = []
+    ag.SESSIONS_DIR, im.HISTORY, digest.SENT = tmp / "sessions4", tmp / "imp.json", tmp / "sent.json"
+    notify.send = lambda t: sent.append(t)
+    try:
+        conv = web.new_conv("시험 대화"); conv["id"] += "-dg"
+        conv["messages"].append({"role": "assistant", "content": "x", "trade_actions": [
+            {"id": "a1", "type": "set", "label": "손절(%): 4 → 5"}, {"id": "a2", "type": "set", "label": "끝난 카드", "status": "applied"}]})
+        web.save_conv(conv)
+        im.create("상황별 성적 차트", "시험", "trader")
+        n_lessons = len(tl.lessons("US", 80))
+        assert at.apply_action({"type": "set", "param": "stop_loss_pct", "value": "5", "label": "손절(%): 4 → 5"})["ok"]   # 사장님이 카드 적용
+        d = digest.collect("US")
+        assert [x["label"] for x in d["pending"]["cards"]] == ["손절(%): 4 → 5"], d["pending"]["cards"]
+        assert len(d["pending"]["code"]) == 1
+        assert any("사장님 적용" in x and "손절" in x for x in d["applied"]), d["applied"]
+        t = digest.text("US", d)
+        assert "대기 2개" in t and "손절(%): 4 → 5" in t, t
+        digest.send("US"); digest.send("US")
+        assert len(sent) == 1, "하루 두 번 보냄"
+        assert len(tl.lessons("US", 80)) == n_lessons, "요약이 공유 노트에 들어감"
+    finally:
+        ag.SESSIONS_DIR, im.HISTORY, digest.SENT, notify.send = old
+
+
+@case
+def 큰_기록을_쓰는_동안에도_다른_기록은_안_기다리고_옛_내용이_새_내용을_안_덮음(at, picker, tmp):
+    from engine import store
+    big, small = tmp / "big.json", tmp / "small.json"
+    orig = store.write_text
+    gate, entered = threading.Event(), threading.Event()
+
+    def slow(path, text):
+        if path == big and '"v":1' in text:   # 첫 큰 저장만 멈춰 둠
+            entered.set(); gate.wait(5)
+        orig(path, text)
+    store.write_text = slow
+    try:
+        store.save(big, {"v": 0})
+        th = threading.Thread(target=store.save, args=(big, {"v": 1})); th.start()
+        assert entered.wait(5)
+        t0 = time.time()
+        store.save(small, {"x": 1})                      # 다른 파일은 안 기다림
+        assert time.time() - t0 < 1, "큰 파일 쓰는 동안 다른 기록 저장이 막힘"
+        assert store.load(big)["v"] == 1, "쓰는 중엔 메모리의 새 내용을 줘야 함"
+        th2 = threading.Thread(target=store.save, args=(big, {"v": 2})); th2.start()
+        time.sleep(0.2)
+        gate.set(); th.join(5); th2.join(5)
+        assert json.loads(big.read_text(encoding="utf-8"))["v"] == 2, "옛 내용이 새 내용을 덮음"
+        assert store.load(big)["v"] == 2
+    finally:
+        store.write_text = orig
+        gate.set()
+
+
+@case
 def 노트_정리_회의는_서로_의견을_주고받고_다수가_동의한_것만_핵심_노트로(at, picker, tmp):
     fresh(at, picker, tmp)
     from engine import agents as ag, notes_council as nc, tradelearn as tl, web
@@ -494,6 +553,25 @@ def 노트_정리_회의는_서로_의견을_주고받고_다수가_동의한_�
     fresh(at, picker, tmp)
     tl.add_lesson("US", "하나뿐", "시험")
     assert not nc.run(at.config(), "US", ai_fn=fake)["ok"]
+
+
+@case
+def 생존전_AI_id_는_안_겹치고_예전에_겹친_것도_고쳐짐(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=10)
+    from engine import arena, store
+    for _ in range(5):   # 같은 순간에 10명 만들어도 안 겹침
+        (tmp / "arena_US.json").unlink(missing_ok=True); store._cache.clear()
+        ids = [a["id"] for a in arena.load("US", 10)["alive"]]
+        assert len(set(ids)) == 10, ids
+    d = arena.load("US", 10)
+    d["alive"][8]["id"] = d["alive"][7]["id"]; d["alive"][8]["trades"] = [{"ret": 1.0}]
+    arena._save("US", d); store._cache.clear()
+    d2 = arena.load("US")
+    ids = [a["id"] for a in d2["alive"]]
+    assert len(set(ids)) == 10, ("겹친 id 가 안 고쳐짐", ids)
+    assert d2["alive"][8]["trades"] == [{"ret": 1.0}], "고치면서 거래 기록이 사라짐"
+    store._cache.clear()
+    assert [a["id"] for a in arena.load("US")["alive"]] == ids, "다시 읽으니 id 가 또 바뀜"
 
 
 @case

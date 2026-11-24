@@ -28,6 +28,7 @@ import re
 import statistics as st
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import store
@@ -73,7 +74,7 @@ def _now() -> str:
 
 
 def _new(seed: dict, gen: int = 1, parent: str = "") -> dict:
-    return {"id": f"a{int(time.time() * 1000) % 10**9}{random.randint(10, 99)}", "name": seed["name"], "persona": seed["persona"],
+    return {"id": "a" + uuid.uuid4().hex[:11], "name": seed["name"], "persona": seed["persona"],   # 같은 순간에 여럿 만들어도 안 겹치게
             "tp": float(seed["tp"]), "sl": float(seed["sl"]), "hold": int(seed["hold"]), "gen": gen, "parent": parent,
             "born": _now(), "pos": {}, "trades": []}
 
@@ -84,6 +85,15 @@ def load(m: str, size: int | None = None) -> dict:
     if not d.get("ctrl"):
         d["ctrl"] = {**_new(CTRL_SEED), "id": "ctrl", "ctrl": True}
     d.setdefault("vote_stats", {"asked": 0, "yes": 0})
+    seen_ids: set = set()
+    fixed = False
+    for a in d["alive"]:   # 예전 방식(밀리초+두 자리)으로 만든 id 가 겹친 참가자 고치기 — 겹치면 AI 판단·투표가 섞임
+        if a["id"] in seen_ids:
+            a["id"] = "a" + uuid.uuid4().hex[:11]
+            fixed = True
+        seen_ids.add(a["id"])
+    if fixed:   # 바로 저장해야 다시 읽어도 같은 id
+        store.save(_file(m), d)
     used = {a["name"] for a in d["alive"]} | {x["name"] for x in d["dead"]}   # 탈락한 전략은 다시 안 들어옴
     for s in SEEDS if size else []:
         if len(d["alive"]) >= size:

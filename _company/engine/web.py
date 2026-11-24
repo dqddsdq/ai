@@ -349,6 +349,15 @@ class Handler(BaseHTTPRequestHandler):
                 "models": [{"label": l, "value": v} for l, v in MODEL_CHOICES],
                 "company": "자동매매 AI", "team_mode": "off",
             })
+        if path == "/api/autotrade/digest":   # 📋 제안 현황 (읽기 전용)
+            from . import digest
+            out = {}
+            for m in at.markets():
+                try:
+                    out[m] = digest.text(m)
+                except Exception as e:
+                    out[m] = f"제안 현황을 못 만들었어요 ({type(e).__name__})"
+            return self._json(out)
         if path == "/api/conversations":
             return self._json(list_convs())
         m = re.match(r"^/api/conversations/([\w\-]+)/live$", path)
@@ -908,6 +917,14 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n종료")
+        print("\n종료 — 기록 저장 중...")
+        try:   # 그림자 매매는 3분마다만 쓰므로 끌 때 남은 것 저장
+            from . import shadow, store
+            shadow.flush()
+            left = store.flush()
+            if left:
+                print("⚠️ 못 쓴 기록:", ", ".join(left))
+        except Exception as e:
+            print(f"⚠️ 기록 저장 실패: {type(e).__name__}: {e}")
     finally:
         server.server_close()
