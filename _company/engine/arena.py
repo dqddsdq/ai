@@ -225,7 +225,13 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
                 break
             calls += 1; seen.append(s); start.append(s)
         d["calls"][day] = calls
+        due = voice_due(c, d, day) if out else {}
         _save(market, d)
+    if due and _voice:   # 🗣️ 의견 생긴 AI → 뒤에서 물어보고 바로 채팅으로
+        try:
+            _voice(c, market, due)
+        except Exception:
+            pass
     for s in start:
         _pending[f"{market}:{s}"] = now
         threading.Thread(target=_decide, args=(c, market, s, cands[s], float(quotes[s]), day, ai_fn),
@@ -265,7 +271,9 @@ def _ctrl_p(d: dict) -> float:
 def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn) -> None:
     try:
         with _lock:
-            alive = [{"id": a["id"], "name": a["name"], "persona": a["persona"]} for a in load(market)["alive"]]
+            alive = [{"id": a["id"], "name": a["name"],
+                      "persona": a["persona"] + (f" (스스로 정한 규칙: {' / '.join(a['habits'])})" if a.get("habits") else "")}
+                     for a in load(market)["alive"]]
         e = cd.get("est") or {}
         notes = _notes(market)
         prompt = ("AI 생존전: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매).\n"
@@ -498,6 +506,161 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
             + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(x for x in rows if not x["ctrl"])]
     ctrl_line = f"🎲 무작위 대조군 — {ctrl_sc['n']}건 최근 평균 {ctrl_sc['wavg']:+.2f}% 승률 {ctrl_sc['win']}% (이보다 나아야 실력)"
     return "🏟️ AI 생존전 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + ctrl_line + "\n" + "\n".join(msg)
+
+
+# ── 🗣️ AI 개개인의 의견 (공부한 뒤 사장님께 개선안) ──
+RULE_BOUNDS = {"tp": (0.5, 30.0), "sl": (0.5, 20.0), "hold": (5, 390)}
+MAX_HABITS = 3   # AI 마다 스스로 정한 규칙 최대 개수 (판단할 때 성격 뒤에 붙음)
+
+
+def _brief(a: dict, ctrl_avg: float, hl: float) -> str:
+    """의견 쓸 때 볼 자기 성적 요약 한 덩어리"""
+    sc = score(a, half_life=hl)
+    ts = a["trades"][-30:]
+    whys: dict[str, int] = {}
+    for t in ts:
+        whys[t.get("why", "?")] = whys.get(t.get("why", "?"), 0) + 1
+    mins = round(st.mean(t.get("mins", 0) for t in ts)) if ts else 0
+    sits = " · ".join(f"{k} {v['n']}건 {v['avg']:+.2f}%" for k, v in sorted(sit_stats(a, hl).items(), key=lambda x: -x[1]["n"])[:4])
+    habits = " / ".join(a.get("habits") or [])
+    return (f"- {a['id']} ({a['name']}) 성격: {a['persona']}\n"
+            f"  지금 규칙: 익절 {a['tp']}% 손절 {a['sl']}% 최대 {a['hold']}분" + (f" · 스스로 정한 규칙: {habits}" if habits else "") + "\n"
+            f"  성적: {sc['n']}건 · 최근 평균 {sc['wavg']:+.2f}% · 승률 {sc['win']}% · 대조군 대비 {sc['wavg'] - ctrl_avg:+.2f}%p · 평균 보유 {mins}분\n"
+            f"  파는 이유: {', '.join(f'{k} {v}' for k, v in whys.items()) or '없음'}" + (f"\n  상황별: {sits}" if sits else ""))
+
+
+VOICE_PROMPT = """AI 생존전 참가자가 방금 쌓인 자기 성적을 보고 사장님께 바로 의견을 보낼지 정해요. 참가자마다 자기 성적만 보고 따로 답하세요.
+- opinion: 자기 성적에서 배운 것 + 앞으로 바꾸고 싶은 것 (2~3문장, 근거 숫자 포함, 사장님께 존댓말). 지금 딱히 할 말이 없으면 "" (빈칸이면 안 보냄)
+- self: 자기 규칙을 바꾸고 싶으면 {"tp": 익절%, "sl": 손절%, "hold": 최대 보유 분} 중 바꿀 것만. 아니면 null
+- habit: 앞으로 자기 판단에 붙일 짧은 규칙 한 줄 (40자 이내, 예: "장 초반 하락장에선 안 삼"). 없으면 ""
+- engine: 자동매매 전체 설정을 바꾸자는 의견이 있으면 {"key": 설정키, "value": 값, "why": 이유} 하나. 아니면 null
+  (설정키는 아래 목록에서만. 실전 켜기·모드 바꾸기는 안 됨)
+- code: 앱 코드나 기능을 이렇게 바꾸면 좋겠다는 아이디어가 있으면 한 문장. 아니면 ""
+거래가 5건 미만이면 opinion 을 빈칸으로 두세요. 근거 없는 제안·지난번과 같은 말은 하지 마세요.
+형식: {"참가자id": {"opinion": "...", "self": null, "habit": "", "engine": null, "code": ""}, ...} JSON 한 덩어리로만."""
+
+
+def opinions(c: dict, market: str, ai_fn=None, setting_keys: str = "", only: dict | None = None) -> list[dict]:
+    """🗣️ 참가자마다 자기 성적을 보고 의견·개선안 (AI 1번 호출) — 실행은 안 함, 사장님 [적용] 전용
+    only: {참가자id: 지금 의견을 묻는 이유} — 주면 그 참가자만"""
+    hl = _hl(c)
+    with _lock:
+        d = load(market)
+        ca = _ctrl_avg(d, c)
+        alive = [dict(a) for a in d["alive"] if only is None or a["id"] in only]
+        ctrl_sc = score(d["ctrl"], half_life=hl)
+    if not alive:
+        return []
+    notes = _notes(market)
+    prompt = (VOICE_PROMPT + f"\n\n시장: {'미장' if market == 'US' else '국장'} · 🎲 무작위 대조군: {ctrl_sc['n']}건 최근 평균 {ctrl_sc['wavg']:+.2f}%\n"
+              + (f"공유 노트: {notes}\n" if notes else "") + (f"바꿀 수 있는 설정키: {setting_keys}\n" if setting_keys else "")
+              + "참가자:\n" + "\n".join(_brief(a, ca, hl)
+                                         + (f"\n  지금 묻는 이유: {only[a['id']]}" if only and only.get(a["id"]) else "")
+                                         + (f"\n  지난번에 한 말: {a['last_opinion']}" if a.get("last_opinion") else "") for a in alive))
+    r = (ai_fn or ai_json)(prompt)
+    if not isinstance(r, dict):
+        return []
+    out = []
+    for a in alive:
+        o = r.get(a["id"])
+        if not isinstance(o, dict) or not str(o.get("opinion") or "").strip():
+            continue
+        self_ = {}
+        for k, (lo, hi) in RULE_BOUNDS.items():
+            v = (o.get("self") or {}).get(k) if isinstance(o.get("self"), dict) else None
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                continue
+            if lo <= v <= hi and v != float(a[k]):
+                self_[k] = int(v) if k == "hold" else round(v, 1)
+        eng = o.get("engine") if isinstance(o.get("engine"), dict) and o["engine"].get("key") else None
+        out.append({"id": a["id"], "name": a["name"], "opinion": str(o["opinion"]).strip()[:600],
+                    "self": self_, "habit": str(o.get("habit") or "").strip()[:60], "engine": eng,
+                    "code": str(o.get("code") or "").strip()[:300], "stats": {**score(a, half_life=hl), "edge": round(score(a, half_life=hl)["wavg"] - ca, 2)},
+                    "rules": {k: a[k] for k in RULE_BOUNDS}, "reason": (only or {}).get(a["id"], "")})
+    if out:   # 지난번 말 기억 (같은 말 반복 막기)
+        with _lock:
+            d = load(market)
+            said = {o["id"]: o["opinion"][:200] for o in out}
+            for a in d["alive"]:
+                if a["id"] in said:
+                    a["last_opinion"] = said[a["id"]]
+            _save(market, d)
+    return out
+
+
+# 🗣️ 의견 생길 때 바로: 거래가 닫힐 때마다 확인 → 조건 맞으면 그 AI 에게만 물어봄 (할 말 없으면 안 보냄)
+VOICE_EVERY = 5        # 지난번 확인 뒤 거래가 이만큼 더 쌓이면
+VOICE_STREAK = 3       # 또는 연속 손실 이만큼
+VOICE_PER_DAY = 8      # 하루 전체 최대 (AI 한 명은 하루 1번)
+_voice = None          # (c, market, {id: 이유}) → 뒤에서 의견 받아 채팅으로 (arena_voice 가 넣어 줌)
+
+
+def voice_due(c: dict, d: dict, day: str) -> dict:
+    """지금 의견을 물어볼 AI {id: 이유} — 확인 표시까지 해 둠 (같은 이유로 또 안 물음)"""
+    if not (c.get("arena_on") and c.get("arena_voice", True)):
+        return {}
+    every = int(c.get("arena_voice_every", VOICE_EVERY))
+    cap = int(c.get("arena_voice_per_day", VOICE_PER_DAY))
+    vd = d.setdefault("voice_day", {})
+    if vd.get("day") != day:
+        vd.clear(); vd.update(day=day, n=0)
+    out = {}
+    for a in d["alive"]:
+        if vd["n"] >= cap:
+            break
+        v = a.setdefault("voice", {"seen": 0, "day": ""})
+        n = len(a["trades"])
+        new = n - int(v.get("seen", 0))
+        if new <= 0 or v.get("day") == day or n < 5:
+            continue
+        last = a["trades"][-VOICE_STREAK:]
+        if len(last) == VOICE_STREAK and all(t["ret"] < 0 for t in last):
+            why = f"방금 {VOICE_STREAK}번 연속 손실 (" + ", ".join(f"{t['ret']:+.1f}%" for t in last) + ")"
+        elif new >= every:
+            why = f"지난번 뒤로 거래 {new}건 더 쌓임 (지금 {n}건 · 최근 평균 {score(a)['wavg']:+.2f}%)"
+        else:
+            continue
+        v.update(seen=n, day=day)
+        vd["n"] += 1
+        out[a["id"]] = why
+    return out
+
+
+def set_rules(market: str, ai_id: str, changes: dict | None = None, habit: str = "") -> dict:
+    """사장님이 [적용]한 AI 개인 규칙 변경 (가상 전용 — 실전 주문 규칙과 무관)"""
+    if market not in ("US", "KR"):
+        return {"ok": False, "message": "시장이 이상해요"}
+    clean = {}
+    for k, v in (changes or {}).items():
+        if k not in RULE_BOUNDS:
+            return {"ok": False, "message": f"바꿀 수 없는 항목이에요: {k}"}
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return {"ok": False, "message": f"{k} 값이 숫자가 아니에요"}
+        lo, hi = RULE_BOUNDS[k]
+        if not lo <= v <= hi:
+            return {"ok": False, "message": f"{k} 는 {lo}~{hi} 사이만 돼요"}
+        clean[k] = int(v) if k == "hold" else round(v, 1)
+    habit = str(habit or "").strip()[:60]
+    if not clean and not habit:
+        return {"ok": False, "message": "바꿀 내용이 없어요"}
+    with _lock:
+        d = load(market)
+        a = next((x for x in d["alive"] if x["id"] == ai_id), None)
+        if not a:
+            return {"ok": False, "message": "그 AI 를 못 찾았어요 (생존전 목록이 바뀌었을 수 있어요)"}
+        before = {k: a[k] for k in clean}
+        a.update(clean)
+        if habit:
+            a["habits"] = ([h for h in a.get("habits") or [] if h != habit] + [habit])[-MAX_HABITS:]
+        a.setdefault("history", []).append({"t": _now(), "before": before, "after": clean, "habit": habit})
+        a["history"] = a["history"][-20:]
+        _save(market, d)
+    parts = [f"{k} {before[k]}→{v}" for k, v in clean.items()] + ([f"규칙 추가 '{habit}'"] if habit else [])
+    return {"ok": True, "message": f"{a['name']}: " + " · ".join(parts)}
 
 
 def overview(market: str, c: dict | None = None) -> dict:

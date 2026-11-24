@@ -367,6 +367,101 @@ def 오래된_성적은_덜_침(at, picker, tmp):
     assert w < 0, ("두 달 전 좋은 성적이 최근 나쁜 성적을 덮음", w)
 
 
+@case
+def 생존전_AI_의견은_채팅_카드로만_오고_적용해야_바뀜(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import agents as ag, arena, arena_voice, improve as im
+    d = _arena_fill([1.5, -0.8], ctrl_ret=0.2)
+    a0, a1 = d["alive"][0], d["alive"][1]
+    reply = {a0["id"]: {"opinion": "익절을 조금 늦추면 더 먹을 수 있어요", "self": {"tp": 6, "sl": 999}, "habit": "하락장 장 초반엔 안 삼",
+                        "engine": {"key": "stop_loss_pct", "value": 5, "why": "손절이 너무 빨라요"}, "code": "상황별 성적을 차트로 보여 주기"},
+             a1["id"]: {"opinion": "저는 실전 켜자고 할게요", "self": None, "habit": "", "engine": {"key": "arena_live", "value": True, "why": "x"}, "code": ""}}
+    old_sd, old_create, old_vf = ag.SESSIONS_DIR, im.create, arena_voice._file
+    ag.SESSIONS_DIR = tmp / "sessions"
+    im.create = lambda what, why, agent: {"id": "job1", "request": what}
+    arena_voice._file = lambda: tmp / "arena_voice.json"
+    try:
+        stop0 = at.config()["stop_loss_pct"]
+        # 의견은 모으지 않고 하나씩 바로: 첫 AI 만 물어봄 → 하나 옴
+        assert arena_voice.ask(at.config(), "US", {a0["id"]: "거래 5건 더 쌓임"}, ai_fn=lambda p: reply) == 1
+        cid = json.loads((tmp / "arena_voice.json").read_text(encoding="utf-8"))["conv"]["US"]
+        read = lambda: json.loads((ag.SESSIONS_DIR / cid / "conversation.json").read_text(encoding="utf-8"))
+        assert len(read()["messages"]) == 2, read()["messages"]   # 안내 1 + 의견 1
+        # 할 말 없는 AI 는 안 보냄
+        assert arena_voice.ask(at.config(), "US", {a1["id"]: "x"}, ai_fn=lambda p: {a1["id"]: {"opinion": ""}}) == 0
+        # 다음 AI 의견은 같은 대화에 이어 붙음
+        assert arena_voice.ask(at.config(), "US", {a1["id"]: "3번 연속 손실"}, ai_fn=lambda p: reply) == 1
+        conv = read()
+        assert conv["agent"] == "trader" and len(conv["messages"]) == 3, conv["messages"]
+        assert "왜 지금: 거래 5건 더 쌓임" in conv["messages"][1]["content"]
+        m0 = next(m for m in conv["messages"] if a0["name"] in m["content"])
+        kinds = sorted(x["type"] for x in m0.get("trade_actions", []))
+        assert kinds == ["arena", "set"], kinds
+        assert m0.get("improvements") == ["job1"]
+        card = next(x for x in m0["trade_actions"] if x["type"] == "arena")
+        assert card["changes"] == {"tp": 6}, ("범위 밖 손절 999 가 걸러져야 함", card)
+        m1 = next(m for m in conv["messages"] if a1["name"] in m["content"])
+        assert not m1.get("trade_actions"), ("실전 켜기 제안이 카드로 나옴", m1)
+        # 적용 전엔 아무것도 안 바뀜
+        assert at.config()["stop_loss_pct"] == stop0
+        assert arena.load("US")["alive"][0]["tp"] == a0["tp"]
+        # [적용] → 그 AI 규칙만 바뀜 (가상 전용)
+        assert at.apply_action(card)["ok"]
+        a0n = arena.load("US")["alive"][0]
+        assert a0n["tp"] == 6 and a0n["habits"] == ["하락장 장 초반엔 안 삼"], a0n
+        assert not at.apply_action({**card, "changes": {"hold": 99999}})["ok"], "범위 밖 값이 적용됨"
+    finally:
+        ag.SESSIONS_DIR, im.create, arena_voice._file = old_sd, old_create, old_vf
+
+
+@case
+def 채팅_답변_중에_온_생존전_의견이_안_사라짐(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import agents as ag, arena_voice, web
+    d = _arena_fill([1.0, 1.0], ctrl_ret=0.0)
+    old_sd, old_vf = ag.SESSIONS_DIR, arena_voice._file
+    ag.SESSIONS_DIR = tmp / "sessions2"
+    arena_voice._file = lambda: tmp / "arena_voice2.json"
+    try:
+        ok = lambda p: {d["alive"][0]["id"]: {"opinion": "첫 의견"}}
+        assert arena_voice.ask(at.config(), "US", {d["alive"][0]["id"]: "x"}, ai_fn=ok) == 1
+        cid = json.loads((tmp / "arena_voice2.json").read_text(encoding="utf-8"))["conv"]["US"]
+        # 사장님이 그 대화에서 질문 → (채팅 처리와 같은 순서) 질문 저장
+        conv = web.load_conv(cid)
+        base = len(conv["messages"])
+        conv["messages"].append({"role": "user", "content": "왜?"})
+        base = web.save_conv_merged(conv, base)
+        # 답변 만드는 사이에 다른 AI 의견 도착
+        assert arena_voice.ask(at.config(), "US", {d["alive"][1]["id"]: "y"}, ai_fn=lambda p: {d["alive"][1]["id"]: {"opinion": "끼어든 의견"}}) == 1
+        # 답변 끝 → 저장 (예전엔 여기서 끼어든 의견을 덮어씀)
+        conv["messages"].append({"role": "assistant", "content": "답변"})
+        web.save_conv_merged(conv, base)
+        texts = [m["content"] for m in web.load_conv(cid)["messages"]]
+        assert any("끼어든 의견" in t for t in texts), ("답변 저장이 의견을 덮어씀", texts)
+        assert texts[-1] == "답변" and any(t == "왜?" for t in texts), texts
+    finally:
+        ag.SESSIONS_DIR, arena_voice._file = old_sd, old_vf
+
+
+@case
+def 생존전_AI_는_거래가_쌓이거나_연속_손실일_때만_하루_1번_물어봄(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    c = {**at.config(), "arena_on": True, "arena_voice": True, "arena_voice_every": 5}
+    d = arena.load("US", 2)
+    t = lambda r: {"sym": "X", "day": "D", "ret": r, "why": "t", "mins": 5, "t": ""}
+    d["alive"][0]["trades"] = [t(1.0)] * 6                  # 6건 쌓임 → 물어봄
+    d["alive"][1]["trades"] = [t(1.0), t(1.0), t(-1.0), t(-1.0)]   # 4건 → 아직
+    due = arena.voice_due(c, d, "D1")
+    assert list(due) == [d["alive"][0]["id"]], due
+    assert arena.voice_due(c, d, "D1") == {}, "같은 날 또 물어봄"
+    d["alive"][1]["trades"].append(t(-2.0))                 # 5건째 · 3연속 손실 → 바로
+    due = arena.voice_due(c, d, "D2")
+    assert d["alive"][1]["id"] in due and "연속 손실" in due[d["alive"][1]["id"]], due
+    assert d["alive"][0]["id"] not in due, "새 거래 없는데 또 물어봄"
+    assert arena.voice_due({**c, "arena_voice": False}, d, "D3") == {}, "꺼도 물어봄"
+
+
 def main() -> int:
     print("🧪 매매 흐름 시나리오 시험")
     at, picker, tmp, _ = setup()

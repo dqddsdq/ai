@@ -110,6 +110,23 @@ def save_conv(conv: dict) -> None:
     (d / "chat.md").write_text("".join(lines), encoding="utf-8")
 
 
+CONV_LOCK = threading.RLock()   # 대화 파일 쓰기는 한 번에 하나 (채팅 답변 중에 🗣️ 생존전 의견이 붙어도 안 덮어씀)
+
+
+def save_conv_merged(conv: dict, base: int) -> int:
+    """conv["messages"][base:] 만 '내가 새로 붙인 것' 으로 보고, 그사이 파일에 붙은 메시지(다른 곳에서 보낸 것)를 살려서 저장.
+    다음 호출에 쓸 base(지금 메시지 수) 반환"""
+    with CONV_LOCK:
+        mine = conv["messages"][base:]
+        try:
+            disk = load_conv(conv["id"])["messages"]
+        except (OSError, ValueError, KeyError):
+            disk = conv["messages"][:base]
+        conv["messages"] = disk + mine
+        save_conv(conv)
+        return len(conv["messages"])
+
+
 def new_conv(title: str) -> dict:
     cid = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     return {"id": cid, "title": title[:40] or "새 대화", "agent": None, "messages": []}
@@ -250,12 +267,25 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             if card and card.get("status") in ("applied", "ignored"):
                 return self._json({"ok": False, "message": "이미 처리한 카드예요", "status": card["status"]})
-            r = {"ok": True, "message": "무시했어요"} if body.get("ignore") else at.apply_action(a)
+            r = {"ok": True, "message": "무시했어요"} if body.get("ignore") else at.apply_action(card or a)   # 저장된 카드 내용 그대로 적용
             if card is not None and (r.get("ok") or body.get("ignore")):
-                card["status"] = "ignored" if body.get("ignore") else "applied"
-                card["result"] = str(r.get("message") or "바꿨어요")[:200]
-                save_conv(conv)
+                with CONV_LOCK:   # 다시 읽고 표시 (그사이 붙은 메시지 안 덮어씀)
+                    try:
+                        conv = load_conv(conv["id"])
+                        card = next((x for m in conv["messages"] for x in (m.get("trade_actions") or []) if x.get("id") == a.get("id")), None)
+                    except (OSError, ValueError, KeyError):
+                        card = None
+                    if card is not None:
+                        card["status"] = "ignored" if body.get("ignore") else "applied"
+                        card["result"] = str(r.get("message") or "바꿨어요")[:200]
+                        save_conv(conv)
             return self._json(r)
+        if path == "/api/autotrade/arena-voice":   # 🗣️ 생존전 AI 의견 지금 받기 (뒤에서 · 채팅으로 옴)
+            from . import arena_voice
+            c = at.config()
+            if not c.get("arena_on"):
+                return self._json({"ok": False, "message": "AI 생존전이 꺼져 있어요"})
+            return self._json(arena_voice.run_bg(c, at.markets()))
         if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
             return self._json(at.unhalt())
         if path == "/api/autotrade/review":
@@ -544,8 +574,9 @@ class Handler(BaseHTTPRequestHandler):
             history.append({"role": "user", "content": text})
         if images:
             history[-1]["content"] += f"\n\n[화면 캡처 {len(images)}장 첨부]"
+        base = len(conv["messages"])
         conv["messages"].append({"role": "user", "content": text, "images": image_ids})
-        save_conv(conv)
+        base = save_conv_merged(conv, base)
         self._live = LIVE.setdefault(conv["id"], {})
         self._live.clear(); self._live.update(text="", status="답변 준비 중", t=time.time(), done=False, started=time.time())
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
@@ -592,7 +623,7 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"  🧰 도구 요청: {r['name']} ({r['status']})")
                 self._send("tool_request", {**r, "desc": t.get("desc", ""), "signup": t.get("signup", ""),
                                             "steps": t.get("steps", []), "tool_status": tl.status(t) if t else ""})
-        save_conv(conv)
+        save_conv_merged(conv, base)   # 답변 만드는 사이 붙은 🗣️ 생존전 의견 등은 살림
         log("  ✅ 답변 완료")
         LIVE.pop(conv["id"], None)
         self._live = None

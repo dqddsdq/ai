@@ -117,6 +117,9 @@ DEFAULTS = {
     "arena_live_n": 2, "arena_live_pct": 30,   #    실전 자격 인원 · 실전 예산 중 생존전 몫(%)
     "arena_ctrl_margin": 0.3,      #    🎲 무작위 대조군보다 최근 평균이 이만큼(%p) 이상 나아야 실전 자격
     "arena_half_life_days": 14,    #    ⏳ 성적 계산 때 이 일수가 지난 거래는 절반 무게 (최근 성적을 더 크게)
+    "arena_voice": True,           #    🗣️ 생존전 AI 가 의견이 생기면 바로 채팅으로 (적용은 사장님이)
+    "arena_voice_every": 5,        #       지난번 뒤로 거래가 이만큼 더 쌓이면 물어봄 (3연속 손실이면 바로)
+    "arena_voice_per_day": 8,      #       하루 전체 최대 의견 수 (AI 한 명은 하루 1번)
     "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
     "shadow_count": 1000,          #   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
     "auto_promote": True,          #   확실히 나은 조합을 실전 규칙으로 자동 교체 (매일 복기 뒤)
@@ -186,7 +189,7 @@ NUMS = {"shadow_count": (2, 1000), "promote_min_trades": (3, 200), "promote_marg
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
         "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (5, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "live_proof_n": (3, 200), "live_quality_change": (0, 100), "live_quality_ratio": (0, 100), "time_stop_min": (0, 240), "time_stop_up_pct": (0, 10), "stop_slip_pct": (0.3, 5),
-        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "arena_size": (2, 12), "arena_ai_per_day": (0, 300), "arena_min_trades": (5, 200), "arena_live_n": (0, 5), "arena_live_pct": (5, 100), "arena_ctrl_margin": (0, 5), "arena_half_life_days": (3, 90), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
+        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "arena_size": (2, 12), "arena_ai_per_day": (0, 300), "arena_min_trades": (5, 200), "arena_live_n": (0, 5), "arena_live_pct": (5, 100), "arena_ctrl_margin": (0, 5), "arena_half_life_days": (3, 90), "arena_voice_every": (2, 100), "arena_voice_per_day": (0, 50),"regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
         "chase_near_high_pct": (0.1, 10), "chase_min_pullback_pct": (0, 5), "chase_run5_max_pct": (0.5, 20),
         "rebound_pullback_pct": (0.3, 10), "rebound_pullback_max_pct": (2, 30), "rebound_up_bars": (1, 3)}
 CHOICES = {"lane_swing_mode": ("live", "paper", "off"), "lane_surge_mode": ("live", "paper", "off"), "ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
@@ -2601,6 +2604,7 @@ def start(log_fn=print) -> None:
         return
     _resume_note()   # 자동 재시작이었으면 이어받은 상태 기록
     arena._wake = lambda m: _ai_wake[m].set() if m in _ai_wake else None   # 🏟️ 생존전 판단 끝나면 바로 한 바퀴
+    from . import arena_voice   # noqa: F401 — 🗣️ 의견 생긴 AI → 바로 채팅으로 (arena._voice 연결)
     try:
         n_ = extras.purge_test_notes()
         if n_:
@@ -2769,7 +2773,7 @@ LABELS = {"live_quality": "실전은 강한 신호만", "live_quality_change": "
           "time_stop_up_pct": "시간 손절 최소 상승(%)", "stop_slip_pct": "손절 매도 지정가 여유(%)", "stop_resell_sec": "매도 재주문(초)",
           "surge_min_change_regular": "정규장 급등 최소 상승률(%)", "surge_buy_cutoff_min": "급등주 매수 마감(분)", "regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
           "tod_filter": "지는 시간대 피하기", "max_per_sector": "같은 업종 최대 보유", "backup_on": "매일 백업", "weekly_report": "주간 성적표",
-          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "arena_on": "AI 생존전", "arena_size": "생존전 참가자 수", "arena_ai_per_day": "생존전 하루 AI 판단 횟수", "arena_min_trades": "생존전 실전 자격 최소 거래", "arena_promote": "생존전 1등 전략 참고", "arena_live": "생존전 상위 AI 실전 매수", "arena_live_n": "생존전 실전 자격 인원", "arena_live_pct": "생존전 실전 예산 몫(%)", "arena_ctrl_margin": "생존전 대조군보다 나아야 할 폭(%p)", "arena_half_life_days": "생존전 성적 반감 일수", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "arena_on": "AI 생존전", "arena_size": "생존전 참가자 수", "arena_ai_per_day": "생존전 하루 AI 판단 횟수", "arena_min_trades": "생존전 실전 자격 최소 거래", "arena_promote": "생존전 1등 전략 참고", "arena_live": "생존전 상위 AI 실전 매수", "arena_live_n": "생존전 실전 자격 인원", "arena_live_pct": "생존전 실전 예산 몫(%)", "arena_ctrl_margin": "생존전 대조군보다 나아야 할 폭(%p)", "arena_half_life_days": "생존전 성적 반감 일수", "arena_voice": "생존전 AI 의견 바로 채팅으로", "arena_voice_every": "의견 물어볼 거래 간격(건)", "arena_voice_per_day": "하루 최대 의견 수","no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -2929,6 +2933,8 @@ def apply_action(a: dict) -> dict:
         r = save_config({"mode": a["value"]})
     elif t == "stop":
         r = emergency_stop()
+    elif t == "arena":   # 🗣️ 생존전 AI 자기 규칙 (가상 전용)
+        r = arena.set_rules(str(a.get("market") or ""), str(a.get("ai") or ""), a.get("changes") or {}, str(a.get("habit") or ""))
     elif t in ("exclude", "include"):
         ex = [x for x in c["exclude"] if x != a.get("value")] + ([a["value"]] if t == "exclude" else [])
         r = save_config({"exclude": ex})
