@@ -240,6 +240,27 @@ button { cursor: pointer; }
 .tlog { font-size: 12.5px; line-height: 1.6; max-height: 320px; overflow: auto; }
 .tlog div { border-bottom: 1px dashed var(--line); padding: 3px 0; }
 .tlog .k { display: inline-block; min-width: 68px; font-weight: 600; }
+
+/* 자동매매: 화면 나누기 + 카드 정리 */
+#view-trade .page-sub { font-size: 13px; margin-bottom: 10px; }
+#view-trade .card { padding: 18px 20px; }
+#view-trade .card[data-tt] > b:first-child { display: block; font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; }
+#view-trade .card[data-tt] > b:first-child + span.muted { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.5; }
+#view-trade .card[data-tt] > b:first-child ~ .btn, #view-trade .card[data-tt] > span[style*="float"] { margin-top: -26px; }
+#trade-ctl { border-color: var(--line-strong); }
+#trade-ctl #trade-both, #trade-ctl #trade-status, #trade-ctl #trade-pre { line-height: 1.7; }
+#trade-ctl #trade-goal { padding: 10px 12px; background: var(--code-bg); border-radius: 10px; }
+#trade-ctl #trade-goal:empty, #trade-ctl #trade-pre:empty, #trade-ctl #trade-run-out:empty { display: none; }
+.tt-nav { position: sticky; top: 0; z-index: 3; display: flex; gap: 4px; padding: 6px; margin: 4px 0 2px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; scrollbar-width: none; }
+.tt-nav::-webkit-scrollbar { display: none; }
+.tt-nav button { flex: 1 0 auto; border: 0; background: none; color: var(--muted); padding: 7px 14px; border-radius: 8px; font-size: 13.5px; white-space: nowrap; }
+.tt-nav button:hover { color: var(--text); background: var(--code-bg); }
+.tt-nav button.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+.tt-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#view-trade .card[data-tt].tt-off { display: none; }
+#view-trade .trade-grid { gap: 10px 14px; }
+#view-trade .trade-grid label { line-height: 1.4; }
 /* 폰 접속 안내 */
 .phone-pop { position: fixed; left: 16px; bottom: 56px; z-index: 50; width: min(300px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: 0 8px 30px rgba(0,0,0,.18); font-size: 13.5px; }
 .phone-pop .big { font: 600 22px/1.3 ui-monospace, Consolas, monospace; letter-spacing: 1px; margin: 2px 0 8px; word-break: break-all; }
@@ -464,7 +485,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
     <div class="scroll"><div class="column">
       <div class="page-head">자동매매</div>
       <p class="page-sub">규칙이 종목을 골라 토스 계좌에서 사고팔아요. 사장님이 직접 산 주식·직접 낸 주문은 안 건드려요. <b>돈을 계좌 밖으로 옮기는 기능은 없어요</b> (토스 API 에 출금·이체가 없고, 앱은 지정가 주문·취소만 보내요).</p>
-      <div class="card">
+      <div class="card" id="trade-ctl">
         <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <div class="seg" id="trade-mode"><button data-m="off">끄기</button><button data-m="paper">가상 매매</button><button data-m="live">실전</button></div>
           <div class="spacer"></div>
@@ -478,14 +499,17 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="trade-pre" style="margin-top:6px;font-size:13px"></div>
         <div id="trade-run-out" class="tlog" style="margin-top:6px"></div>
       </div>
-      <div class="card"><b>💬 엔진에게 묻기·시키기</b>
+      <nav class="tt-nav" id="tt-nav" aria-label="자동매매 화면">
+        <button data-tt="home" class="on">한눈에</button><button data-tt="team">AI 팀</button><button data-tt="charts">차트</button><button data-tt="perf">성적·실험</button><button data-tt="log">학습·기록</button><button data-tt="set">설정</button>
+      </nav>
+      <div class="card" data-tt="home"><b>💬 엔진에게 묻기·시키기</b>
         <div class="row" style="display:flex;gap:8px;margin-top:6px"><input class="field" id="trade-ask" style="flex:1" placeholder="예: 오늘 왜 아무것도 안 샀어? / 익절 8%로 바꿔 / TSLA는 사지 마"><button class="btn primary" id="trade-ask-go">보내기</button></div>
         <div class="muted" style="font-size:12.5px;margin-top:4px">채팅의 🤖 자동매매 팀으로 이어져요. 설정을 바꾸는 말은 [적용] 카드로 떠요 (실전 켜기는 여기 위 버튼으로만).</div>
       </div>
-      <div class="card"><b>📊 실시간 차트</b> <span class="muted" style="font-size:12.5px">자동매매가 가진 종목 + 방금 고른 종목 · 종목을 누르면 그 차트만 펼쳐짐 · 1분마다 갱신 · 차트 누르면 크게</span>
+      <div class="card" data-tt="charts"><b>📊 실시간 차트</b> <span class="muted" style="font-size:12.5px">자동매매가 가진 종목 + 방금 고른 종목 · 종목을 누르면 그 차트만 펼쳐짐 · 1분마다 갱신 · 차트 누르면 크게</span>
         <div id="live-charts" style="display:grid;gap:6px;margin-top:8px"></div>
       </div>
-      <div class="card"><b>📊 차트</b> <span class="muted" style="font-size:12.5px">토스 데이터로 그린 차트 = AI 가 보는 그림. 자동매매가 가진 종목은 산 가격·손절·나눠 팔기선까지</span>
+      <div class="card" data-tt="charts"><b>📊 차트</b> <span class="muted" style="font-size:12.5px">토스 데이터로 그린 차트 = AI 가 보는 그림. 자동매매가 가진 종목은 산 가격·손절·나눠 팔기선까지</span>
         <div class="row" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
           <input class="field" id="chart-sym" style="flex:1;min-width:120px" placeholder="종목 (예: NVDA, 005930)">
           <button class="btn primary" data-iv="1m" id="chart-1m">1분봉</button><button class="btn" data-iv="1d" id="chart-1d">일봉</button>
@@ -493,31 +517,31 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="chart-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
         <div class="chart-view" id="chart-view" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
+      <div class="card" data-tt="team"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
         <div id="lanes" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>🏟️ AI 생존전</b> <span class="muted" style="font-size:12.5px">💰 상위 2명만 실전 · 📘 나머지는 성적 오를 때까지 가상으로 공부 · 토요일 아침 성적 발표 · 모두 같은 공유 노트</span>
+      <div class="card" data-tt="team"><b>🏟️ AI 생존전</b> <span class="muted" style="font-size:12.5px">💰 상위 2명만 실전 · 📘 나머지는 성적 오를 때까지 가상으로 공부 · 토요일 아침 성적 발표 · 모두 같은 공유 노트</span>
         <div id="arena" class="tlog" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
+      <div class="card" data-tt="perf"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
         <div id="scorecard" class="tlog" style="margin-top:8px;white-space:pre-wrap"></div>
         <div id="gates" class="muted" style="margin-top:6px;font-size:13px"></div>
         <div id="rules" class="tlog" style="margin-top:6px"></div>
         <div id="lessons" class="tlog" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>🧪 규칙 실험실</b> <span class="muted" style="font-size:12.5px">규칙 조합 여러 개를 실전과 동시에 가상으로 · 확실히 나은 조합은 실전 규칙으로 자동 교체</span>
+      <div class="card" data-tt="perf"><b>🧪 규칙 실험실</b> <span class="muted" style="font-size:12.5px">규칙 조합 여러 개를 실전과 동시에 가상으로 · 확실히 나은 조합은 실전 규칙으로 자동 교체</span>
         <span style="float:right"><button class="btn" id="lab-bt" style="padding:3px 10px;font-size:12px">지금 백테스트</button> <button class="btn" id="lab-reset" style="padding:3px 10px;font-size:12px">조합 새로 만들기</button></span>
         <div id="lab-shadow" class="tlog" style="margin-top:8px"></div>
         <div id="lab-bt-out" class="tlog" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>📚 학습·복기</b> <button class="btn" id="trade-weekend" style="float:right;padding:3px 10px;margin-left:6px">📚 지금 공부하기</button><button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
+      <div class="card" data-tt="log"><b>📚 학습·복기</b> <button class="btn" id="trade-weekend" style="float:right;padding:3px 10px;margin-left:6px">📚 지금 공부하기</button><button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
         <div id="learn-today" style="margin-top:6px;font-size:13.5px"></div>
         <div id="learn-props" style="margin-top:8px"></div>
         <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13.5px">최근 복기 자세히</summary><div id="learn-review" class="tlog" style="margin-top:6px"></div></details>
         <details style="margin-top:6px"><summary style="cursor:pointer;font-size:13.5px">거래 일지</summary><div id="learn-trades" class="tlog" style="margin-top:6px"></div></details>
       </div>
-      <div class="card"><b>지금 고른 종목</b> <button class="btn" id="trade-scan" style="float:right;padding:3px 10px;font-size:12px">기준값 다시 준비</button><div id="trade-picks" class="tlog" style="margin-top:6px"></div></div>
-      <div class="card">
+      <div class="card" data-tt="home"><b>지금 고른 종목</b> <button class="btn" id="trade-scan" style="float:right;padding:3px 10px;font-size:12px">기준값 다시 준비</button><div id="trade-picks" class="tlog" style="margin-top:6px"></div></div>
+      <div class="card" data-tt="set">
         <b>설정</b>
         <div class="trade-grid">
           <label>시장 (둘 다 가능)<span style="display:flex;gap:10px;margin-top:6px;color:var(--text)"><label style="flex-direction:row;gap:4px"><input type="checkbox" id="t-mk-US"> 🇺🇸 미장</label><label style="flex-direction:row;gap:4px"><input type="checkbox" id="t-mk-KR"> 🇰🇷 국장</label></span></label>
@@ -641,9 +665,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (글만, 느려짐)</label>
         <div class="row" style="margin-top:10px;display:flex"><div class="spacer"></div><button class="btn primary" id="trade-save">저장</button></div>
       </div>
-      <div class="card"><b>가상 장부</b> <button class="btn" id="trade-reset" style="float:right;padding:3px 10px;font-size:12px">처음부터</button><div id="trade-paper" style="margin-top:6px;font-size:13.5px"></div></div>
-      <div class="card"><b>주문 기록</b><div id="trade-orders" class="tlog" style="margin-top:6px"></div></div>
-      <div class="card"><b>활동 기록</b><div id="trade-events" class="tlog" style="margin-top:6px"></div></div>
+      <div class="card" data-tt="home"><b>가상 장부</b> <button class="btn" id="trade-reset" style="float:right;padding:3px 10px;font-size:12px">처음부터</button><div id="trade-paper" style="margin-top:6px;font-size:13.5px"></div></div>
+      <div class="card" data-tt="log"><b>주문 기록</b><div id="trade-orders" class="tlog" style="margin-top:6px"></div></div>
+      <div class="card" data-tt="log"><b>활동 기록</b><div id="trade-events" class="tlog" style="margin-top:6px"></div></div>
     </div></div>
   </section>
 
@@ -1410,6 +1434,16 @@ const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades", "regime_half_pct", "regime_stop_pct", "max_per_sector", "live_quality_change", "live_quality_ratio", "live_proof_n", "time_stop_min", "time_stop_up_pct", "stop_slip_pct", "surge_min_change_regular", "surge_buy_cutoff_min"];
 const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
+// 자동매매 화면 나누기 (한눈에 · AI 팀 · 차트 · 성적·실험 · 학습·기록 · 설정) — 고른 칸은 기억
+function showTradeTab(t) {
+  const tabs = [...document.querySelectorAll("#tt-nav button")].map(b => b.dataset.tt);
+  if (!tabs.includes(t)) t = "home";
+  document.querySelectorAll("#tt-nav button").forEach(b => { b.classList.toggle("on", b.dataset.tt === t); b.setAttribute("aria-pressed", b.dataset.tt === t); });
+  document.querySelectorAll("#view-trade .card[data-tt]").forEach(c => c.classList.toggle("tt-off", c.dataset.tt !== t));
+  try { localStorage.setItem("tradeTab", t); } catch {}
+}
+document.querySelectorAll("#tt-nav button").forEach(b => b.onclick = () => showTradeTab(b.dataset.tt));
+showTradeTab((() => { try { return localStorage.getItem("tradeTab") || "home"; } catch { return "home"; } })());
 function tradeMk() { try { return localStorage.getItem("tradeMk") || "US"; } catch { return "US"; } }
 document.querySelectorAll("#trade-mk button").forEach(b => b.onclick = () => { try { localStorage.setItem("tradeMk", b.dataset.mk); } catch {} renderTrade(); renderLiveCharts(true); });
 function tradeBadge(d) {
