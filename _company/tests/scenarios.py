@@ -131,6 +131,9 @@ def setup():
     at.rebound_check = lambda *a, **k: (True, {}, "")
     from engine import agents
     agents.Agent.remember = lambda self, note: None   # 시험 교훈이 진짜 팀 기억에 안 들어가게
+    from engine import arena as _arena
+    _arena.ai_json = lambda prompt: None   # 생존전 AI 는 시험에서 안 부름
+    _arena._file = lambda m: tmp / f"arena_{m}.json"
     return at, picker, tmp, store
 
 

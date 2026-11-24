@@ -36,7 +36,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import backtest as bt
-from . import extras, news, picker, shadow, store, toss
+from . import arena, extras, news, picker, shadow, store, toss
 from . import tradelearn as tl
 from .agents import COMPANY_DIR, SHARED_DIR
 
@@ -110,6 +110,9 @@ DEFAULTS = {
     "mode_down_days": 3,           # 실전에서 이 날수 연속 손실이면 가상으로
     "mode_down_month_pct": 8.0,    # 또는 이번 달 이 % 이상 손실이면 가상으로
     "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
+    "arena_on": True,              # 🏟️ AI 생존전: 성격 다른 AI 들이 가상으로만 매매 → 매주 꼴찌 탈락·1등 변형 투입
+    "arena_size": 5, "arena_ai_per_day": 40, "arena_min_trades": 20,   #    참가자 수 · 하루 AI 판단 횟수 · 탈락 판정 최소 거래
+    "arena_promote": True,         #    🏆 챔피언 전략을 2호 급등주 AI 판단에 참고로 붙임 (실전 관문은 그대로)
     "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
     "shadow_count": 1000,          #   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
     "auto_promote": True,          #   확실히 나은 조합을 실전 규칙으로 자동 교체 (매일 복기 뒤)
@@ -179,7 +182,7 @@ NUMS = {"shadow_count": (2, 1000), "promote_min_trades": (3, 200), "promote_marg
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
         "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (5, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "live_proof_n": (3, 200), "live_quality_change": (0, 100), "live_quality_ratio": (0, 100), "time_stop_min": (0, 240), "time_stop_up_pct": (0, 10), "stop_slip_pct": (0.3, 5),
-        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
+        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "arena_size": (2, 8), "arena_ai_per_day": (0, 300), "arena_min_trades": (5, 200), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
         "chase_near_high_pct": (0.1, 10), "chase_min_pullback_pct": (0, 5), "chase_run5_max_pct": (0.5, 20),
         "rebound_pullback_pct": (0.3, 10), "rebound_pullback_max_pct": (2, 30), "rebound_up_bars": (1, 3)}
 CHOICES = {"lane_swing_mode": ("live", "paper", "off"), "lane_surge_mode": ("live", "paper", "off"), "ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
@@ -685,7 +688,13 @@ def lane_share(c: dict, style: str) -> float:
 def lane_persona(style: str, market: str) -> str:
     """AI 판단 프롬프트 앞에 붙일 성향 + 공유 노트(두 AI 가 같이 쓰는 교훈)"""
     notes = tl.lessons_text(market, 6)
-    return PERSONA.get(style, "") + (f"\n공유 노트(두 AI 가 같이 배운 것): {notes}" if notes else "")
+    champ = ""
+    if style == "surge" and config().get("arena_promote"):
+        try:
+            champ = arena.champion_text(market)
+        except Exception:
+            champ = ""
+    return PERSONA.get(style, "") + (f"\n공유 노트(두 AI 가 같이 배운 것): {notes}" if notes else "") + (f"\n{champ}" if champ else "")
 
 
 def _add_realized(s: dict, sym: str, gain: float, book: str) -> None:
@@ -1509,6 +1518,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                             lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
             except Exception as e:
                 results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
+        results += _arena_step(c, market, cands, quotes, minutes, s["day"], dry, exits_only)
         return {"ok": True, "mode": mode, "results": results + ["지금 살 종목이 없어요"]}
     try:
         quotes.update(toss.prices([x for x in symbols if x not in quotes]) if [x for x in symbols if x not in quotes] else {})
@@ -1879,6 +1889,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                         lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
         except Exception as e:
             results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
+    results += _arena_step(c, market, cands, quotes, minutes, s["day"], dry, exits_only)
     try:
         extras.gate_count(market, s["day"], results)   # 🚧 안 산 이유 하루 요약용
     except Exception:
@@ -2022,7 +2033,7 @@ def overview() -> dict:
             "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper", c["market"]),
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
             "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {},
-            "scorecard": _scorecard_safe(c, s), "gates": extras.gate_text(c["market"], s["day"]), "rules": extras.rule_history(8),
+            "scorecard": _scorecard_safe(c, s), "gates": extras.gate_text(c["market"], s["day"]), "arena": _arena_ov(c["market"]), "rules": extras.rule_history(8),
             "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "halted_lane": s.get("halted_lane") or {}}
 
 
@@ -2400,7 +2411,7 @@ LABELS = {"live_quality": "실전은 강한 신호만", "live_quality_change": "
           "time_stop_up_pct": "시간 손절 최소 상승(%)", "stop_slip_pct": "손절 매도 지정가 여유(%)", "stop_resell_sec": "매도 재주문(초)",
           "surge_min_change_regular": "정규장 급등 최소 상승률(%)", "surge_buy_cutoff_min": "급등주 매수 마감(분)", "regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
           "tod_filter": "지는 시간대 피하기", "max_per_sector": "같은 업종 최대 보유", "backup_on": "매일 백업", "weekly_report": "주간 성적표",
-          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "arena_on": "AI 생존전 (가상)", "arena_size": "생존전 참가자 수", "arena_ai_per_day": "생존전 하루 AI 판단 횟수", "arena_min_trades": "생존전 탈락 판정 최소 거래", "arena_promote": "생존전 챔피언 전략 참고", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -2458,6 +2469,9 @@ def _engine_one() -> str:
         gt = extras.gate_text(c["market"], s["day"])
         if gt:
             lines.append(gt)
+        at_ = arena.text(c["market"])
+        if at_:
+            lines.append(at_)
         rh = extras.rule_history(5)
         if rh:
             lines.append("🧮 최근 자동 규칙 변경: " + " / ".join(f"{x['t'][5:16]} {', '.join(f'{k} {x['before'].get(k)}→{v}' for k, v in x['after'].items())}"
@@ -2815,6 +2829,24 @@ def unhalt() -> dict:
 
 
 # ── 🤖 거래마다 AI 판단 ──
+def _arena_ov(market: str) -> dict:
+    try:
+        return arena.overview(market)
+    except Exception:
+        return {}
+
+
+def _arena_step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, dry: bool, exits_only: bool) -> list[str]:
+    """🏟️ AI 생존전 한 바퀴 (가상 전용 · 실패해도 매매에 영향 없음)"""
+    if not c.get("arena_on") or dry:
+        return []
+    try:
+        return arena.step(c, market, {} if exits_only else cands, quotes, minutes, day,
+                          price_fn=lambda xs: toss.prices(xs), ai_fn=arena.ai_json)
+    except Exception as e:
+        return [f"🏟️ 생존전 오류: {type(e).__name__}: {e}"]
+
+
 def _ai_budget_ok(c: dict) -> bool:
     """시간당 AI 판단 횟수 제한 (넘으면 규칙대로)"""
     now = time.time()

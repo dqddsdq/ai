@@ -434,6 +434,44 @@ def 자동_규칙_변경은_하루_1번():
 
 
 @case
+def AI_생존전은_가상만_탈락_교체():
+    import re as _re
+    from . import arena
+    src = (Path(arena.__file__)).read_text(encoding="utf-8")
+    code = "\n".join(x for x in src.splitlines() if not x.strip().startswith("#") and '"""' not in x)
+    assert not _re.search(r"place_limit_order|cancel_order|toss\.", code), "생존전이 주문·토스를 직접 부름"
+    with tempfile.TemporaryDirectory() as d:
+        orig = arena._file
+        arena._file = lambda m: Path(d) / f"arena_{m}.json"
+        try:
+            c = {"arena_on": True, "arena_size": 3, "arena_ai_per_day": 10, "arena_min_trades": 4}
+            dd = arena.load("US", 3); ids = [a["id"] for a in dd["alive"]]; arena._save("US", dd)
+            assert len(ids) == 3
+            cd = {"style": "surge", "reason": "t", "est": {"p": 0.5, "ev": 0.1}}
+            for i in range(5):   # 0번은 매번 사서 +5%, 1번은 사서 -5%, 2번은 안 삼
+                sym = f"S{i}"
+                arena.step(c, "US", {sym: cd}, {sym: {"price": 100.0}}, 30, "D", ai_fn=lambda p: {ids[0]: True, ids[1]: True})
+                for _ in range(50):
+                    if not arena._pending:
+                        break
+                    import time as _t; _t.sleep(0.05)
+                dd = arena.load("US")
+                assert sym in dd["alive"][0]["pos"] and sym in dd["alive"][1]["pos"] and sym not in dd["alive"][2]["pos"]
+                dd["alive"][1]["pos"][sym]["px"] = 105.0 / 0.94
+                arena._save("US", dd)
+                arena.step(c, "US", {}, {sym: {"price": 105.0}}, 40, "D")      # 0번 +5% 익절 · 1번 -6% 손절
+            sc = {a["id"]: arena.score(a) for a in arena.load("US")["alive"]}
+            assert sc[ids[0]]["n"] == 5 and sc[ids[0]]["avg"] > 0 and sc[ids[1]]["avg"] < 0 and sc[ids[2]]["n"] == 0
+            msg = arena.evolve(c, "US")
+            dd = arena.load("US")
+            assert ids[1] not in [a["id"] for a in dd["alive"]] and len(dd["alive"]) == 3, msg
+            assert dd["champion"] and dd["champion"]["name"] == dd["alive"][0]["name"], msg
+            assert arena.champion_text("US")
+        finally:
+            arena._file = orig
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)

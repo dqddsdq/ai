@@ -496,6 +496,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       <div class="card"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
         <div id="lanes" style="margin-top:8px"></div>
       </div>
+      <div class="card"><b>🏟️ AI 생존전</b> <span class="muted" style="font-size:12.5px">가상 전용 · 같은 후보를 성격 다른 AI 들이 각자 판단 · 매주 토요일 꼴찌 탈락, 1등 변형 투입</span>
+        <div id="arena" class="tlog" style="margin-top:8px"></div>
+      </div>
       <div class="card"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
         <div id="scorecard" class="tlog" style="margin-top:8px;white-space:pre-wrap"></div>
         <div id="gates" class="muted" style="margin-top:6px;font-size:13px"></div>
@@ -600,6 +603,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_decide"> 거래마다 AI 판단 — 사기 전 살지·얼마나, 보유 중 일찍 팔지 (손절·마감 정리·한도는 못 바꿈, 판단 중에도 손절 확인은 계속)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-shadow_on"> 🧪 그림자 가상 매매 (규칙 조합 여러 개 동시에 가상으로)</label>
         <div class="trade-grid"><label>그림자 조합 수 (2~1000)<input id="t-shadow_count" type="number"></label></div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 생존전 (성격 다른 AI 들이 가상으로만 매매 → 매주 꼴찌 탈락·1등 변형 투입)</label>
+        <div class="trade-grid"><label>참가자 수 (2~8)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수<input id="t-arena_ai_per_day" type="number"></label><label>탈락 판정 최소 거래<input id="t-arena_min_trades" type="number"></label></div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_promote"> 🏆 챔피언 전략을 2호 급등주 AI 판단에 참고로 (실전 관문은 그대로)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-backtest_on"> 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로</label>
         <div class="trade-grid">
@@ -1399,9 +1405,9 @@ async function renderToolsPage() {
 }
 
 // ── 자동매매 ──
-const TRADE_NUM = ["pick_count", "shadow_count","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
+const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day", "arena_min_trades","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades", "regime_half_pct", "regime_stop_pct", "max_per_sector", "live_quality_change", "live_quality_ratio", "live_proof_n", "time_stop_min", "time_stop_up_pct", "stop_slip_pct", "surge_min_change_regular", "surge_buy_cutoff_min"];
-const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
+const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_promote", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 function tradeMk() { try { return localStorage.getItem("tradeMk") || "US"; } catch { return "US"; } }
 document.querySelectorAll("#trade-mk button").forEach(b => b.onclick = () => { try { localStorage.setItem("tradeMk", b.dataset.mk); } catch {} renderTrade(); renderLiveCharts(true); });
@@ -1455,6 +1461,11 @@ async function renderTrade(fillForm = true) {
   renderLanes(d.lanes || {}, d.lessons || [], d.halted_lane || {});
   $("#trade-weekend").onclick = async () => { const r = await api("/api/autotrade/weekend", { market: tradeMk() }); alert(r.message); };
   $("#scorecard").textContent = (d.scorecard || {}).text || "아직 기록 없음";
+  const ar = d.arena || {}, ch = ar.champion;
+  $("#arena").innerHTML = (ar.board || []).length ? (ch ? `<div>🏆 챔피언 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${(+ch.avg).toFixed(2)}% · 승률 ${ch.win}%</div>` : "")
+    + ar.board.map((r, i) => `<div>${i + 1}. <b>${esc(r.name)}</b>${r.gen > 1 ? ` <span class="muted">${r.gen}세대</span>` : ""} — ${r.n}건 평균 ${(+r.avg).toFixed(2)}% 승률 ${r.win}% · 보유 ${r.held} <span class="muted">(익절 ${r.tp}% 손절 ${r.sl}% 최대 ${r.hold}분 · ${esc(r.persona)})</span></div>`).join("")
+    + ((ar.dead || []).length ? `<div class="muted">탈락: ${ar.dead.map(x => `${esc(x.name)}(${x.n}건 ${(+x.avg).toFixed(2)}%)`).join(", ")}</div>` : "")
+    : "<span class='muted'>장 열리면 시작해요</span>";
   $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
   $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 8건 뒤 나빠지면 그 변경만 되돌림)</span></div>` + d.rules.map(x =>
     `<div>${esc(x.t.slice(5, 16))} ${x.revert ? "↩️ " : ""}${esc(Object.entries(x.after).map(([k, v]) => `${k} ${x.before[k]}→${v}`).join(", "))} <span class="muted">${esc(x.result || (x.checked ? "" : "효과 확인 중"))}</span></div>`).join("") : "";
