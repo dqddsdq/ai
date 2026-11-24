@@ -473,6 +473,48 @@ def 제안_현황은_대기_적용_바꾼_뒤_성적을_모으고_하루_한_번
 
 
 @case
+def 자동_개선은_멈춘_작업을_정리하고_성공만_세고_장중엔_시작_안_함(at, picker, tmp):
+    fresh(at, picker, tmp)
+    from datetime import datetime, timedelta
+    from engine import improve as im, gitsync
+    old_git = gitsync.enabled
+    gitsync.enabled = lambda: False   # 시험에서 GitHub 에 올리지 않게
+    old = (im.HISTORY, im.AUTO_FILE, im.VERIFY, im.run, im.apply, im.market_busy, im._notify)
+    im.HISTORY, im.AUTO_FILE, im.VERIFY = tmp / "imp2.json", tmp / "auto.json", tmp / "verify.json"
+    im._notify = lambda text, log: None
+    now = datetime.now()
+    iso = lambda dt: dt.isoformat(timespec="seconds")
+    try:
+        im._save([{"id": "old", "status": "working", "time": iso(now - timedelta(days=9)), "request": "옛 작업"},
+                  {"id": "live", "status": "working", "time": iso(now), "started": iso(now), "request": "지금 작업"}])
+        assert im.clear_stale() == ["old"]
+        assert im.get("old")["status"] == "failed" and im.get("live")["status"] == "working"
+        assert im.auto_once(print, lambda: None) == "다른 작업 중"   # 진짜 돌고 있는 건 안 건드림
+        im._update("live", status="applied")
+        # 검사 실패는 성공 횟수에 안 셈 → 한도에 안 걸림
+        im._save(im._load() + [{"id": f"p{i}", "status": "proposed", "time": iso(now), "request": f"제안 {i}"} for i in range(8)])
+        im.run = lambda jid: (im._update(jid, status="blocked"), {"ok": False, "checks": [{"name": "검사", "ok": False}]})[1]
+        im.market_busy = lambda now=None: []
+        for _ in range(im.AUTO_DAILY_MAX):
+            assert im.auto_once(print, lambda: None) == "검사 실패"
+        assert im._today_auto() == 0 and im._today_auto("auto_at") == im.AUTO_DAILY_MAX
+        im.run = lambda jid: (im._update(jid, status="ready"), {"ok": True, "files": [], "checks": []})[1]
+        im.apply = lambda jid: (im._update(jid, status="applied"), {"ok": True})[1]
+        assert im.auto_once(print, lambda: None) == "적용" and im._today_auto() == 1
+        im.market_busy = lambda now=None: ["KR"]
+        assert im.auto_once(print, lambda: None) == "장 중"
+        old_sm = picker.session_minutes   # 시험 환경은 장 시각을 바꿔 둬서 직접 흉내
+        picker.session_minutes = lambda m, now=None, extended=False: 60 if m == "KR" else None
+        try:
+            assert old[5]() == ["KR"]
+        finally:
+            picker.session_minutes = old_sm
+    finally:
+        im.HISTORY, im.AUTO_FILE, im.VERIFY, im.run, im.apply, im.market_busy, im._notify = old
+        gitsync.enabled = old_git
+
+
+@case
 def 큰_기록을_쓰는_동안에도_다른_기록은_안_기다리고_옛_내용이_새_내용을_안_덮음(at, picker, tmp):
     from engine import store
     big, small = tmp / "big.json", tmp / "small.json"

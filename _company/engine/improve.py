@@ -245,7 +245,7 @@ def run(job_id: str, on_text=None, on_activity=None, model: str | None = None) -
     exe = pv.claude_cli()
     if not exe:
         raise pv.ProviderError("Claude Code 가 없어서 변경안을 만들 수 없어요")
-    _update(job_id, status="working")
+    _update(job_id, status="working", started=datetime.now().isoformat(timespec="seconds"))
     box = _make_sandbox(job_id)
     prompt = DEV_PROMPT.format(protected=", ".join(sorted(PROTECTED)), trading=", ".join(sorted(TRADING)), request=job["request"] + (f"\n(이유: {job['why']})" if job.get("why") else ""))
     cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -351,7 +351,9 @@ def discard(job_id: str) -> dict:
 AUTO_FILE = COMPANY_DIR / "_cache" / "improve_auto.json"     # _cache 라 개발 AI 가 못 건드림
 VERIFY = COMPANY_DIR / "_cache" / "improve_verify.json"      # engine/guard.py 와 같이 씀
 ROLLED = COMPANY_DIR / "_cache" / "improve_rolled_back.json"
-AUTO_DAILY_MAX = 6
+AUTO_DAILY_MAX = 6      # 하루 '적용 성공' 횟수 (검사 실패·보류는 안 셈)
+AUTO_DAILY_TRY = 12     # 하루 시도 횟수 (개발 AI 사용량 한도)
+STALE_SEC = TIMEOUT + 300   # 이보다 오래 '작업 중'이면 앱이 꺼지면서 멈춘 것
 
 
 def auto_on() -> bool:
@@ -409,9 +411,36 @@ def boot_check(log, restart) -> None:
     threading.Thread(target=confirm, daemon=True, name="improve-confirm").start()
 
 
-def _today_auto() -> int:
+def _today_auto(key: str = "auto_ok") -> int:
+    """오늘 자동 개선 횟수 — key='auto_ok' 적용 성공 · 'auto_at' 시도"""
     day = datetime.now().strftime("%Y-%m-%d")
-    return sum(1 for r in _load() if r.get("auto_at", "").startswith(day))
+    return sum(1 for r in _load() if (r.get(key) or "").startswith(day))
+
+
+def clear_stale(now: datetime | None = None) -> list[str]:
+    """작업 도중 앱이 꺼져 '작업 중'으로 남은 것 → '실패(중단됨)' 로 정리 (안 하면 자동 개선이 영영 대기)"""
+    cutoff = ((now or datetime.now()) - timedelta(seconds=STALE_SEC)).isoformat(timespec="seconds")
+    out = []
+    with _lock:
+        rows = _load()
+        for r in rows:
+            if r.get("status") == "working" and (r.get("started") or r.get("time") or "") < cutoff:
+                r["status"] = "failed"
+                r["summary"] = ((r.get("summary") or "") + "\n중단됨 — 작업 중에 앱이 꺼졌어요. 다시 하려면 [다시 만들기]").strip()
+                out.append(r["id"])
+        if out:
+            _save(rows)
+    return out
+
+
+def market_busy(now: datetime | None = None) -> list[str]:
+    """지금 장(프리장 포함)이 열린 시장 — 자동 개선은 재시작이 있을 수 있어 장중엔 시작 안 함"""
+    try:
+        from . import autotrade as at, picker
+        c = at.config()
+        return [m for m in ("KR", "US") if picker.session_minutes(m, now, extended=at._ext(m, c)) is not None]
+    except Exception:
+        return []
 
 
 def auto_once(log, restart) -> str:
@@ -420,11 +449,15 @@ def auto_once(log, restart) -> str:
         return "꺼짐"
     if VERIFY.exists():
         return "확인 중"
+    for jid in clear_stale():
+        log(f"🛠️ 멈춰 있던 개선 작업 정리: {jid} (작업 중에 앱이 꺼졌어요)")
     rows = _load()
     if any(r.get("status") == "working" for r in rows):
         return "다른 작업 중"
-    if _today_auto() >= AUTO_DAILY_MAX:
+    if _today_auto() >= AUTO_DAILY_MAX or _today_auto("auto_at") >= AUTO_DAILY_TRY:
         return "오늘 한도"
+    if market_busy():
+        return "장 중"
     cutoff = (datetime.now() - timedelta(days=2)).isoformat(timespec="seconds")
     job = next((r for r in rows if r.get("status") == "proposed" and not r.get("auto_at") and r.get("time", "") >= cutoff), None)
     if not job:
@@ -444,6 +477,7 @@ def auto_once(log, restart) -> str:
     if not r.get("ok"):
         _notify(f"🛠️ 자동 개선 적용 안 됨: {r.get('message', '')[:120]}", log)
         return "적용 안 됨"
+    _update(job["id"], auto_ok=datetime.now().isoformat(timespec="seconds"))
     try:   # 🔄 GitHub 에도 올리기 (연결돼 있을 때만 · 코드만)
         from . import gitsync
         if gitsync.enabled():
