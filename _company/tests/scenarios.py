@@ -300,6 +300,73 @@ def 생존전_실전_끄면_실전_주문_없음(at, picker, tmp):
     arena.ai_json = lambda prompt: None
 
 
+def _arena_fill(rets, ctrl_ret, sit="", age_days=0):
+    """참가자 i 에게 rets[i] 수익 거래 30건, 대조군에 ctrl_ret 거래 30건"""
+    from engine import arena
+    t = (datetime.now(arena.KST) - timedelta(days=age_days)).strftime("%Y-%m-%d %H:%M:%S")
+    tr = lambda r: [{"sym": "X", "day": "D", "ret": r, "why": "t", "mins": 5, "t": t, "sit": sit} for _ in range(30)]
+    d = arena.load("US", len(rets))
+    for a, r in zip(d["alive"], rets):
+        a["trades"] = tr(r)
+    d["ctrl"]["trades"] = tr(ctrl_ret)
+    arena._save("US", d)
+    return d
+
+
+@case
+def 무작위_대조군보다_못하면_실전_자격_없음(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    _arena_fill([0.5, 0.6], ctrl_ret=0.8)   # 둘 다 플러스지만 동전 던지기보다 못함
+    arena.evolve({**at.config(), "arena_on": True}, "US")
+    assert arena.load("US").get("live") == [], ("대조군보다 못한 AI 가 실전 자격을 받음", arena.load("US").get("live"))
+
+
+@case
+def 대조군을_넘은_만큼_비중을_나누고_약한_AI_만_찬성하면_금액_줄임(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    d = _arena_fill([2.0, 0.6], ctrl_ret=0.2)
+    strong, weak = d["alive"][0]["id"], d["alive"][1]["id"]
+    arena.evolve({**at.config(), "arena_on": True}, "US")
+    d = arena.load("US")
+    assert d["live"] == [strong, weak], d["live"]
+    assert d["weights"][strong] > d["weights"][weak], d["weights"]
+    d.setdefault("votes", {})["D1"] = {"ZZZ": [weak]}; arena._save("US", d)
+    vs, who = arena.live_vote("US", "D1", "ZZZ")
+    assert vs == "yes" and who["size"] < 1, ("약한 AI 만 찬성했는데 금액을 안 줄임", vs, who)
+    d["votes"]["D1"]["ZZZ"] = [strong, weak]; arena._save("US", d)
+    assert arena.live_vote("US", "D1", "ZZZ")[1]["size"] == 1.0
+
+
+@case
+def 지금_상황에서_대조군보다_못했던_AI_판단은_실전_안_감(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    d = _arena_fill([-1.0, 0.0], ctrl_ret=0.5, sit="장 초반·하락장")
+    d["alive"][0]["trades"] += [{"sym": "Y", "day": "D", "ret": 3.0, "why": "t", "mins": 5, "t": "", "sit": "전반·상승장"} for _ in range(40)]
+    d["live"] = [d["alive"][0]["id"]]; d.setdefault("votes", {})["D1"] = {"ZZZ": [d["alive"][0]["id"]]}
+    arena._save("US", d)
+    old = arena._situation_now
+    try:
+        arena._situation_now = lambda c, m: "장 초반·하락장"
+        vs, who = arena.live_vote("US", "D1", "ZZZ")
+        assert vs == "no" and who and who["skipped"], ("약했던 상황인데 실전으로 감", vs, who)
+        arena._situation_now = lambda c, m: "전반·상승장"
+        assert arena.live_vote("US", "D1", "ZZZ")[0] == "yes", "잘했던 상황인데 막힘"
+    finally:
+        arena._situation_now = old
+
+
+@case
+def 오래된_성적은_덜_침(at, picker, tmp):
+    from engine import arena
+    old = [{"ret": 5.0, "t": (datetime.now(arena.KST) - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")}] * 10
+    new = [{"ret": -1.0, "t": datetime.now(arena.KST).strftime("%Y-%m-%d %H:%M:%S")}] * 10
+    w = arena._wavg(old + new, 14)
+    assert w < 0, ("두 달 전 좋은 성적이 최근 나쁜 성적을 덮음", w)
+
+
 def main() -> int:
     print("🧪 매매 흐름 시나리오 시험")
     at, picker, tmp, _ = setup()

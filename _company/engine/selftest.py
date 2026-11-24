@@ -467,7 +467,9 @@ def AI_생존전_가상_공부와_상위_실전_자격():
             assert len(dd["alive"]) == 3, ("탈락 없이 전원 남아야 함", msg)
             assert dd["live"] == [ids[0]], ("성적 플러스인 0번만 실전 자격", dd.get("live"), msg)   # 1번(마이너스)·2번(거래 없음)은 가상
             assert "성적 발표" in msg and arena.champion_text("US")
-            assert arena.live_vote("US", "D", "S0") == ("yes", {"id": ids[0], "name": dd["alive"][0]["name"], "rank": 1})
+            vs_, who_ = arena.live_vote("US", "D", "S0")
+            assert vs_ == "yes" and (who_["id"], who_["name"], who_["rank"]) == (ids[0], dd["alive"][0]["name"], 1), (vs_, who_)
+            assert who_["size"] == 1.0, ("실전 자격 1명이 찬성하면 금액 그대로", who_)
             dd["alive"][0]["trades"] += [{"sym": "Z", "day": "D", "ret": -9.0, "why": "t", "mins": 1, "t": ""} for _ in range(6)]
             arena._save("US", dd)
             assert arena.recheck(c, "US") and arena.load("US")["live"] == [], "성적 떨어지면 바로 자격 내림"

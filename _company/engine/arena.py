@@ -7,9 +7,15 @@
 - 매도: 참가자마다 자기 익절·손절·최대 보유 시간 + 마감 전 정리 (단타)
 - 체결: 0.1% 불리하게 + 수수료·세금 (실전 가상 매매와 같게)
 - 매주 토요일 아침(주말 공부) 성적 발표(텔레그램) · 탈락 없음 — 전원 가상 매매로 계속 같이 공부
-- 💰 실전 자격: 거래 arena_min_trades 건↑ · 최근 평균 플러스 · 앞·뒤 절반 모두 플러스인 참가자 중 상위 arena_live_n(2)명
+- 🎲 무작위 대조군: AI 판단 없이 같은 후보를 같은 빈도로 '동전 던지기'로 사고, 같은 방식으로 팖
+  → 이 대조군보다 확실히 나아야 실력으로 인정 (운으로 1등 한 AI 에 실전 돈이 가지 않게)
+- ⏳ 성적은 최근 거래일수록 크게 침 (arena_half_life_days 일 지나면 절반 무게)
+- 🧭 상황별 성적: 산 시점의 장 구간(프리장·장 초반·전반·후반) × 지수 분위기(하락·보합·상승) 로 따로 기록
+  → 지금 상황에서 표본이 충분한데 대조군보다 못했던 AI 의 '산다'는 실전으로 안 감
+- 💰 실전 자격: 거래 arena_min_trades 건↑ · 최근 평균 플러스 · 앞·뒤 절반 모두 플러스 · 대조군보다 arena_ctrl_margin %p↑
+  인 참가자 중 상위 arena_live_n 명 — 대조군을 넘은 만큼 비중(weights)을 나눠, 약한 AI 판단은 금액을 줄여서 삼
   → 이 AI 가 '산다'고 한 종목은 실전 엔진이 실전으로 매수 (주문은 실전 엔진이 기존 안전장치 그대로: 현금만·봇 장부·손실 한도·추격 확인)
-  → 매일 복기 때 평균이 마이너스로 떨어지면 바로 자격 내림 (가상으로 돌아가 다시 공부)
+  → 매일 복기 때 자격 조건에서 떨어지면 바로 자격 내림 (가상으로 돌아가 다시 공부)
 - 🏆 1등 전략은 2호 급등주 AI 판단에도 참고로 붙임
 기록: _cache/arena_{US|KR}.json
 """
@@ -46,6 +52,16 @@ SEEDS = [
     {"name": "돌파", "persona": "장 초반 고점·전일 고점을 거래량과 함께 뚫는 순간만. 뚫지 못하면 안 삼.", "tp": 5.0, "sl": 2.5, "hold": 120},
     {"name": "통계파", "persona": "학습 기록의 비슷한 거래 표본이 많고 승률 50%↑일 때만. 차트 모양보다 숫자를 믿음.", "tp": 3.0, "sl": 2.0, "hold": 90},
 ]
+# 🎲 대조군: AI 판단 없이 무작위로 삼 · 파는 규칙은 참가자들의 중간값 (실력 비교 기준 — 실전 자격·1등 대상 아님)
+CTRL_SEED = {"name": "무작위 대조군", "persona": "AI 판단 없이 같은 후보를 같은 빈도로 동전 던지기로 삼 (실력 비교 기준)",
+             "tp": 4.0, "sl": 2.5, "hold": 90}
+CTRL_P_DEFAULT = 0.35   # 참가자들이 '산다'고 한 비율을 아직 모를 때 대조군 매수 확률
+
+HALF_LIFE_DAYS = 14     # 기본: 14일 지난 거래는 절반 무게
+SIT_MIN = 8             # 상황별 판단에 쓸 최소 거래 수
+CTRL_MARGIN = 0.3       # 기본: 대조군보다 평균 +0.3%p 이상이어야 실력으로 인정
+SESSIONS = ("프리장", "장 초반", "전반", "후반")
+MOODS = ("하락장", "보합", "상승장")
 
 
 def _file(m: str):
@@ -65,6 +81,9 @@ def _new(seed: dict, gen: int = 1, parent: str = "") -> dict:
 def load(m: str, size: int | None = None) -> dict:
     d = store.load(_file(m), lambda: {})
     d.setdefault("alive", []); d.setdefault("dead", []); d.setdefault("seen", {}); d.setdefault("calls", {}); d.setdefault("champion", None)
+    if not d.get("ctrl"):
+        d["ctrl"] = {**_new(CTRL_SEED), "id": "ctrl", "ctrl": True}
+    d.setdefault("vote_stats", {"asked": 0, "yes": 0})
     used = {a["name"] for a in d["alive"]} | {x["name"] for x in d["dead"]}   # 탈락한 전략은 다시 안 들어옴
     for s in SEEDS if size else []:
         if len(d["alive"]) >= size:
@@ -74,9 +93,14 @@ def load(m: str, size: int | None = None) -> dict:
     return d
 
 
+def _all(d: dict) -> list[dict]:
+    """참가자 + 대조군 (보유 정리·시세 조회용)"""
+    return d["alive"] + ([d["ctrl"]] if d.get("ctrl") else [])
+
+
 def _save(m: str, d: dict) -> None:
     d["dead"] = d["dead"][-30:]
-    for a in d["alive"]:
+    for a in _all(d):
         a["trades"] = a["trades"][-200:]
     store.save(_file(m), d)
 
@@ -87,6 +111,66 @@ def _ret(buy: float, sell: float, m: str) -> float:
 
 def _avg(ts: list) -> float:
     return st.mean(t["ret"] for t in ts) if ts else 0.0
+
+
+def _age_days(t: dict, now: datetime | None = None) -> float:
+    try:
+        when = datetime.strptime(t.get("t") or "", "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+    except ValueError:
+        return 0.0
+    return max(0.0, ((now or datetime.now(KST)) - when).total_seconds() / 86400)
+
+
+def _wavg(ts: list, half_life: float = HALF_LIFE_DAYS, now: datetime | None = None) -> float:
+    """⏳ 최근 거래일수록 크게 친 평균 수익률(%) — half_life 일 지나면 절반 무게"""
+    if not ts:
+        return 0.0
+    hl = max(1.0, float(half_life or HALF_LIFE_DAYS))
+    w = [0.5 ** (_age_days(t, now) / hl) for t in ts]
+    return sum(wi * t["ret"] for wi, t in zip(w, ts)) / sum(w)
+
+
+def _hl(c: dict | None) -> float:
+    return float((c or {}).get("arena_half_life_days", HALF_LIFE_DAYS))
+
+
+# ── 🧭 상황 ──
+def situation(market: str, minutes, index_chg) -> str:
+    """'장 구간·지수 분위기' 한 단어 (예: '장 초반·하락장'). 모르면 구간만"""
+    if minutes is None:
+        sess = ""
+    elif minutes < 0:
+        sess = "프리장"
+    elif minutes < 30:
+        sess = "장 초반"
+    elif minutes < 195:
+        sess = "전반"
+    else:
+        sess = "후반"
+    mood = "" if index_chg is None else ("하락장" if index_chg <= -1 else "상승장" if index_chg >= 1 else "보합")
+    return "·".join(x for x in (sess, mood) if x)
+
+
+def _situation_now(c: dict | None, market: str) -> str:
+    try:
+        from . import extras, picker
+        mins = picker.session_minutes(market, extended=market == "US" and bool((c or {}).get("us_premarket")))
+        try:
+            chg = extras.index_change(market)
+        except Exception:
+            chg = None
+        return situation(market, mins, chg)
+    except Exception:
+        return ""
+
+
+def sit_stats(a: dict, half_life: float = HALF_LIFE_DAYS) -> dict:
+    """상황별 {상황: {"n": 건수, "avg": 최근 가중 평균}}"""
+    by: dict[str, list] = {}
+    for t in a["trades"]:
+        if t.get("sit"):
+            by.setdefault(t["sit"], []).append(t)
+    return {k: {"n": len(v), "avg": round(_wavg(v, half_life), 2)} for k, v in by.items()}
 
 
 # ── 매 바퀴 ──
@@ -100,7 +184,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     cands = {k: v for k, v in (cands or {}).items() if (v.get("style") or "surge") == "surge"}   # 단타 후보만
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
-        held = {s for a in d["alive"] for s in a["pos"]}
+        held = {s for a in _all(d) for s in a["pos"]}
         need = [s for s in held if not quotes.get(s)]
     if need and price_fn:
         try:
@@ -111,7 +195,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     now = time.time()
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
-        for a in d["alive"]:
+        for a in _all(d):
             for sym, p in list(a["pos"].items()):
                 px = float(quotes.get(sym) or 0)
                 if not px:
@@ -123,7 +207,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
                 if why:
                     ret = _ret(p["px"], px, market)
                     a["trades"].append({"sym": sym, "day": p.get("day", day), "ret": round(ret, 3), "why": why,
-                                        "mins": round(mins), "t": _now()})
+                                        "mins": round(mins), "t": _now(), "sit": p.get("sit", "")})
                     del a["pos"][sym]
                     out.append(f"🏟️ {a['name']} {sym} {why} {ret:+.2f}%")
         # 새 후보 → 참가자 전원 판단 (한 종목 하루 1번)
@@ -169,26 +253,42 @@ def _notes(market: str) -> str:
     return " / ".join(x for x in out if x)[:1500]
 
 
+def _ctrl_p(d: dict) -> float:
+    """🎲 대조군 매수 확률 = 지금까지 참가자들이 '산다'고 한 비율 (같은 빈도로 무작위)"""
+    vs = d.get("vote_stats") or {}
+    asked, yes = int(vs.get("asked", 0)), int(vs.get("yes", 0))
+    if asked < 20:
+        return CTRL_P_DEFAULT
+    return min(0.9, max(0.05, yes / asked))
+
+
 def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn) -> None:
     try:
         with _lock:
             alive = [{"id": a["id"], "name": a["name"], "persona": a["persona"]} for a in load(market)["alive"]]
         e = cd.get("est") or {}
+        notes = _notes(market)
         prompt = ("AI 생존전: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매).\n"
                   f"종목 {sym} 현재가 {price} · 고른 이유: {cd.get('reason', '')}\n"
                   + (f"학습 추정: 승률 {float(e.get('p', 0)) * 100:.0f}% · 기대 수익 {float(e.get('ev', 0)):+.2f}%\n" if e else "")
-                  + (f"공유 노트(모든 AI 가 같이 배운 것 — 각자 성격에 맞게 참고): {_notes(market)}\n" if _notes(market) else "")
+                  + (f"공유 노트(모든 AI 가 같이 배운 것 — 각자 성격에 맞게 참고): {notes}\n" if notes else "")
                   + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" for a in alive)
                   + '\n형식: {"참가자id": true/false, ...} (성격에 맞을 때만 true)')
         r = ai_fn(prompt) if ai_fn else None
         if not isinstance(r, dict):
             return
+        sit = _situation_now(c, market)
         with _lock:
             d = load(market)
             yes = [a["id"] for a in d["alive"] if r.get(a["id"]) is True]
             for a in d["alive"]:
                 if a["id"] in yes and sym not in a["pos"] and len(a["pos"]) < MAX_POS:
-                    a["pos"][sym] = {"px": price, "t": time.time(), "day": day}
+                    a["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit}
+            ctrl = d["ctrl"]   # 🎲 대조군: 같은 후보를 같은 빈도로 무작위 매수
+            if sym not in ctrl["pos"] and len(ctrl["pos"]) < MAX_POS and random.random() < _ctrl_p(d):
+                ctrl["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit}
+            vs = d["vote_stats"]
+            vs["asked"] = int(vs.get("asked", 0)) + len(d["alive"]); vs["yes"] = int(vs.get("yes", 0)) + len(yes)
             v = d.setdefault("votes", {})
             for k in [k for k in v if k != day]:
                 v.pop(k, None)
@@ -223,8 +323,21 @@ def kick(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn
     return True
 
 
-def live_vote(market: str, day: str, sym: str) -> tuple[str, dict | None]:
-    """실전 자격 AI 의 판단: ('pending'|'unseen'|'no'|'yes', 찬성한 실전 AI)"""
+def _weak_here(a: dict, ctrl: dict, sit: str, half_life: float) -> bool:
+    """🧭 지금 상황에서 표본이 충분한데 대조군보다 못했으면 True"""
+    if not sit:
+        return False
+    mine = [t for t in a["trades"] if t.get("sit") == sit]
+    if len(mine) < SIT_MIN:
+        return False
+    base = [t for t in ctrl["trades"] if t.get("sit") == sit]
+    bar = _wavg(base, half_life) if len(base) >= SIT_MIN else 0.0
+    return _wavg(mine, half_life) <= bar
+
+
+def live_vote(market: str, day: str, sym: str, c: dict | None = None) -> tuple[str, dict | None]:
+    """실전 자격 AI 의 판단: ('pending'|'unseen'|'no'|'yes', 찬성한 실전 AI)
+    찬성 AI 정보엔 size(0.25~1.0): 찬성한 AI 들의 비중 합 × 자격 인원 — 약한 AI 만 찬성하면 금액을 줄임 (늘리지는 않음)"""
     if f"{market}:{sym}" in _pending:
         return "pending", None
     d = load(market)
@@ -235,46 +348,92 @@ def live_vote(market: str, day: str, sym: str) -> tuple[str, dict | None]:
     if sym not in v:
         return ("no" if sym in d["seen"].get(day, []) else "unseen"), None
     by = {a["id"]: a for a in d["alive"]}
+    sit = _situation_now(c, market)
+    hl = _hl(c)
+    weights = d.get("weights") or {}
+    yes, skipped = [], []
     for i, aid in enumerate(live):
         if aid in v[sym] and aid in by:
-            return "yes", {"id": aid, "name": by[aid]["name"], "rank": i + 1}
-    return "no", None
+            if _weak_here(by[aid], d["ctrl"], sit, hl):
+                skipped.append(by[aid]["name"])
+            else:
+                yes.append((i, aid))
+    if not yes:
+        return "no", ({"skipped": skipped, "sit": sit} if skipped else None)
+    i, aid = yes[0]
+    share = sum(float(weights.get(a, 1 / len(live))) for _, a in yes)
+    size = round(min(1.0, max(0.25, share * len(live))), 2)
+    return "yes", {"id": aid, "name": by[aid]["name"], "rank": i + 1, "size": size, "sit": sit,
+                   "with": [by[a]["name"] for _, a in yes[1:]]}
 
 
-def _qualified(a: dict, min_n: int) -> bool:
+def _ctrl_avg(d: dict, c: dict | None = None) -> float:
+    ts = d["ctrl"]["trades"][-30:] if d.get("ctrl") else []
+    return _wavg(ts, _hl(c)) if len(ts) >= 5 else 0.0
+
+
+def _qualified(a: dict, min_n: int, ctrl_avg: float = 0.0, margin: float = CTRL_MARGIN, half_life: float = HALF_LIFE_DAYS) -> bool:
     ts = a["trades"][-max(min_n, 30):]
     h = len(ts) // 2
-    return len(a["trades"]) >= min_n and _avg(ts) > 0 and _avg(ts[:h]) > 0 and _avg(ts[h:]) > 0
+    return (len(a["trades"]) >= min_n and _avg(ts) > 0 and _avg(ts[:h]) > 0 and _avg(ts[h:]) > 0
+            and _wavg(ts, half_life) > max(0.0, ctrl_avg) + margin)
+
+
+def _edge(a: dict, ctrl_avg: float, half_life: float) -> float:
+    """대조군보다 얼마나 나은지 (%p, 최근 가중)"""
+    return _wavg(a["trades"][-30:], half_life) - ctrl_avg
+
+
+def _weights(alive_live: list[dict], ctrl_avg: float, half_life: float) -> dict:
+    """💰 실전 자격 AI 들의 비중 — 대조군을 넘은 만큼 나눔 (합 1)"""
+    ed = {a["id"]: max(0.01, _edge(a, ctrl_avg, half_life)) for a in alive_live}
+    tot = sum(ed.values())
+    return {k: round(v / tot, 3) for k, v in ed.items()} if tot else {}
 
 
 def recheck(c: dict, market: str) -> str:
-    """매일 복기: 실전 자격 AI 중 성적이 떨어진 AI 는 바로 자격 내림"""
+    """매일 복기: 실전 자격 AI 중 성적이 떨어진 AI 는 바로 자격 내림 · 비중 다시 계산"""
     min_n = int(c.get("arena_min_trades", 20))
+    margin, hl = float(c.get("arena_ctrl_margin", CTRL_MARGIN)), _hl(c)
     with _lock:
         d = load(market)
         by = {a["id"]: a for a in d["alive"]}
-        drop = [i for i in d.get("live") or [] if i not in by or not _qualified(by[i], min_n)]
-        if not drop:
-            return ""
-        d["live"] = [i for i in d["live"] if i not in drop]
+        ca = _ctrl_avg(d, c)
+        drop = [i for i in d.get("live") or [] if i not in by or not _qualified(by[i], min_n, ca, margin, hl)]
+        d["live"] = [i for i in d.get("live") or [] if i not in drop]
+        d["weights"] = _weights([by[i] for i in d["live"]], ca, hl)
         _save(market, d)
-    return "🏟️ 실전 자격 내림: " + ", ".join(by[i]["name"] if i in by else i for i in drop) + " (성적이 떨어져서 가상으로 다시 공부)"
+    if not drop:
+        return ""
+    return "🏟️ 실전 자격 내림: " + ", ".join(by[i]["name"] if i in by else i for i in drop) + " (성적이 떨어지거나 무작위 대조군보다 못해서 가상으로 다시 공부)"
 
 
 # ── 성적 ──
-def score(a: dict, n: int = 30) -> dict:
+def score(a: dict, n: int = 30, half_life: float = HALF_LIFE_DAYS) -> dict:
     ts = a["trades"][-n:]
     if not ts:
-        return {"n": len(a["trades"]), "avg": 0.0, "win": 0}
-    return {"n": len(a["trades"]), "avg": round(_avg(ts), 2), "win": round(sum(t["ret"] > 0 for t in ts) / len(ts) * 100)}
+        return {"n": len(a["trades"]), "avg": 0.0, "wavg": 0.0, "win": 0}
+    return {"n": len(a["trades"]), "avg": round(_avg(ts), 2), "wavg": round(_wavg(ts, half_life), 2),
+            "win": round(sum(t["ret"] > 0 for t in ts) / len(ts) * 100)}
 
 
-def board(market: str) -> list[dict]:
+def board(market: str, c: dict | None = None) -> list[dict]:
     d = load(market)
+    hl = _hl(c)
     live = d.get("live") or []
-    rows = [{"name": a["name"], "gen": a["gen"], "live": (live.index(a["id"]) + 1) if a["id"] in live else 0, "persona": a["persona"], "tp": a["tp"], "sl": a["sl"], "hold": a["hold"],
-             "held": len(a["pos"]), **score(a)} for a in d["alive"]]
-    return sorted(rows, key=lambda r: (-(r["n"] >= 5), -r["avg"]))
+    weights = d.get("weights") or {}
+    ca = _ctrl_avg(d, c)
+
+    def row(a: dict, is_ctrl: bool = False) -> dict:
+        sc = score(a, half_life=hl)
+        return {"name": a["name"], "gen": a.get("gen", 1), "ctrl": is_ctrl,
+                "live": (live.index(a["id"]) + 1) if a["id"] in live else 0,
+                "weight": round(float(weights.get(a["id"], 0)) * 100) if a["id"] in live else 0,
+                "persona": a["persona"], "tp": a["tp"], "sl": a["sl"], "hold": a["hold"], "held": len(a["pos"]),
+                "edge": None if is_ctrl or sc["n"] < 5 else round(sc["wavg"] - ca, 2),
+                "sits": sit_stats(a, hl), **sc}
+    rows = sorted((row(a) for a in d["alive"]), key=lambda r: (-(r["n"] >= 5), -r["wavg"]))
+    return rows + [row(d["ctrl"], True)]
 
 
 def text(market: str) -> str:
@@ -282,7 +441,9 @@ def text(market: str) -> str:
     if not rows:
         return ""
     ch = load(market).get("champion") or {}
-    return ("🏟️ AI 생존전: " + " · ".join(("💰" if r["live"] else "") + r["name"] + f" {r['n']}건 {r['avg']:+.2f}%" for r in rows)
+    ctrl = next((r for r in rows if r["ctrl"]), None)
+    return ("🏟️ AI 생존전: " + " · ".join(("💰" if r["live"] else "") + r["name"] + f" {r['n']}건 {r['wavg']:+.2f}%" for r in rows if not r["ctrl"])
+            + (f" · 🎲 대조군 {ctrl['n']}건 {ctrl['wavg']:+.2f}%" if ctrl else "")
             + (f" · 🏆 {ch['name']}" if ch.get("name") else "") + (" · 💰=실전 자격" if any(r["live"] for r in rows) else ""))
 
 
@@ -294,49 +455,55 @@ def champion_text(market: str) -> str:
     return f"🏆 AI 생존전 1등 전략(가상 {ch['n']}건 평균 {ch['avg']:+.2f}%) — 참고: {ch['persona']}"
 
 
-# ── 매주: 탈락·교체 ──
+# ── 매주: 성적 발표 · 실전 자격 ──
 def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "") -> str:
-    """주말 공부(토요일 아침): 전원 성적 발표 · 탈락 없음 · 상위 arena_live_n 명에게 실전 자격"""
+    """주말 공부(토요일 아침): 전원 성적 발표 · 탈락 없음 · 대조군을 넘은 상위 arena_live_n 명에게 실전 자격·비중"""
     if not c.get("arena_on"):
         return ""
     min_n = int(c.get("arena_min_trades", 20))
     n_live = int(c.get("arena_live_n", 2))
+    margin, hl = float(c.get("arena_ctrl_margin", CTRL_MARGIN)), _hl(c)
     msg = []
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
-        alive = sorted(d["alive"], key=lambda a: -score(a)["avg"])
-        q = [a for a in alive if _qualified(a, min_n)][:n_live]
+        ca = _ctrl_avg(d, c)
+        alive = sorted(d["alive"], key=lambda a: -_edge(a, ca, hl))
+        q = [a for a in alive if _qualified(a, min_n, ca, margin, hl)][:n_live]
         old = set(d.get("live") or [])
         d["live"] = [a["id"] for a in q]
+        d["weights"] = _weights(q, ca, hl)
         best = q[0] if q else None
         if best:
-            sb = score(best)
+            sb = score(best, half_life=hl)
             d["champion"] = {"name": best["name"], "persona": best["persona"], "tp": best["tp"], "sl": best["sl"],
                              "hold": best["hold"], "t": _now(), **sb}
         else:
             d["champion"] = None
+        ctrl_sc = score(d["ctrl"], half_life=hl)
         _save(market, d)
     new = [a["name"] for a in q if a["id"] not in old]
     gone = [a["name"] for a in alive if a["id"] in old and a["id"] not in d["live"]]
     if q:
-        msg.append("💰 실전 자격: " + ", ".join(f"{i + 1}등 {a['name']}" for i, a in enumerate(q)) + (f" (새로: {', '.join(new)})" if new else ""))
+        msg.append("💰 실전 자격: " + ", ".join(f"{i + 1}등 {a['name']} (비중 {d['weights'].get(a['id'], 0) * 100:.0f}%)" for i, a in enumerate(q))
+                   + (f" (새로: {', '.join(new)})" if new else ""))
     else:
-        msg.append(f"💰 실전 자격 아직 없음 (거래 {min_n}건↑ · 평균 플러스 · 앞뒤 절반 모두 플러스인 AI 가 나오면)")
+        msg.append(f"💰 실전 자격 아직 없음 (거래 {min_n}건↑ · 평균 플러스 · 앞뒤 절반 모두 플러스 · 🎲 대조군보다 +{margin:g}%p↑ 인 AI 가 나오면)")
     if gone:
         msg.append("⬇️ 가상으로: " + ", ".join(gone))
     if add_lesson and best:
-        add_lesson(market, f"[생존전 1등] '{best['persona'][:80]}' 전략이 {score(best)['n']}건 평균 {score(best)['avg']:+.2f}%", "AI 생존전")
-    rows = board(market)   # 📣 성적 발표: 전원 순위
-    live = set(d["live"])
-    ids = {a["name"]: a["id"] for a in d["alive"]}
-    rank = [f"{i + 1}. {'💰' if ids.get(r['name']) in live else '📘'} {r['name']} — {r['n']}건 평균 {r['avg']:+.2f}% 승률 {r['win']}%"
-            + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(rows)]
-    return "🏟️ AI 생존전 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + "\n".join(msg)
+        add_lesson(market, f"[생존전 1등] '{best['persona'][:80]}' 전략이 {score(best)['n']}건 평균 {score(best)['avg']:+.2f}% (무작위 대조군 {ca:+.2f}%)", "AI 생존전")
+    rows = board(market, c)   # 📣 성적 발표: 전원 순위
+    rank = [f"{i + 1}. {'💰' if r['live'] else '📘'} {r['name']} — {r['n']}건 최근 평균 {r['wavg']:+.2f}% 승률 {r['win']}%"
+            + (f" · 대조군 대비 {r['edge']:+.2f}%p" if r["edge"] is not None else "")
+            + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(x for x in rows if not x["ctrl"])]
+    ctrl_line = f"🎲 무작위 대조군 — {ctrl_sc['n']}건 최근 평균 {ctrl_sc['wavg']:+.2f}% 승률 {ctrl_sc['win']}% (이보다 나아야 실력)"
+    return "🏟️ AI 생존전 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + ctrl_line + "\n" + "\n".join(msg)
 
 
-def overview(market: str) -> dict:
+def overview(market: str, c: dict | None = None) -> dict:
     d = load(market)
-    return {"board": board(market), "champion": d.get("champion"), "text": text(market)}
+    return {"board": board(market, c), "champion": d.get("champion"), "text": text(market),
+            "situation": _situation_now(c, market), "ctrl_p": round(_ctrl_p(d) * 100)}
 
 
 def ai_json(prompt: str) -> dict | None:
