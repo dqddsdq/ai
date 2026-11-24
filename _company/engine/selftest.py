@@ -152,7 +152,7 @@ def GitHub_동기화는_코드만():
     from . import gitsync
     for p in gitsync.SYNC_PATHS:
         assert not any(n in p for n in gitsync.NEVER), p
-        assert p.startswith("_company/engine") or p.startswith("_company/_agents/trader/") or p == "_company/requirements.txt", p
+        assert p.startswith(("_company/engine", "_company/tests")) or p.startswith("_company/_agents/trader/") or p == "_company/requirements.txt", p
     for n in (".env", "_cache/", "autotrade.json", "sessions/", "memory.md"):
         assert n in gitsync.NEVER, n
 
@@ -392,6 +392,87 @@ def 추가_관문은_사는_것만_줄임():
     import inspect
     src = inspect.getsource(extras.daily_backup)
     assert "toss.TOKEN_CACHE.name" in src, "백업에 토스 토큰이 들어가면 안 돼요"
+
+
+@case
+def 켜기끄기_설정은_전부_저장됨():
+    from . import autotrade as at
+    import inspect
+    src = inspect.getsource(at.save_config)
+    assert "isinstance(v, bool)" in src, "새로 추가한 켜기/끄기 설정이 저장 목록에서 빠지면 안 돼요"
+
+
+@case
+def 원인별_수정_분류():
+    from . import fixloop
+    p = {"stop_loss_pct": 3, "trail_pct": 4, "surge_volume_ratio": 3}
+    ts = [{"ret": -4, "mfe": 0.1, "why": "손절", "pre": False, "ratio": 6, "minute": 30},
+          {"ret": -1, "mfe": 4.0, "why": "고점 대비", "pre": False, "ratio": 6, "minute": 30},
+          {"ret": 2, "mfe": 3.0, "why": "익절", "pre": True, "ratio": 1, "minute": -30}]
+    cs = fixloop.causes(ts, p)
+    assert cs[0]["cause"] == "사자마자 떨어짐" and cs[0]["loss_share"] == 80, cs
+    assert any(c["cause"] == "이익을 돌려줌" for c in cs)
+
+
+@case
+def 자동_규칙_변경은_하루_1번():
+    import time as _t
+    from . import extras
+    from . import store
+    with tempfile.TemporaryDirectory() as d:
+        orig = extras.RULE_LOG
+        extras.RULE_LOG = Path(d) / "rule.json"
+        try:
+            assert extras.rule_gate(["stop_loss_pct"])[0]
+            extras.rule_record({"stop_loss_pct": 3}, {"stop_loss_pct": 3.5})
+            assert extras.rule_gate(["trail_pct"])[0]                       # 같은 자동 조정(3분 안)은 한 번으로 침
+            dd = store.load(extras.RULE_LOG); dd["items"][0]["ts"] = _t.time() - 600; store.save(extras.RULE_LOG, dd)
+            assert not extras.rule_gate(["trail_pct"])[0]                   # 오늘 또 바꾸려면 막힘
+            assert extras.rule_gate(["mode", "lane_share_surge"])[0]        # 안전·배분은 예외
+        finally:
+            extras.RULE_LOG = orig
+
+
+@case
+def AI_생존전_가상_공부와_상위_실전_자격():
+    import re as _re
+    from . import arena
+    src = (Path(arena.__file__)).read_text(encoding="utf-8")
+    code = "\n".join(x for x in src.splitlines() if not x.strip().startswith("#") and '"""' not in x)
+    assert not _re.search(r"place_limit_order|cancel_order|toss\.", code), "생존전이 주문·토스를 직접 부름"
+    with tempfile.TemporaryDirectory() as d:
+        orig = arena._file
+        arena._file = lambda m: Path(d) / f"arena_{m}.json"
+        try:
+            c = {"arena_on": True, "arena_size": 3, "arena_ai_per_day": 10, "arena_min_trades": 4}
+            dd = arena.load("US", 3); ids = [a["id"] for a in dd["alive"]]; arena._save("US", dd)
+            assert len(ids) == 3
+            cd = {"style": "surge", "reason": "t", "est": {"p": 0.5, "ev": 0.1}}
+            for i in range(5):   # 0번은 매번 사서 +5%, 1번은 사서 -5%, 2번은 안 삼
+                sym = f"S{i}"
+                arena.step(c, "US", {sym: cd}, {sym: {"price": 100.0}}, 30, "D", ai_fn=lambda p: {ids[0]: True, ids[1]: True})
+                for _ in range(50):
+                    if not arena._pending:
+                        break
+                    import time as _t; _t.sleep(0.05)
+                dd = arena.load("US")
+                assert sym in dd["alive"][0]["pos"] and sym in dd["alive"][1]["pos"] and sym not in dd["alive"][2]["pos"]
+                dd["alive"][1]["pos"][sym]["px"] = 105.0 / 0.94
+                arena._save("US", dd)
+                arena.step(c, "US", {}, {sym: {"price": 105.0}}, 40, "D")      # 0번 +5% 익절 · 1번 -6% 손절
+            sc = {a["id"]: arena.score(a) for a in arena.load("US")["alive"]}
+            assert sc[ids[0]]["n"] == 5 and sc[ids[0]]["avg"] > 0 and sc[ids[1]]["avg"] < 0 and sc[ids[2]]["n"] == 0
+            msg = arena.evolve(c, "US")
+            dd = arena.load("US")
+            assert len(dd["alive"]) == 3, ("탈락 없이 전원 남아야 함", msg)
+            assert dd["live"] == [ids[0]], ("성적 플러스인 0번만 실전 자격", dd.get("live"), msg)   # 1번(마이너스)·2번(거래 없음)은 가상
+            assert "성적 발표" in msg and arena.champion_text("US")
+            assert arena.live_vote("US", "D", "S0") == ("yes", {"id": ids[0], "name": dd["alive"][0]["name"], "rank": 1})
+            dd["alive"][0]["trades"] += [{"sym": "Z", "day": "D", "ret": -9.0, "why": "t", "mins": 1, "t": ""} for _ in range(6)]
+            arena._save("US", dd)
+            assert arena.recheck(c, "US") and arena.load("US")["live"] == [], "성적 떨어지면 바로 자격 내림"
+        finally:
+            arena._file = orig
 
 
 @case

@@ -35,17 +35,19 @@ KST = timezone(timedelta(hours=9))
 VIRTUAL = 1_000_000
 TUNE_KEYS = ["stop_loss_pct", "partial_tp_pct", "take_profit_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct",
              "surge_min_change_pct", "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "swing_stop_pct",
-             "swing_trail_pct", "news_unknown_ratio", "swing_trail_vol"]
+             "swing_trail_pct", "news_unknown_ratio", "swing_trail_vol", "time_stop_min", "surge_min_change_regular", "surge_buy_cutoff_min"]
 GRID = {"stop_loss_pct": [2, 2.5, 3, 4, 5], "partial_tp_pct": [0, 3, 4, 5, 6, 8], "take_profit_pct": [6, 8, 10, 15, 20],
         "trail_pct": [3, 4, 5, 6], "trail_wide_after_pct": [8, 10, 15], "trail_wide_pct": [5, 6, 8],
         "surge_min_change_pct": [5, 7, 10, 15], "surge_max_change_pct": [15, 20, 25, 30, 40], "surge_volume_ratio": [2, 3, 5, 8],
         "pre_volume_ratio": [0.1, 0.2, 0.4], "swing_stop_pct": [4, 6, 8], "swing_trail_pct": [5, 8, 12],
-        "news_unknown_ratio": [1, 0.5, 0.25]}
+        "news_unknown_ratio": [1, 0.5, 0.25], "time_stop_min": [0, 10, 15, 20], "surge_min_change_regular": [8, 12, 16, 20],
+        "surge_buy_cutoff_min": [0, 90, 150, 180, 240]}
 LABEL = {"stop_loss_pct": "손절", "partial_tp_pct": "나눠팔기", "take_profit_pct": "전부익절", "trail_pct": "고점대비",
          "trail_wide_after_pct": "넓힘기준", "trail_wide_pct": "넓은고점대비", "surge_min_change_pct": "급등최소",
          "surge_max_change_pct": "급등최대", "surge_volume_ratio": "거래량배수", "pre_volume_ratio": "프리장거래량",
          "swing_stop_pct": "스윙손절", "swing_trail_pct": "스윙고점대비", "news_unknown_ratio": "이유모를때금액",
-         "swing_trail_vol": "스윙변동성기준"}
+         "swing_trail_vol": "스윙변동성기준", "time_stop_min": "시간손절(분)", "surge_min_change_regular": "정규장급등최소",
+         "surge_buy_cutoff_min": "급등매수마감(분)"}
 N_VARIANTS = 60        # 일반 조합 목표 개수 기본값 (설정 shadow_count 가 있으면 그 값)
 N_MAX = 80             # 기본 목표일 때 이보다 많으면 거래 적은 조합부터 정리
 N_HARD_MAX = 1000      # shadow_count 최대
@@ -295,6 +297,14 @@ def ensure(c: dict, market: str, seeds: list[dict] | None = None, force: bool = 
         if vh not in {_phash(v["params"], c) for v in d["variants"]} | set(d["retired"]):
             d["variants"].append(_new_variant("변동성비교", vb, "스윙 고점 대비: 종목 변동성 자동(3~8%) vs 일괄 기준"))
             changed = True
+        # 💰 이긴 거래 더 크게: +5% 넘으면 고점 대비 기준을 넓혀 더 들고 가기 (실전과 비교 · 나으면 자동 교체)
+        have_ = {_phash(v["params"], c) for v in d["variants"]} | set(d["retired"])
+        for nm, extra in (("넓은익절A", {"trail_wide_after_pct": 5, "trail_wide_pct": 6}),
+                          ("넓은익절B", {"trail_pct": 4, "trail_wide_after_pct": 5, "trail_wide_pct": 8})):
+            wb = _clean({**base, **extra}, c)
+            if wb and _phash(wb, c) not in have_ and not any(v["name"] == nm for v in d["variants"]):
+                d["variants"].append(_new_variant(nm, wb, "+5% 넘으면 고점 대비 기준 넓혀 더 들고 가기"))
+                have_.add(_phash(wb, c)); changed = True
         if seeds:
             have = {_phash(v["params"], c) for v in d["variants"]}
             for sd in seeds[:6]:
@@ -394,6 +404,11 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     side, why = signal_swing(closes, price, p["qty"], p["avg"], p["high"], days, vc)
                 else:
                     side, why = signal_surge(price, p["qty"], p["avg"], p["high"], minutes, False, vc, partial_done=p.get("partial", False))
+                    if side == "HOLD" and not p.get("partial") and p.get("ets"):   # ⏱️ 실전과 같은 시간 손절
+                        from .autotrade import time_stop
+                        tw = time_stop(p["ets"], p["avg"], p["high"], price, vc)
+                        if tw:
+                            side, why = "SELL", tw
                 if side not in ("SELL", "SELL_PART") or not market_open(sym, "SELL"):
                     continue
                 qty = p["qty"] if side == "SELL" else max(1, int(p["qty"] * vc["partial_tp_ratio"]))
@@ -454,6 +469,11 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                     need_ratio = vc["pre_volume_ratio"] if ft.get("pre") else vc["surge_volume_ratio"]
                     if (ft.get("ratio") or 0) < need_ratio:
                         continue
+                    if minutes is not None and minutes >= 0 and not ft.get("pre"):   # 실전과 같게: 정규장 기준·늦은 시간 금지
+                        if (ft.get("change") or 0) < float(vc.get("surge_min_change_regular") or 0):
+                            continue
+                        if vc.get("surge_buy_cutoff_min") and minutes > float(vc["surge_buy_cutoff_min"]):
+                            continue
                 lim = q["price"] * (1 + vc["limit_slip_pct"] / 100) if cd["style"] == "surge" else q["price"]
                 px = tl.fill_px(extras.slip_cfg(vc, spread=cd.get("spread_pct")), q["price"], "BUY", lim)   # 호가 스프레드 반영
                 fit = len(v["pos"]) < int(c["pick_count"]) and v["buys_today"] < int(c["max_orders_per_day"]) and (minutes or 0) <= 360
@@ -463,7 +483,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, fx: float, ex
                 cost = qty * px * f * (1 + tl.side_cost(vc, market, "BUY") / 100)
                 v["cash"] -= cost
                 v["buys_today"] += 1
-                v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False, "fit": fit,
+                v["pos"][sym] = {"qty": qty, "avg": px, "high": px, "style": cd["style"], "partial": False, "fit": fit, "ets": time.time(),
                                  "buy_day": datetime.now(KST).strftime("%Y-%m-%d"), "sday": session_day, "cost0": cost, "got": 0.0,
                                  "bmin": minutes,
                                  "ft": {**{k: ft.get(k) for k in ("change", "ratio", "pre", "r20", "rsi") if ft.get(k) is not None},

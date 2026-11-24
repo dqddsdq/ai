@@ -154,10 +154,28 @@ class Handler(BaseHTTPRequestHandler):
     _send_lock = threading.Lock()   # 여러 AI 가 동시에 실시간 글을 보내도 섞이지 않게
 
     def _send(self, event: str, data):
+        lv = getattr(self, "_live", None)
+        if lv is not None:   # 💬 진행 중인 답변을 메모리에 같이 보관 → 채팅에 다시 들어와도 이어서 보임
+            if event == "delta":
+                lv["text"] += data.get("text", "")
+            elif event == "replace":
+                lv["text"] = data.get("text", "")
+            elif event == "status":
+                lv["status"] = data.get("text", "")
+            elif event in ("step_start", "activity", "step_activity"):
+                lv["status"] = data.get("title") or data.get("text") or data.get("label") or lv["status"]
+            lv["t"] = time.time()
+        if lv is not None and lv.get("stop"):
+            raise BrokenPipeError("사용자가 중지")   # ■ 중지 버튼 → 답변 만들기 멈춤
+        if getattr(self, "_gone", False):
+            return
         payload = json.dumps(data, ensure_ascii=False)
-        with self._send_lock:
-            self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode())
-            self.wfile.flush()
+        try:
+            with self._send_lock:
+                self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode())
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            self._gone = True   # 화면이 떠나도 답변 만들기는 계속 → 끝나면 대화에 저장
 
     def _body(self) -> dict:
         n = int(self.headers.get("Content-Length") or 0)
@@ -222,8 +240,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(at.run_once(force=True))
             except Exception as e:
                 return self._json({"ok": False, "message": f"{type(e).__name__}: {e}"})
-        if path == "/api/autotrade/action":
-            return self._json(at.apply_action(body.get("action") or {}))
+        if path == "/api/autotrade/action":   # 결과를 대화 기록에 남겨서 다시 열어도 '적용됨'·'무시'로 보이게 (두 번 적용 막기)
+            a = body.get("action") or {}
+            conv, card = None, None
+            try:
+                conv = load_conv(str(body.get("conversation_id") or ""))
+                card = next((x for m in conv["messages"] for x in (m.get("trade_actions") or []) if x.get("id") == a.get("id")), None)
+            except (FileNotFoundError, ValueError, KeyError):
+                pass
+            if card and card.get("status") in ("applied", "ignored"):
+                return self._json({"ok": False, "message": "이미 처리한 카드예요", "status": card["status"]})
+            r = {"ok": True, "message": "무시했어요"} if body.get("ignore") else at.apply_action(a)
+            if card is not None and (r.get("ok") or body.get("ignore")):
+                card["status"] = "ignored" if body.get("ignore") else "applied"
+                card["result"] = str(r.get("message") or "바꿨어요")[:200]
+                save_conv(conv)
+            return self._json(r)
         if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
             return self._json(at.unhalt())
         if path == "/api/autotrade/review":
@@ -286,6 +318,10 @@ class Handler(BaseHTTPRequestHandler):
             })
         if path == "/api/conversations":
             return self._json(list_convs())
+        m = re.match(r"^/api/conversations/([\w\-]+)/live$", path)
+        if m:   # 💬 진행 중인 답변 (없으면 active False)
+            lv = LIVE.get(m.group(1))
+            return self._json({"active": bool(lv) and not lv.get("done"), **({k: lv[k] for k in ("text", "status", "started", "t") if k in lv} if lv else {})})
         m = re.match(r"^/api/conversations/([\w\-]+)$", path)
         if m:
             try:
@@ -337,7 +373,13 @@ class Handler(BaseHTTPRequestHandler):
         if path in routes:
             self._sse_start()
             try:
-                routes[path](body)
+                try:
+                    routes[path](body)
+                except BaseException:
+                    lv = getattr(self, "_live", None)
+                    if lv is not None:
+                        lv.update(done=True, error=True)
+                    raise
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 log("  (사용자가 중지했거나 연결이 끊김)")
             except pv.ProviderError as e:  # 설치·로그인·한도 같은 안내성 오류는 긴 오류 내역 없이
@@ -383,6 +425,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._upload(body)
         if path == "/api/capture":
             return self._capture(body)
+        m = re.match(r"^/api/conversations/([\w\-]+)/stop$", path)
+        if m:
+            lv = LIVE.get(m.group(1))
+            if lv is not None:
+                lv["stop"] = True
+            return self._json({"ok": True})
         m = re.match(r"^/api/conversations/([\w\-]+)/delete$", path)
         if m:
             import shutil
@@ -498,6 +546,8 @@ class Handler(BaseHTTPRequestHandler):
             history[-1]["content"] += f"\n\n[화면 캡처 {len(images)}장 첨부]"
         conv["messages"].append({"role": "user", "content": text, "images": image_ids})
         save_conv(conv)
+        self._live = LIVE.setdefault(conv["id"], {})
+        self._live.clear(); self._live.update(text="", status="답변 준비 중", t=time.time(), done=False, started=time.time())
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
                             "model": str(spec), "reason": "", "sources": [], "team": 1, "router_model": "", "member_model": ""})
         self._charts = []
@@ -544,6 +594,8 @@ class Handler(BaseHTTPRequestHandler):
                                             "steps": t.get("steps", []), "tool_status": tl.status(t) if t else ""})
         save_conv(conv)
         log("  ✅ 답변 완료")
+        LIVE.pop(conv["id"], None)
+        self._live = None
         self._send("done", {"conversation_id": conv["id"]})
 
     # 자기 개선 실행 (복사본에서 고치고 검사 → 결과만 보여줌, 적용은 따로)
@@ -566,6 +618,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send("step_done", step.as_dict())
         self._send("improve_result", res)
         self._send("done", {})
+
+LIVE: dict[str, dict] = {}   # 대화 id → 진행 중인 답변 {text, status, t, done}
+
 
 # ── 폰 접속 (같은 와이파이) ──
 PHONE = {"on": False, "url": "", "pin": "", "token": ""}
@@ -661,12 +716,28 @@ def _spawn_next() -> bool:
     return p.poll() is None   # 감시 프로세스가 살아 있어야 옛 앱을 끔
 
 
+def _wait_chats_done(max_sec: int = 900) -> None:
+    """진행 중인 채팅 답변·자기 개선 작업이 끝날 때까지 기다림"""
+    end = time.time() + max_sec
+    told = False
+    while time.time() < end:
+        busy = [k for k, v in LIVE.items() if not v.get("done") and time.time() - v.get("t", 0) < 600]
+        working = [r for r in im.history()[:20] if r.get("status") == "working"]
+        if not busy and not working:
+            return
+        if not told:
+            log(f"🔄 답변 {len(busy)}개·코딩 {len(working)}개가 진행 중이라 끝나면 다시 켜요")
+            told = True
+        time.sleep(3)
+
+
 def _restart() -> None:
     """코드 적용 뒤 앱 다시 켜기: 주문·체결 중이면 바퀴가 끝날 때까지 대기 → 상태 저장 → (bat 이면 종료 코드 3 / 아니면 새 프로세스 먼저) → 옛 프로세스 종료"""
     if not _restarting.acquire(blocking=False):
         return   # 이미 다시 켜는 중
     supervised = os.environ.get("CAI_SUPERVISED") == "1"
     log("🔄 코드 적용 → 주문·체결 처리가 끝나고 자동매매 바퀴가 끝나면 앱을 다시 켜요")
+    _wait_chats_done()   # 💬 답변·코딩 중이면 끝날 때까지 (최대 15분) — 재시작으로 답이 사라지지 않게
     at.wait_idle_for_restart(log)
     with at._lock:   # 화면 버튼 등 다른 곳의 기록·주문 처리도 끝난 뒤 저장
         try:

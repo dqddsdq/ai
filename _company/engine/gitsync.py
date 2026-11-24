@@ -23,7 +23,7 @@ ROOT = COMPANY_DIR.parent                      # 저장소 맨 위 (ai 폴더)
 BRANCH = "claude/build-ai-qnubm7"
 REMOTE = "sync"                                # '깃허브 연결.bat' 이 만든 원격 이름 (원래 있던 origin 은 안 건드림)
 URL = "https://github.com/dqddsdq/ai.git"
-SYNC_PATHS = ["_company/engine", "_company/_agents/trader/prompt.md", "_company/_agents/trader/goal.md",
+SYNC_PATHS = ["_company/engine", "_company/tests", "_company/_agents/trader/prompt.md", "_company/_agents/trader/goal.md",
               "_company/_agents/trader/team.json", "_company/requirements.txt"]
 NEVER = (".env", "_cache/", "autotrade.json", "sessions/", "improvements.json", "tool_requests.json", "memory.md")
 _lock = threading.Lock()
@@ -112,10 +112,13 @@ def pull_and_check(log=print, restart=None) -> dict:
         code = any(f.startswith("_company/engine/") for f in changed.splitlines())
         r = subprocess.run([sys.executable, "-B", "-m", "engine.selftest"], cwd=COMPANY_DIR, capture_output=True,
                            text=True, encoding="utf-8", errors="replace", timeout=300)
+        if not r.returncode and (COMPANY_DIR / "tests" / "scenarios.py").exists():   # 🧪 매매 흐름 시나리오도
+            r = subprocess.run([sys.executable, "-B", "-m", "tests.scenarios"], cwd=COMPANY_DIR, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=600)
         if r.returncode:
             _git("reset", "-q", "--keep", before)
             tail = (r.stdout or "").strip().splitlines()[-1:] or [""]
-            return _set(False, f"받은 코드가 자체 점검에 실패해서 되돌렸어요 ({tail[0][:80]})")
+            return _set(False, f"받은 코드가 자체 점검·시나리오 시험에 실패해서 되돌렸어요 ({tail[0][:80]})")
         n = len(changed.splitlines())
         msg = f"GitHub 새 코드 받음 ({n}개 파일)" + (" → 앱 다시 켜요" if code else "")
         _set(True, msg)

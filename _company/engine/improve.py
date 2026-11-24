@@ -206,6 +206,13 @@ def _checks(box: Path, files: list[dict]) -> list[dict]:
         tail = (r.stdout or "").strip().splitlines()[-1:] or [""]
         res.append({"name": "자체 점검 (매매·안전 규칙)", "ok": r.returncode == 0,
                     "detail": tail[0] if r.returncode == 0 else ((r.stdout or "") + (r.stderr or ""))[-400:]})
+        if (COMPANY_DIR / "tests" / "scenarios.py").exists():   # 🧪 매매 흐름 시나리오 (원본 tests 폴더를 복사본에 넣어서 — 개발 AI 가 못 고침)
+            shutil.rmtree(box / "tests", ignore_errors=True)
+            shutil.copytree(COMPANY_DIR / "tests", box / "tests", ignore=shutil.ignore_patterns("__pycache__"))
+            r = subprocess.run([sys.executable, "-B", "-m", "tests.scenarios"], cwd=box, capture_output=True, text=True, timeout=600, env=_env())
+            tail = (r.stdout or "").strip().splitlines()[-1:] or [""]
+            res.append({"name": "매매 흐름 시나리오 (가짜 토스로 사고팔기)", "ok": r.returncode == 0,
+                        "detail": tail[0] if r.returncode == 0 else ((r.stdout or "") + (r.stderr or ""))[-400:]})
     for f in files:
         if f["path"].endswith(".json") and f["status"] != "deleted":
             try:

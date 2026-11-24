@@ -97,15 +97,22 @@ def _sim_surge(path: list[dict], entry: float, params: dict, base_cfg: dict, sig
     px = fill_px(vc, entry, "BUY", entry * (1 + vc["limit_slip_pct"] / 100))
     sell = lambda p_: fill_px(vc, p_, "SELL", p_ * (1 - vc["limit_slip_pct"] / 100)) / px - 1   # noqa: E731
     qty, high, partial, got = 1.0, px, False, 0.0
+    t0 = _ts(path[0]["t"])
+    ts_n, ts_up = float(vc.get("time_stop_min") or 0), float(vc.get("time_stop_up_pct", 0.5))
     if info is not None:
-        info.update(px=px, i=len(path) - 1)
+        info.update(px=px, i=len(path) - 1, why="장 끝", hold=0.0)
     for i_, c in enumerate(path):
         if info is not None:
             info["i"] = i_
         mins = picker.session_minutes(market, _ts(c["t"]), extended=True)
+        held_min = (_ts(c["t"]) - t0).total_seconds() / 60
         for price in (c["l"], c["h"], c["c"]) if c["c"] >= c["l"] else (c["c"],):   # 봉 안에서 저가→고가→종가 순으로 확인 (보수적)
             high = max(high, price)
-            side, _ = signal_surge(price, qty, px, high, mins, False, vc, partial_done=partial)
+            side, why_ = signal_surge(price, qty, px, high, mins, False, vc, partial_done=partial)
+            if side == "HOLD" and ts_n > 0 and not partial and held_min >= ts_n and (high / px - 1) * 100 < ts_up:
+                side, why_ = "SELL", "⏱️ 시간 손절"   # 실전과 같은 시간 손절
+            if info is not None:
+                info.update(mfe=(high / px - 1) * 100, why=why_ if side == "SELL" else info.get("why"), hold=held_min)
             if side == "SELL_PART":
                 part = vc["partial_tp_ratio"]
                 got += part * sell(price)
