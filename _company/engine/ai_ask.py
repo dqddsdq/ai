@@ -77,11 +77,12 @@ def match(text: str) -> dict | None:
     for name, aid, mk in sorted(cands, key=lambda x: -len(x[0])):   # 긴 이름 먼저 (겹침 방지)
         n = re.escape(name)
         # '@이름' · 'AI 리그 이름' 은 바로, 그냥 '이름' 은 뒤에 님/에게/,/: 가 붙을 때만 (평범한 말과 안 헷갈리게)
-        r = (re.match(r"^\s*(?:@\s*|(?:🏟️\s*)?(?:생존전|(?:AI\s*)?리그)\s*(?:AI\s*)?)" + n + _SEP + r"(?=\S)", text)
+        r = (re.match(r"^\s*(?:@\s*|(?:🏟️\s*)?(?:생존전|(?:AI\s*)?리그)\s*(?:AI\s*)?)" + n + _SEP + r"(?=\S|$)", text)   # '@속공' 만 불러도 됨
              or re.match(r"^\s*" + n + r"(?:\s*AI)?\s*(?:님|에게|한테)?\s*[,:：]\s*(?=\S)", text)
              or re.match(r"^\s*" + n + r"(?:\s*AI)?\s*(?:님|에게|한테)\s+(?=\S)", text))
-        if r:
-            return {"kind": "arena", "id": aid, "name": name, "markets": [mk], "question": text[r.end():].strip()}
+        if r:   # 같은 이름이 두 시장에 다 있으면 둘 다 기록을 봄
+            ids = {x: i for nm, i, x in cands if nm == name}
+            return {"kind": "arena", "id": aid, "name": name, "markets": list(ids), "ids": ids, "question": text[r.end():].strip()}
     return None
 
 
@@ -199,7 +200,7 @@ def system_prompt(who: dict) -> str:
     else:
         head = (f"너는 AI 리그 참가자 '{who['name']}' 다 (가상 매매만 함). 사장님이 너에게 직접 물었다. "
                 "네 성격·규칙·성적으로 답해라.")
-        body = _arena_block(who["id"], who["markets"][0])
+        body = "\n\n".join(_arena_block((who.get("ids") or {}).get(m, who["id"]), m) for m in who["markets"])
     return head + "\n" + READ_ONLY + "\n\n<record>\n" + body[:9000] + "\n</record>"
 
 

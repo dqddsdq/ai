@@ -250,7 +250,7 @@ def run(job_id: str, on_text=None, on_activity=None, model: str | None = None) -
     prompt = DEV_PROMPT.format(protected=", ".join(sorted(PROTECTED)), trading=", ".join(sorted(TRADING)), request=job["request"] + (f"\n(이유: {job['why']})" if job.get("why") else ""))
     cmd = [exe, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
            "--tools", "Read,Edit,Write,Grep,Glob", "--allowedTools", "Read,Edit,Write,Grep,Glob",
-           "--permission-mode", "acceptEdits", "--no-session-persistence", "--strict-mcp-config"]
+           "--permission-mode", "acceptEdits", "--no-session-persistence", "--strict-mcp-config", "--settings", pv.NO_USER_PLUGINS]
     if model and model.split(":", 1)[-1] not in ("", "default", "claudecode"):
         cmd += ["--model", model.split(":", 1)[-1]]
     err_file = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")

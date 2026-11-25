@@ -342,6 +342,10 @@ def _with_images_claude(messages: list[Message], images: list[str]) -> list[Mess
     return messages[:-1] + [{"role": "user", "content": blocks}]
 
 
+# 사장님 PC 의 Claude Code 플러그인(코딩용 말투·지시 주입)이 앱 AI 답에 섞이지 않게
+NO_USER_PLUGINS = '{"enabledPlugins": {"ponytail@ponytail": false}}'
+
+
 def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), timeout=None, on_activity=None):
     exe = claude_cli()
     if not exe:
@@ -370,6 +374,7 @@ def _chat_claudecode(spec, system, messages, on_text, effort, web, images=(), ti
         "--tools", ",".join((["WebSearch", "WebFetch"] if web else []) + (["Read"] if images else [])),
         "--no-session-persistence",
         "--strict-mcp-config",
+        "--settings", NO_USER_PLUGINS,
     ]
     allowed = (["WebSearch", "WebFetch"] if web else []) + (["Read"] if images else [])
     if allowed:

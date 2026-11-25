@@ -431,6 +431,7 @@ def 다들_하고_물으면_리그_AI_가_각자_자기_이름으로_답함(at, 
     assert ai_ask.match("리그 전원 오늘 어땠어?")["kind"] == "all"
     assert ai_ask.match("모두 팔아줘") is None and ai_ask.match("전원 꺼") is None, "매매 지시가 리그 질문으로 감"
     assert ai_ask.match(f"{a0}, 왜 샀어?")["kind"] == "arena"   # 이름 부르면 그 AI 만
+    assert ai_ask.match(f"@{a0}")["name"] == a0, "이름만 불렀을 때 엔진 AI 가 대신 답함"
     assert a0 in ai_ask.system_prompt(who) and a1 in ai_ask.system_prompt(who)
     reply = f'답입니다 {{"{a0}": "저는 장 초반에 너무 빨리 샀어요", "{a1}": "", "없는AI": "x"}}'
     assert ai_ask.split_answers(reply, "US") == [(a0, "저는 장 초반에 너무 빨리 샀어요")]   # 빈 답·모르는 이름은 뺌
