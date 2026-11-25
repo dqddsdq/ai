@@ -3,6 +3,7 @@
 - 그 AI 의 지시문(성향·스스로 정한 규칙) + 최근 주문·일지·교훈을 근거로 그 AI 이름으로 답함
 - 읽기 전용: 주문·설정·모드는 못 바꿈 (답에서 [적용] 카드·개선 제안·도구 요청을 안 만듦)
 - 하루 호출 상한 ASK_PER_DAY — AI 리그 판단 한도(arena_ai_per_day)와 따로 셈 (_cache/ai_ask.json)
+- 거래 0건 리그 AI 는 처음 물을 때 '📥 지금 쓰는 자료 / 🧰 더 필요한 도구' 를 한 번 덧붙임 (_cache/ai_ask_tools.json)
 - 사장님 의견: 메시지에 '의견: …' 또는 '참고: …' 가 있으면 공유 노트에 '참고 의견(검증 전)' 으로만 기록
 """
 
@@ -32,10 +33,45 @@ OPINION_RE = re.compile(r"(?:^|\s)(?:내\s*)?(?:의견|참고)\s*[:：]\s*(.+)",
 READ_ONLY = ("[읽기 전용 대화] 너는 주문·설정·모드를 바꿀 수 없다. [[TRADE_…]]·[[IMPROVE…]]·도구 요청 같은 태그를 쓰지 마라. "
              "바꾸고 싶은 게 있으면 '사장님이 자동매매 팀 채팅이나 화면에서 바꿀 수 있다'고만 말해라. "
              "숫자는 아래 기록에 있는 것만 쓰고 지어내지 마라. 기록에 없으면 모른다고 해라. 사장님께 존댓말, 짧고 솔직하게.")
+# 리그 AI 가 살지 판단할 때 실제로 받는 자료 (arena._decide 프롬프트와 맞춤)
+DECIDE_INPUTS = ("종목·현재가 · 구간(장 상황·오늘 상승률·거래량 폭발 뒤 경과 분) · 후보 고른 이유(상승률·거래량 숫자만) · "
+                 "학습 추정 승률·기대 수익 · 공유 노트 · 자기 지난 성적. 뉴스·공시 본문·차트·호가·재무는 안 받음")
 
 
 def _file():
     return COMPANY_DIR / "_cache" / "ai_ask.json"
+
+
+def _tools_file():
+    return COMPANY_DIR / "_cache" / "ai_ask_tools.json"   # 거래 0건 AI 가 자료·도구 답을 이미 한 기록
+
+
+def _tools_due(m: str) -> dict:
+    """거래 0건이고 아직 자료·도구 답을 안 한 리그 AI {id: 이름}"""
+    from . import arena
+    done = store.load(_tools_file(), lambda: {})
+    return {a["id"]: a["name"] for a in arena.load(m)["alive"] if not a.get("trades") and f"{m}:{a['id']}" not in done}
+
+
+def _tools_ask(names: list[str]) -> str:
+    return ("\n[거래 0건 AI: " + ", ".join(names) + "] 이 AI 는 아직 한 번도 안 샀다. 답 끝에 꼭 두 줄을 붙여라: "
+            "'📥 지금 쓰는 자료: …' (판단 때 받는 자료는 이것뿐: " + DECIDE_INPUTS + ") / "
+            "'🧰 더 필요한 도구: …' (내 성격대로 사려면 없어서 못 쓰는 자료·도구. 자료가 아니라 기준 문제면 그렇다고, 없으면 '없음'). "
+            "도구 요청 태그는 쓰지 말고 글로만.")
+
+
+def mark_tools(who: dict, answered: list[str]) -> None:
+    """자료·도구 답을 한 AI 는 다시 안 물음 (한 번만)"""
+    due = who.get("tools_due") or {}
+    if not due:
+        return
+    with _lock:
+        d = store.load(_tools_file(), lambda: {})
+        for m, ids in due.items():
+            for aid, name in ids.items():
+                if name in answered:
+                    d[f"{m}:{aid}"] = _today()
+        store.save(_tools_file(), d)
 
 
 def _today() -> str:
@@ -192,6 +228,13 @@ def system_prompt(who: dict) -> str:
         head = ("너는 AI 리그 참가자 전원을 한꺼번에 연기한다 (모두 가상 매매만 함). 사장님이 전원에게 물었다. "
                 "참가자마다 자기 성격·규칙·성적으로 따로 2~4문장 답해라. 서로 의견이 다르면 다르게 답해라. "
                 f"형식: JSON 한 덩어리 {{\"참가자이름\": \"답\", ...}} 로만. 이름은 정확히: {', '.join(names)}")
+        try:   # 거래 0건 AI 는 지금 쓰는 자료·더 필요한 도구도 한 번 답함
+            due = _tools_due(m)
+            if due:
+                who["tools_due"] = {m: due}
+                head += _tools_ask(list(due.values()))
+        except Exception:
+            pass
         body = "\n\n".join(_arena_block(a["id"], m)[:1500] for a in arena.load(m)["alive"])
         return head + "\n" + READ_ONLY + "\n\n<record>\n" + body[:20000] + "\n</record>"
     if who["kind"] == "lane":
@@ -200,6 +243,15 @@ def system_prompt(who: dict) -> str:
     else:
         head = (f"너는 AI 리그 참가자 '{who['name']}' 다 (가상 매매만 함). 사장님이 너에게 직접 물었다. "
                 "네 성격·규칙·성적으로 답해라.")
+        try:   # 거래 0건이면 자료·도구도 한 번 답함
+            for m in who["markets"]:
+                aid = (who.get("ids") or {}).get(m, who["id"])
+                if aid in _tools_due(m):
+                    who.setdefault("tools_due", {})[m] = {aid: who["name"]}
+            if who.get("tools_due"):
+                head += _tools_ask([who["name"]])
+        except Exception:
+            pass
         body = "\n\n".join(_arena_block((who.get("ids") or {}).get(m, who["id"]), m) for m in who["markets"])
     return head + "\n" + READ_ONLY + "\n\n<record>\n" + body[:9000] + "\n</record>"
 

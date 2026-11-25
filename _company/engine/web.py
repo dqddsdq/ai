@@ -703,6 +703,10 @@ class Handler(BaseHTTPRequestHandler):
                 ai_ask.refund()   # 실패는 한도로 안 셈
                 raise
             parts = ai_ask.split_answers(ans, who["markets"][0]) if each else []
+            try:   # 자료·도구 답을 한 AI 는 다음엔 안 물음
+                ai_ask.mark_tools(who, [n for n, a in parts if "🧰" in a] if each else ([who["name"]] if "🧰" in ans else []))
+            except Exception:
+                pass
             if parts:   # AI 마다 자기 이름으로 메시지 하나씩
                 msgs = [{"role": "assistant", "content": f"**🗣️ {n}**\n\n{a}", "agent": agent_id, "model": str(spec), "sources": [],
                          "drafts": [], "steps": [], "asked_ai": n} for n, a in parts]

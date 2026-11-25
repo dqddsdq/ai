@@ -31,7 +31,7 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from . import store
+from . import news, store
 from .agents import COMPANY_DIR
 
 KST = timezone(timedelta(hours=9))
@@ -248,6 +248,8 @@ def buckets(cd: dict, sit: str = "") -> list[str]:
         pass
     if "pre" in f:
         out.append("프리장" if f.get("pre") else "정규장")
+    if f.get("news"):
+        out.append("공시 " + f["news"])   # 있음·없음·악재 → 공시 보는 AI 기록도 구간별로
     if sit:
         out.append(sit)
     return out
@@ -488,6 +490,7 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
                       f"종목 {sym} 현재가 {price} · 구간: {', '.join(keys) or '모름'} · 고른 이유: {cd.get('reason', '')}\n"
                       + (f"진입 시점: 거래량 폭발 뒤 {spk:.0f}분 · 오늘 {float(chg):+.1f}% (폭발 뒤 {LATE_MIN}분↑ + 오늘 +{LATE_CHG:g}%↑ 면 늦은 진입)\n"
                          if spk is not None and chg is not None else "")
+                      + (f"최근 공시: {news.note(cd.get('news'))}\n" if news.note(cd.get("news")) else "")
                       + (f"학습 추정: 승률 {float(e.get('p', 0)) * 100:.0f}% · 기대 수익 {float(e.get('ev', 0)):+.2f}%\n" if e else "")
                       + (f"공유 노트: {notes}\n" if notes else "")
                       + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" + (f" | {a['rec']}" if a["rec"] else "") for a in asked)
