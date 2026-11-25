@@ -368,7 +368,7 @@ def 오래된_성적은_덜_침(at, picker, tmp):
 
 
 @case
-def 생존전_AI_의견은_채팅_카드로만_오고_적용해야_바뀜(at, picker, tmp):
+def 생존전_AI_자기_규칙은_바로_바뀌고_되돌릴_수_있고_공통_설정은_적용해야_바뀜(at, picker, tmp):
     fresh(at, picker, tmp, arena_size=2)
     from engine import agents as ag, arena, arena_voice, improve as im
     d = _arena_fill([1.5, -0.8], ctrl_ret=0.2)
@@ -396,20 +396,26 @@ def 생존전_AI_의견은_채팅_카드로만_오고_적용해야_바뀜(at, pi
         assert "왜 지금: 거래 5건 더 쌓임" in conv["messages"][1]["content"]
         m0 = next(m for m in conv["messages"] if a0["name"] in m["content"])
         kinds = sorted(x["type"] for x in m0.get("trade_actions", []))
-        assert kinds == ["arena", "set"], kinds
+        assert kinds == ["arena_undo", "set"], kinds
         assert m0.get("improvements") == ["job1"]
-        card = next(x for x in m0["trade_actions"] if x["type"] == "arena")
-        assert card["changes"] == {"tp": 6}, ("범위 밖 손절 999 가 걸러져야 함", card)
+        assert "✅ 스스로 바꿈" in m0["content"], m0["content"]
         m1 = next(m for m in conv["messages"] if a1["name"] in m["content"])
         assert not m1.get("trade_actions"), ("실전 켜기 제안이 카드로 나옴", m1)
-        # 적용 전엔 아무것도 안 바뀜
-        assert at.config()["stop_loss_pct"] == stop0
-        assert arena.load("US")["alive"][0]["tp"] == a0["tp"]
-        # [적용] → 그 AI 규칙만 바뀜 (가상 전용)
-        assert at.apply_action(card)["ok"]
+        # 그 AI 자기 규칙만 바로 바뀜 (범위 밖 손절 999 는 걸러짐) · 공통 설정은 [적용] 전까지 그대로
         a0n = arena.load("US")["alive"][0]
-        assert a0n["tp"] == 6 and a0n["habits"] == ["하락장 장 초반엔 안 삼"], a0n
-        assert not at.apply_action({**card, "changes": {"hold": 99999}})["ok"], "범위 밖 값이 적용됨"
+        assert a0n["tp"] == 6 and a0n["sl"] == a0["sl"] and a0n["habits"] == ["하락장 장 초반엔 안 삼"], a0n
+        assert arena.load("US")["alive"][1]["tp"] == a1["tp"], "다른 AI 규칙이 바뀜"
+        assert at.config()["stop_loss_pct"] == stop0
+        # [되돌리기] → 원래대로 · 두 번은 안 됨
+        undo = next(x for x in m0["trade_actions"] if x["type"] == "arena_undo")
+        assert at.apply_action(undo)["ok"]
+        a0u = arena.load("US")["alive"][0]
+        assert a0u["tp"] == a0["tp"] and not a0u.get("habits"), a0u
+        assert not at.apply_action(undo)["ok"], "되돌리기가 두 번 됨"
+        # 그 뒤에 또 바뀌었으면 예전 되돌리기는 안 함 · 범위 밖 값은 안 바뀜
+        r1 = arena.set_rules("US", a0["id"], {"tp": 7}); arena.set_rules("US", a0["id"], {"tp": 8})
+        assert not arena.undo_rules("US", a0["id"], r1["t"])["ok"] and arena.load("US")["alive"][0]["tp"] == 8
+        assert not arena.set_rules("US", a0["id"], {"hold": 99999})["ok"], "범위 밖 값이 적용됨"
     finally:
         ag.SESSIONS_DIR, im.create, arena_voice._file = old_sd, old_create, old_vf
 

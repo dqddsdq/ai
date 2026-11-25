@@ -768,7 +768,7 @@ def _brief_core(a: dict, ctrl_avg: float, hl: float) -> str:
 
 VOICE_PROMPT = """AI 생존전 참가자가 방금 쌓인 자기 성적을 보고 사장님께 바로 의견을 보낼지 정해요. 참가자마다 자기 성적만 보고 따로 답하세요.
 - opinion: 자기 성적에서 배운 것 + 앞으로 바꾸고 싶은 것 (2~3문장, 근거 숫자 포함, 사장님께 존댓말). 지금 딱히 할 말이 없으면 "" (빈칸이면 안 보냄)
-- self: 자기 규칙을 바꾸고 싶으면 {"tp": 익절%, "sl": 손절%, "hold": 최대 보유 분} 중 바꿀 것만. 아니면 null
+- self: 자기 규칙을 바꾸고 싶으면 {"tp": 익절%, "sl": 손절%, "hold": 최대 보유 분} 중 바꿀 것만. 아니면 null (바로 바뀌어요 — 성적 근거가 있을 때만)
 - habit: 앞으로 자기 판단에 붙일 짧은 규칙 한 줄 (40자 이내, 예: "장 초반 하락장에선 안 삼"). 없으면 ""
 - engine: 자동매매 전체 설정을 바꾸자는 의견이 있으면 {"key": 설정키, "value": 값, "why": 이유} 하나. 아니면 null
   (설정키는 아래 목록에서만. 실전 켜기·모드 바꾸기는 안 됨)
@@ -867,7 +867,7 @@ def voice_due(c: dict, d: dict, day: str) -> dict:
 
 
 def set_rules(market: str, ai_id: str, changes: dict | None = None, habit: str = "") -> dict:
-    """사장님이 [적용]한 AI 개인 규칙 변경 (가상 전용 — 실전 주문 규칙과 무관)"""
+    """AI 가 스스로 정한 개인 규칙 변경 (범위 안만 · 그 AI 판단에만 쓰임 — 공통 규칙·안전 한도와 무관)"""
     if market not in ("US", "KR"):
         return {"ok": False, "message": "시장이 이상해요"}
     clean = {}
@@ -891,14 +891,33 @@ def set_rules(market: str, ai_id: str, changes: dict | None = None, habit: str =
         if not a:
             return {"ok": False, "message": "그 AI 를 못 찾았어요 (생존전 목록이 바뀌었을 수 있어요)"}
         before = {k: a[k] for k in clean}
+        habits_before = list(a.get("habits") or [])
         a.update(clean)
         if habit:
             a["habits"] = ([h for h in a.get("habits") or [] if h != habit] + [habit])[-MAX_HABITS:]
-        a.setdefault("history", []).append({"t": _now(), "before": before, "after": clean, "habit": habit})
+        t = uuid.uuid4().hex[:10]   # 되돌리기용 (같은 초에 두 번 바뀌어도 안 헷갈리게)
+        a.setdefault("history", []).append({"t": _now(), "id": t, "before": before, "after": clean, "habit": habit,
+                                            "habits_before": habits_before})
         a["history"] = a["history"][-20:]
         _save(market, d)
     parts = [f"{k} {before[k]}→{v}" for k, v in clean.items()] + ([f"규칙 추가 '{habit}'"] if habit else [])
-    return {"ok": True, "message": f"{a['name']}: " + " · ".join(parts)}
+    return {"ok": True, "t": t, "message": f"{a['name']}: " + " · ".join(parts)}
+
+
+def undo_rules(market: str, ai_id: str, t: str) -> dict:
+    """[되돌리기]: 그 변경(t)이 마지막 변경일 때만 원래대로 (그 뒤에 또 바뀌었으면 꼬이니까 안 함)"""
+    with _lock:
+        d = load(market)
+        a = next((x for x in d["alive"] if x["id"] == ai_id), None)
+        h = (a or {}).get("history") or []
+        if not t or not h or h[-1].get("id") != t:
+            return {"ok": False, "message": "그 뒤에 규칙이 또 바뀌어서 되돌리지 않았어요"}
+        last = h.pop()
+        a.update(last["before"])
+        if "habits_before" in last:
+            a["habits"] = last["habits_before"]
+        _save(market, d)
+    return {"ok": True, "message": f"{a['name']}: 원래 규칙으로 되돌렸어요"}
 
 
 def overview(market: str, c: dict | None = None) -> dict:

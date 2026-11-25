@@ -2959,6 +2959,10 @@ def apply_action(a: dict) -> dict:
         r = tl.undo_core(a["market"])
     elif t == "arena":   # 🗣️ 생존전 AI 자기 규칙 (가상 전용)
         r = arena.set_rules(str(a.get("market") or ""), str(a.get("ai") or ""), a.get("changes") or {}, str(a.get("habit") or ""))
+    elif t == "arena_undo":   # 🏟️ AI 가 스스로 바꾼 규칙 되돌리기
+        if a.get("market") not in ("US", "KR"):
+            return {"ok": False, "message": "시장이 이상해요"}
+        r = arena.undo_rules(a["market"], str(a.get("ai") or ""), str(a.get("t") or ""))
     elif t in ("exclude", "include"):
         ex = [x for x in c["exclude"] if x != a.get("value")] + ([a["value"]] if t == "exclude" else [])
         r = save_config({"exclude": ex})

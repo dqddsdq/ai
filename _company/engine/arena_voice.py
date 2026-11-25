@@ -4,11 +4,12 @@
   3번 연속 손실이면 그 AI 에게만 물어봄. 할 말이 없다고 하면 안 보냄.
   AI 한 명은 하루 1번 · 하루 전체 arena_voice_per_day(8)번까지 · 🤖 AI 팀 화면 [지금 의견 받기]도 있음
 - 어디로: 채팅의 '🏟️ 생존전 AI 의견 (미장/국장)' 대화 하나에 계속 이어 붙음 (자동매매 팀 대화라 이어서 물어보면 답함)
-- 무엇: AI 마다 메시지 하나 — 왜 지금 · 배운 것·바꾸고 싶은 것 + [적용] 카드
-  · 자기 규칙(익절·손절·최대 보유·스스로 정한 규칙 한 줄) — 가상 전용이라 실전 주문 규칙과 무관
+- 무엇: AI 마다 메시지 하나 — 왜 지금 · 배운 것·바꾸고 싶은 것
+  · 자기 규칙(익절·손절·최대 보유·스스로 정한 규칙 한 줄) — 범위 안이면 바로 바뀜 + 알림 + [되돌리기] 카드
+    (그 AI 판단에만 쓰임 · 공통 규칙·안전 한도와 무관)
   · 자동매매 전체 설정 — 기존 채팅 [적용] 카드와 같은 검사 (실전 켜기·모드 바꾸기는 안 됨)
   · 코드 개선 아이디어 — 🛠️ 개선 카드 (하루 MAX_CODE_PER_DAY 개까지 · 사장님이 만들기·적용을 눌러야 함)
-- 바로 바뀌는 건 없음: 전부 사장님이 [적용]을 눌러야 바뀜
+- 공통 설정·코드는 사장님이 [적용]을 눌러야 바뀜
 기록: _cache/arena_voice.json (시장별 대화 id · 오늘 코드 카드 수)
 """
 
@@ -46,12 +47,18 @@ def _message(market: str, o: dict) -> tuple[str, list[dict], str]:
     body = [head] + ([f"_왜 지금: {o['reason']}_"] if o.get("reason") else []) + ["", o["opinion"]]
     cards = []
     stamp = datetime.now(KST).strftime("%H%M%S")
-    if o["self"] or o["habit"]:
+    if o["self"] or o["habit"]:   # 자기 규칙은 범위 안이면 바로 바꾸고 [되돌리기]만 남김
         names = {"tp": "익절", "sl": "손절", "hold": "최대 보유(분)"}
         parts = [f"{names[k]} {o['rules'][k]:g}→{v:g}" for k, v in o["self"].items()] + ([f"규칙 추가 '{o['habit']}'"] if o["habit"] else [])
-        cards.append({"id": f"ar{o['id'][-6:]}{stamp}", "type": "arena", "market": market, "ai": o["id"],
-                      "changes": o["self"], "habit": o["habit"], "label": f"🏟️ {o['name']} 자기 규칙 (가상 전용): " + " · ".join(parts),
-                      "why": "생존전 가상 매매에만 쓰는 이 AI 의 규칙이에요. 실전 주문 규칙은 그대로예요."})
+        r = arena.set_rules(market, o["id"], o["self"], o["habit"])
+        if r.get("ok"):
+            o["changed"] = " · ".join(parts)
+            body += ["", f"✅ 스스로 바꿈: {o['changed']}"]
+            cards.append({"id": f"au{o['id'][-6:]}{stamp}", "type": "arena_undo", "market": market, "ai": o["id"], "t": r["t"],
+                          "label": f"↩️ {o['name']} 규칙 되돌리기 ({o['changed']})",
+                          "why": "이 AI 판단에만 쓰는 규칙이에요. 공통 규칙·안전 한도는 그대로예요."})
+        else:
+            body += ["", f"⚠️ 규칙을 바꾸려 했지만 안 바꿨어요: {r.get('message', '')}"]
     eng = o.get("engine")
     if eng:
         tag = f"[[TRADE_SET: {eng.get('key')}={eng.get('value')} | {o['name']}: {str(eng.get('why') or '')[:120]}]]"
@@ -76,7 +83,8 @@ def _conv(market: str, meta: dict) -> dict:
     conv["agent"] = ag.TRADER
     conv["messages"].append({"role": "assistant", "agent": ag.TRADER, "model": "", "sources": [], "drafts": [], "steps": [],
                              "content": ("생존전 AI 들이 의견이 생기면 여기로 바로 보내요. "
-                                         "카드의 [적용]을 누르기 전에는 아무것도 바뀌지 않아요. 궁금한 건 여기서 이어서 물어보세요.")})
+                                         "AI 자기 규칙은 바로 바뀌고 [되돌리기] 카드가 붙어요. 공통 설정은 [적용]을 눌러야 바뀌어요. "
+                                         "궁금한 건 여기서 이어서 물어보세요.")})
     meta.setdefault("conv", {})[market] = conv["id"]
     return conv
 
@@ -113,8 +121,8 @@ def post(market: str, o: dict) -> dict:
     try:
         from . import autotrade as at
         with at.in_market(market):
-            at.event("생존전", f"🗣️ {o['name']} 의견: {o['opinion'][:80]}" + (f" (적용 카드 {len(cards)}개)" if cards else "")
-                     + " — 채팅 '🏟️ 생존전 AI 의견'")
+            at.event("생존전", (f"🔧 {o['name']} 규칙 바꿈: {o['changed']}" if o.get("changed") else f"🗣️ {o['name']} 의견: {o['opinion'][:80]}")
+                     + " — 채팅 '🏟️ 생존전 AI 의견'에서 되돌릴 수 있어요")
     except Exception:
         pass
     return {"ok": True, "conversation_id": conv["id"], "cards": len(cards)}
