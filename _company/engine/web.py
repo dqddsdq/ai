@@ -145,6 +145,15 @@ def list_convs() -> list[dict]:
 
 
 # ── 요청 처리 ─────────────────────────────────────────────────────────────
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        """화면을 닫거나 새로 고쳐서 브라우저가 먼저 끊은 건 정상 — 검은 창에 오류로 안 찍음"""
+        import sys
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "CompanyAI/1.0"
 
@@ -949,7 +958,7 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     server = None
     for _ in range(30 if handoff else 1):   # 재시작이면 옛 앱의 주소가 풀릴 때까지 잠깐 다시 시도
         try:
-            server = ThreadingHTTPServer(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
+            server = _Server(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
             break
         except OSError:
             if handoff:
