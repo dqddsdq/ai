@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from datetime import datetime, timedelta, timezone
@@ -23,6 +24,8 @@ _SEP = r"(?:\s*AI)?\s*(?:님|에게|한테|야|아)?\s*[,:：]?\s*"
 # 부르는 말투일 때만 (@1호 · 1호야 · 2호에게 · 1호, · 2호:) — '2호 예산 몫 늘려줘' 같은 설정 말은 기존 자동매매 팀 채팅으로
 LANE_RE = re.compile(r"^\s*(@\s*)?([12])\s*호(?:\s*(?:일반|급등주))?(?:\s*\((?:스윙|단타)\))?(?:\s*AI)?"
                      r"\s*(님|에게|한테|야|아)?\s*([,:：])?\s*(?=\S)")
+# '다들 …' · '모두 …' · 'AI 리그 다들 …' → 리그 AI 전원이 각자 자기 이름으로 답함 (AI 호출은 한 번에 묶어서)
+ALL_RE = re.compile(r"^\s*(?:🏟️\s*)?(?:(?:AI\s*)?리그\s*|생존전\s*)?(?:AI\s*)?(?:다들|모두|전원|여러분|AI\s*들)\s*[,:：]?\s*(?=\S)")
 OPINION_RE = re.compile(r"(?:^|\s)(?:내\s*)?(?:의견|참고)\s*[:：]\s*(.+)", re.S)
 READ_ONLY = ("[읽기 전용 대화] 너는 주문·설정·모드를 바꿀 수 없다. [[TRADE_…]]·[[IMPROVE…]]·도구 요청 같은 태그를 쓰지 마라. "
              "바꾸고 싶은 게 있으면 '사장님이 자동매매 팀 채팅이나 화면에서 바꿀 수 있다'고만 말해라. "
@@ -58,6 +61,9 @@ def match(text: str) -> dict | None:
     if m and (m.group(1) or m.group(3) or m.group(4)):
         style = "swing" if m.group(2) == "1" else "surge"
         return {"kind": "lane", "style": style, "name": at.LANES[style], "markets": mks, "question": text[m.end():].strip()}
+    m = ALL_RE.match(text)
+    if m:
+        return everyone(mks[0], text[m.end():].strip())
     try:
         from . import arena
         cands = []
@@ -75,6 +81,23 @@ def match(text: str) -> dict | None:
         if r:
             return {"kind": "arena", "id": aid, "name": name, "markets": [mk], "question": text[r.end():].strip()}
     return None
+
+
+def everyone(market: str, question: str = "") -> dict:
+    """리그 AI 전원에게 묻기 (리그 의견 대화방에서 이름 없이 물어도 이걸로)"""
+    return {"kind": "all", "name": "AI 리그 전원", "markets": [market], "question": question}
+
+
+def split_answers(reply: str, market: str) -> list[tuple[str, str]]:
+    """전원 답(JSON {이름: 답})을 AI 별로 · 못 읽으면 []"""
+    from . import arena
+    m = re.search(r"\{.*\}", reply or "", re.S)
+    try:
+        d = json.loads(m.group(0)) if m else {}
+    except json.JSONDecodeError:
+        return []
+    names = [a["name"] for a in arena.load(market)["alive"]]
+    return [(n, str(d[n]).strip()) for n in names if isinstance(d, dict) and str(d.get(n) or "").strip()]
 
 
 def take() -> tuple[bool, int]:
@@ -159,6 +182,15 @@ def _arena_block(aid: str, m: str) -> str:
 
 def system_prompt(who: dict) -> str:
     """그 AI 이름으로 답할 때 쓸 지시문 + 근거 기록"""
+    if who["kind"] == "all":
+        from . import arena
+        m = who["markets"][0]
+        names = [a["name"] for a in arena.load(m)["alive"]]
+        head = ("너는 AI 리그 참가자 전원을 한꺼번에 연기한다 (모두 가상 매매만 함). 사장님이 전원에게 물었다. "
+                "참가자마다 자기 성격·규칙·성적으로 따로 2~4문장 답해라. 서로 의견이 다르면 다르게 답해라. "
+                f"형식: JSON 한 덩어리 {{\"참가자이름\": \"답\", ...}} 로만. 이름은 정확히: {', '.join(names)}")
+        body = "\n\n".join(_arena_block(a["id"], m)[:1500] for a in arena.load(m)["alive"])
+        return head + "\n" + READ_ONLY + "\n\n<record>\n" + body[:20000] + "\n</record>"
     if who["kind"] == "lane":
         head = f"너는 이 앱 자동매매의 '{who['name']}' AI 다. 사장님이 너에게 직접 물었다. 네 판단(왜 샀고 왜 팔았는지)을 아래 기록으로 설명해라."
         body = "\n\n".join(_lane_block(who["style"], m) for m in who["markets"])

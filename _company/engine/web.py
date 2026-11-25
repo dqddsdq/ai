@@ -577,6 +577,9 @@ class Handler(BaseHTTPRequestHandler):
         try:   # 🗣️ '1호야 …' · '@눌림목 …' 처럼 AI 를 부르면 그 AI 가 읽기 전용으로 답함
             from . import ai_ask
             who = ai_ask.match(text)
+            lm = re.search(r"-arena(US|KR)$", conv.get("id", ""))
+            if not who and lm:   # 리그 AI 의견 대화방에서 이름 없이 물으면 전원이 각자 답함
+                who = ai_ask.everyone(lm.group(1), text)
         except Exception:
             who = None
         if who:
@@ -679,15 +682,28 @@ class Handler(BaseHTTPRequestHandler):
             reply = (f"**🗣️ {who['name']}**\n\n오늘 AI 지정 질문 한도({ai_ask.ASK_PER_DAY}번)를 다 썼어요. "
                      "내일 다시 물어보시거나, AI 이름 없이 물으면 자동매매 팀이 답해요.")
         else:
-            self._send("status", {"text": f"🗣️ {who['name']} 기록 모으는 중..."})
-            self._send("delta", {"text": head})
+            each = who["kind"] == "all"
+            self._send("status", {"text": f"🗣️ {who['name']} 기록 모으는 중..." + (" (전원 답을 한 번에 받아요)" if each else "")})
+            if not each:   # 전원 답은 JSON 이라 다 받은 뒤 AI 별로 나눠 보여 줌
+                self._send("delta", {"text": head})
             try:
                 system = ai_ask.system_prompt(who)
-                ans = pv.chat(spec, system, history, on_text=lambda t: self._send("delta", {"text": t}),
+                ans = pv.chat(spec, system, history, on_text=None if each else (lambda t: self._send("delta", {"text": t})),
                               effort=body.get("effort") or "low", on_activity=lambda a: self._send("activity", a))
             except BaseException:
                 ai_ask.refund()   # 실패는 한도로 안 셈
                 raise
+            parts = ai_ask.split_answers(ans, who["markets"][0]) if each else []
+            if parts:   # AI 마다 자기 이름으로 메시지 하나씩
+                msgs = [{"role": "assistant", "content": f"**🗣️ {n}**\n\n{a}", "agent": agent_id, "model": str(spec), "sources": [],
+                         "drafts": [], "steps": [], "asked_ai": n} for n, a in parts]
+                self._send("replace", {"text": "\n\n---\n\n".join(m_["content"] for m_ in msgs)})
+                conv["messages"] += msgs
+                save_conv_merged(conv, base)
+                log(f"  ✅ 리그 AI {len(msgs)}명 답변 완료 (읽기 전용)")
+                LIVE.pop(conv["id"], None)
+                self._live = None
+                return self._send("done", {"conversation_id": conv["id"]})
             reply = head + ans.strip()
         note = ai_ask.save_opinion(who, text)
         if note:
