@@ -300,6 +300,10 @@ def 공시_악재_판정():
     assert len(u["bad"]) == 3 and len(u["items"]) == 2, u
     assert news.note({"ok": True, "src": "SEC", "bad": [], "items": []}).endswith("급등 이유 모름)")
     assert news.note({"ok": False}) == ""
+    rss = "<rss><channel><item><title>삼성전자, 신고가</title></item><item><title>삼성전자, 신고가</title></item><item><title>B</title></item></channel></rss>"
+    assert news.parse_rss(rss) == ["삼성전자, 신고가", "B"]
+    n = news.note({"ok": True, "src": "DART", "bad": [], "items": [], "heads": ["삼성전자, 신고가"]})
+    assert "뉴스: 삼성전자" in n and "이유 모름" not in n
 
 
 @case

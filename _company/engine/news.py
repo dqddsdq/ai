@@ -96,7 +96,33 @@ def _kr(sym: str) -> dict:
     d = dart._get("list.json", corp_code=hit[0], bgn_de=(end - timedelta(days=1)).strftime("%Y%m%d"),
                   end_de=end.strftime("%Y%m%d"), page_count=50)
     titles = [re.sub(r"\s+", " ", x["report_nm"]).strip() for x in d.get("list", [])]
-    return {"ok": True, "src": "DART", **classify_kr(titles)}
+    return {"ok": True, "src": "DART", **classify_kr(titles), "heads": headlines(f'"{hit[1]}"', "KR")}
+
+
+# ── 뉴스 헤드라인: 구글 뉴스 RSS (키 없음) — AI 판단 참고용 (안 삼·금액 축소는 그대로 공시로만 정함) ──
+def parse_rss(xml: bytes | str, limit: int = 3) -> list[str]:
+    import xml.etree.ElementTree as ET
+    out = []
+    for it in ET.fromstring(xml).iter("item"):
+        t = re.sub(r"\s+", " ", it.findtext("title") or "").strip()
+        if t and t not in out:
+            out.append(t[:90])
+        if len(out) >= limit:
+            break
+    return out
+
+
+def headlines(query: str, market: str) -> list[str]:
+    """최근 24시간 헤드라인 최대 3개 — 실패하면 [] (공시 확인은 그대로)"""
+    import urllib.parse
+    loc = "hl=ko&gl=KR&ceid=KR:ko" if market == "KR" else "hl=en-US&gl=US&ceid=US:en"
+    url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(query + " when:1d") + "&" + loc
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return parse_rss(r.read())
+    except Exception:
+        return []
 
 
 # ── 미장: SEC EDGAR ──
@@ -148,7 +174,7 @@ def _us(sym: str) -> dict:
             break        # 최신순
         rows.append({"form": rec["form"][i], "items": (rec.get("items") or [""] * (i + 1))[i],
                      "desc": (rec.get("primaryDocDescription") or [""] * (i + 1))[i]})
-    return {"ok": True, "src": "SEC", **classify_us(rows)}
+    return {"ok": True, "src": "SEC", **classify_us(rows), "heads": headlines(f"{sym} stock", "US")}
 
 
 def check(sym: str, market: str) -> dict:
@@ -186,10 +212,14 @@ def note(nw: dict | None) -> str:
     if not nw or not nw.get("ok"):
         return ""
     src = nw.get("src", "")
+    heads = nw.get("heads") or []
+    tail = (" · 🗞️ 뉴스: " + " / ".join(heads[:2])) if heads else ""
     if nw["bad"]:
-        return f"📰 {src} 악재: " + " / ".join(nw["bad"][:2])
+        return f"📰 {src} 악재: " + " / ".join(nw["bad"][:2]) + tail
     if nw["items"]:
-        return f"📰 {src}: " + " / ".join(nw["items"][:2])
+        return f"📰 {src}: " + " / ".join(nw["items"][:2]) + tail
+    if heads:
+        return f"📰 {src}: 최근 24시간 공시 없음{tail}"
     return f"📰 {src}: 최근 24시간 공시 없음 (급등 이유 모름)"
 
 

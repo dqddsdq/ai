@@ -250,6 +250,8 @@ def buckets(cd: dict, sit: str = "") -> list[str]:
         out.append("프리장" if f.get("pre") else "정규장")
     if f.get("news"):
         out.append("공시 " + f["news"])   # 있음·없음·악재 → 공시 보는 AI 기록도 구간별로
+    if (cd.get("news") or {}).get("ok"):
+        out.append("뉴스 있음" if cd["news"].get("heads") else "뉴스 없음")
     if sit:
         out.append(sit)
     return out
