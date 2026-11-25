@@ -537,9 +537,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       <div class="card" data-tt="team"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
         <div id="lanes" style="margin-top:8px"></div>
       </div>
-      <div class="card" data-tt="team"><b>🏟️ AI 생존전</b> <span class="muted" style="font-size:12.5px">전원 가상으로 매매 · 🎲 무작위 대조군보다 확실히 나은 AI 만 💰 실전 (나은 만큼 비중) · 최근 거래일수록 크게 침 · 상황별로 약했던 곳에선 실전 안 감 · 토요일 아침 발표</span>
+      <div class="card" data-tt="team"><b>🏟️ AI 리그</b> <span class="muted" style="font-size:12.5px">전원 가상으로 매매 · 🎲 무작위 대조군보다 확실히 나은 AI 만 💰 실전 (나은 만큼 비중) · 최근 거래일수록 크게 침 · 상황별로 약했던 곳에선 실전 안 감 · 토요일 아침 발표</span>
         <div id="arena" class="ar" style="margin-top:10px"></div>
-        <div class="row" style="margin-top:10px"><button class="btn" id="arena-voice">🗣️ 지금 의견 묻기</button><span class="muted" id="arena-voice-out">AI 가 의견이 생기면 채팅 '🏟️ 생존전 AI 의견' 으로 바로 보내요 · 지금 묻고 싶으면 이 버튼 · [적용]을 눌러야 바뀜</span></div>
+        <div class="row" style="margin-top:10px"><button class="btn" id="arena-voice">🗣️ 지금 의견 묻기</button><span class="muted" id="arena-voice-out">AI 가 의견이 생기면 채팅 '🏟️ 리그 AI 의견' 으로 바로 보내요 · 지금 묻고 싶으면 이 버튼 · [적용]을 눌러야 바뀜</span></div>
       </div>
       <div class="card" data-tt="perf"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
         <div id="scorecard" class="tlog" style="margin-top:8px;white-space:pre-wrap"></div>
@@ -573,6 +573,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label><b>한 달 목표 수익률 (%)</b><input id="t-monthly_target_pct" type="number" step="0.5"></label>
           <label>하루 손실 한도 (예산의 %)<input id="t-max_daily_loss_pct" type="number" step="0.5"></label>
           <label>손절 (%)<input id="t-stop_loss_pct" type="number" step="0.5"></label>
+        </div>
+        <details style="margin-top:10px"><summary style="cursor:pointer;font-size:13.5px"><b>고급 설정</b> <span class="muted">— 나머지 전부 (평소엔 안 바꿔도 돼요)</span></summary>
+        <div class="trade-grid">
           <label>고점 대비 하락 시 팔기 (%) — 최고 수익이 이만큼 난 뒤부터<input id="t-trail_pct" type="number" step="0.5"></label>
           <label>최고 수익이 이 % 이상이면…<input id="t-trail_wide_after_pct" type="number" step="0.5"></label>
           <label>…고점 대비 기준을 이만큼으로 넓힘 (%)<input id="t-trail_wide_pct" type="number" step="0.5"></label>
@@ -648,13 +651,13 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><b>🤖 AI 스스로 판단</b></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_decide"> 거래마다 AI 판단 — 사기 전 살지·얼마나, 보유 중 일찍 팔지 (손절·마감 정리·한도는 못 바꿈, 판단 중에도 손절 확인은 계속)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-shadow_on"> 🧪 그림자 가상 매매 (규칙 조합 여러 개 동시에 가상으로)</label>
-        <div class="trade-grid"><label>그림자 조합 수 (2~1000)<input id="t-shadow_count" type="number"></label></div>
-        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 생존전 (성격 다른 AI 들이 같은 후보를 각자 판단 · 토요일 아침 성적 발표)</label>
-        <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수<input id="t-arena_ai_per_day" type="number"></label><label>실전 자격 최소 거래<input id="t-arena_min_trades" type="number"></label><label>실전 자격 인원 (0~5)<input id="t-arena_live_n" type="number"></label><label>실전 예산 중 생존전 몫(%)<input id="t-arena_live_pct" type="number"></label><label>🎲 대조군보다 나아야 할 폭 (%p)<input id="t-arena_ctrl_margin" type="number" step="0.1"></label><label>⏳ 성적 반감 일수 (이만큼 지나면 절반 무게)<input id="t-arena_half_life_days" type="number"></label></div>
+        <div class="trade-grid"><label>그림자 조합 수 (2~1000 · 많을수록 교체 문턱이 높아져요, 권장 60)<input id="t-shadow_count" type="number"></label></div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 리그 (성격 다른 AI 들이 같은 후보를 각자 판단 · 토요일 아침 성적 발표)</label>
+        <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수<input id="t-arena_ai_per_day" type="number"></label><label>실전 자격 최소 거래<input id="t-arena_min_trades" type="number"></label><label>실전 자격 인원 (0~5)<input id="t-arena_live_n" type="number"></label><label>실전 예산 중 AI 리그 몫(%)<input id="t-arena_live_pct" type="number"></label><label>🎲 대조군보다 나아야 할 폭 (%p)<input id="t-arena_ctrl_margin" type="number" step="0.1"></label><label>⏳ 성적 반감 일수 (이만큼 지나면 절반 무게)<input id="t-arena_half_life_days" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_live"> 💰 상위 AI(거래 충분·평균 플러스·앞뒤 절반 모두 플러스)가 '산다'고 하면 실전 매수 — 나머지는 가상으로 공부 (실전 모드일 때만 · 현금만·봇 장부·손실 한도 그대로)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-daily_digest"> 📋 장 마감 뒤 제안 현황(대기 중인 제안·최근 적용·바꾼 뒤 성적)을 텔레그램으로 하루 한 번</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-notes_council"> 📒 주말 공부 끝에 AI 셋이 회의해서 공유 노트 정리 (다수 동의한 것만 핵심 노트 · 원본 보관 · 채팅에서 되돌리기)</label>
-        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_voice"> 🗣️ 생존전 AI 가 의견이 생기면 바로 채팅으로 (거래가 쌓이거나 연속 손실일 때 물어봄 · 할 말 없으면 안 옴 · 적용은 직접)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_voice"> 🗣️ 리그 AI 가 의견이 생기면 바로 채팅으로 (거래가 쌓이거나 연속 손실일 때 물어봄 · 할 말 없으면 안 옴 · 적용은 직접)</label>
         <div class="trade-grid"><label>의견 물어볼 거래 간격 (건)<input id="t-arena_voice_every" type="number"></label><label>하루 최대 의견 수 (AI 한 명은 하루 1번)<input id="t-arena_voice_per_day" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_promote"> 🏆 1등 전략을 2호 급등주 AI 판단에도 참고로</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
@@ -689,6 +692,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-prob_sizing"> 🎲 학습 기록으로 승률을 추정해서 살 금액 조절 (낮으면 적게, 높으면 많이 · 한도는 안 넘음 · 기대 수익이 마이너스인 조건은 건너뜀)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_chart_check"> 📊 사기 직전에 AI 가 1분봉 차트 그림을 보고 판단 (10~20초 늦어짐 · 판단한 차트는 주문 기록에 남음)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (글만, 느려짐)</label>
+        </details>
         <div class="row" style="margin-top:10px;display:flex"><div class="spacer"></div><button class="btn primary" id="trade-save">저장</button></div>
       </div>
       <div class="card" data-tt="home"><b>가상 장부</b> <button class="btn" id="trade-reset" style="float:right;padding:3px 10px;font-size:12px">처음부터</button><div id="trade-paper" style="margin-top:6px;font-size:13.5px"></div></div>
@@ -1460,7 +1464,7 @@ const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades", "regime_half_pct", "regime_stop_pct", "max_per_sector", "live_quality_change", "live_quality_ratio", "live_proof_n", "time_stop_min", "time_stop_up_pct", "stop_slip_pct", "surge_min_change_regular", "surge_buy_cutoff_min"];
 const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_voice", "notes_council", "daily_digest", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
-// 🏟️ 생존전 표: 순위 · 실전/가상 · 대조군 대비 · 비중 · 상황별
+// 🏟️ AI 리그 표: 순위 · 실전/가상 · 대조군 대비 · 비중 · 상황별
 function arenaHtml(ar) {
   const pct = v => `${v >= 0 ? "+" : ""}${(+v).toFixed(2)}%`;
   const ctrl = ar.board.find(r => r.ctrl), rows = ar.board.filter(r => !r.ctrl), ch = ar.champion;
@@ -1496,7 +1500,7 @@ $("#notes-council").onclick = async () => {   // 📒 노트 정리 회의 지�
   catch (e) { b.textContent = "📒 요청 실패"; }
   setTimeout(() => { b.disabled = false; b.textContent = "📒 지금 노트 정리"; }, 20000);
 };
-$("#arena-voice").onclick = async () => {   // 🗣️ 생존전 AI 의견 지금 받기
+$("#arena-voice").onclick = async () => {   // 🗣️ 리그 AI 의견 지금 받기
   const b = $("#arena-voice"), o = $("#arena-voice-out"); b.disabled = true;
   try { const r = await api("/api/autotrade/arena-voice", {}); o.textContent = r.message || (r.ok ? "요청했어요" : "실패했어요"); if (r.ok) setTimeout(loadConvs, 90000); }
   catch (e) { o.textContent = "요청 실패: " + e; }
@@ -1602,13 +1606,13 @@ function openChart(id) { window.open("/api/upload/" + encodeURIComponent(id), "_
 function tradeActionCard(a, container) {
   const el = document.createElement("div"); el.className = "treq";
   const done = (status, msg) => {   // 적용됨·무시 상태 (대화에 저장돼서 다시 열어도 그대로)
-    el.querySelector(".tb").textContent = { applied: "적용됨", ignored: "무시", failed: "실패" }[status] || status;
+    el.querySelector(".tb").textContent = { applied: /undo$/.test(a.type) ? "되돌림" : "적용됨", ignored: "무시", failed: "실패" }[status] || status;
     el.querySelector(".tb").className = "tb " + (status === "applied" ? "ok" : "");
     el.querySelector(".acts").innerHTML = `<span class="muted">${esc(msg || "")}</span>`;
   };
   el.innerHTML = `<div class="th">🤖 <b>자동매매에 지시</b><span class="tb wait">적용 대기</span></div>
     <div class="why"><b>${esc(a.label || a.type)}</b>${a.why ? `<br>${esc(a.why)}` : ""}</div>
-    <div class="acts"><button class="btn ${a.type === "stop" ? "danger" : "primary"}" data-a="ok">${a.type === "stop" ? "⛔ 지금 정지" : "적용"}</button><button class="btn" data-a="no">무시</button></div>`;
+    <div class="acts"><button class="btn ${a.type === "stop" ? "danger" : "primary"}" data-a="ok">${a.type === "stop" ? "⛔ 지금 정지" : /undo$/.test(a.type) ? "↩️ 되돌리기" : "적용"}</button><button class="btn" data-a="no">무시</button></div>`;
   container.appendChild(el);
   if (a.status) return done(a.status, a.result || (a.status === "ignored" ? "무시했어요" : "바꿨어요"));
   const send = async (ignore) => {

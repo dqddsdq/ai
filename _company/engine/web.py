@@ -110,7 +110,7 @@ def save_conv(conv: dict) -> None:
     (d / "chat.md").write_text("".join(lines), encoding="utf-8")
 
 
-CONV_LOCK = threading.RLock()   # 대화 파일 쓰기는 한 번에 하나 (채팅 답변 중에 🗣️ 생존전 의견이 붙어도 안 덮어씀)
+CONV_LOCK = threading.RLock()   # 대화 파일 쓰기는 한 번에 하나 (채팅 답변 중에 🗣️ AI 리그 의견이 붙어도 안 덮어씀)
 
 
 def save_conv_merged(conv: dict, base: int) -> int:
@@ -280,11 +280,11 @@ class Handler(BaseHTTPRequestHandler):
                         card["result"] = str(r.get("message") or "바꿨어요")[:200]
                         save_conv(conv)
             return self._json(r)
-        if path == "/api/autotrade/arena-voice":   # 🗣️ 생존전 AI 의견 지금 받기 (뒤에서 · 채팅으로 옴)
+        if path == "/api/autotrade/arena-voice":   # 🗣️ 리그 AI 의견 지금 받기 (뒤에서 · 채팅으로 옴)
             from . import arena_voice
             c = at.config()
             if not c.get("arena_on"):
-                return self._json({"ok": False, "message": "AI 생존전이 꺼져 있어요"})
+                return self._json({"ok": False, "message": "AI 리그이 꺼져 있어요"})
             return self._json(arena_voice.run_bg(c, at.markets()))
         if path == "/api/autotrade/notes-council":   # 📒 노트 정리 회의 지금 (뒤에서 · 채팅으로 옴)
             from . import notes_council
@@ -629,6 +629,10 @@ class Handler(BaseHTTPRequestHandler):
             log(f"  🛠️ 개선 제안: {what[:40]}")
             self._send("improve_request", job)
         acts = at.find_actions(reply)
+        if acts:   # 이미 [적용] 대기 중인 같은 카드는 또 안 만듦
+            from . import digest
+            waiting = {p["label"] for p in digest._pending_cards()}
+            acts = [a for a in acts if a["label"] not in waiting]
         if acts:   # 바로 실행하지 않고 [적용] 카드로
             conv["messages"][-1]["trade_actions"] = acts
             for a in acts:
@@ -642,14 +646,14 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"  🧰 도구 요청: {r['name']} ({r['status']})")
                 self._send("tool_request", {**r, "desc": t.get("desc", ""), "signup": t.get("signup", ""),
                                             "steps": t.get("steps", []), "tool_status": tl.status(t) if t else ""})
-        save_conv_merged(conv, base)   # 답변 만드는 사이 붙은 🗣️ 생존전 의견 등은 살림
+        save_conv_merged(conv, base)   # 답변 만드는 사이 붙은 🗣️ AI 리그 의견 등은 살림
         log("  ✅ 답변 완료")
         LIVE.pop(conv["id"], None)
         self._live = None
         self._send("done", {"conversation_id": conv["id"]})
 
     def _ask_ai(self, conv: dict, who: dict, text: str, body: dict):
-        """🗣️ 지정한 AI(1호·2호·생존전) 이름으로 답 — 읽기 전용: [적용] 카드·개선 제안·도구 요청 안 만듦"""
+        """🗣️ 지정한 AI(1호·2호·AI 리그) 이름으로 답 — 읽기 전용: [적용] 카드·개선 제안·도구 요청 안 만듦"""
         from . import ai_ask
         agent_id = ag.TRADER
         conv["agent"] = agent_id

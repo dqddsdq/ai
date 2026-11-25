@@ -439,7 +439,7 @@ def AI_생존전_가상_공부와_상위_실전_자격():
     from . import arena
     src = (Path(arena.__file__)).read_text(encoding="utf-8")
     code = "\n".join(x for x in src.splitlines() if not x.strip().startswith("#") and '"""' not in x)
-    assert not _re.search(r"place_limit_order|cancel_order|toss\.", code), "생존전이 주문·토스를 직접 부름"
+    assert not _re.search(r"place_limit_order|cancel_order|toss\.", code), "AI 리그가 주문·토스를 직접 부름"
     with tempfile.TemporaryDirectory() as d:
         orig = arena._file
         arena._file = lambda m: Path(d) / f"arena_{m}.json"

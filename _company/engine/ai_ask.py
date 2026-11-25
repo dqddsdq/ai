@@ -1,8 +1,8 @@
-"""🗣️ 채팅에서 AI 를 지정해 직접 묻기 — '1호 …', '2호 …', '@눌림목 …', '생존전 돌파 …'
+"""🗣️ 채팅에서 AI 를 지정해 직접 묻기 — '1호 …', '2호 …', '@눌림목 …', 'AI 리그 돌파 …'
 
 - 그 AI 의 지시문(성향·스스로 정한 규칙) + 최근 주문·일지·교훈을 근거로 그 AI 이름으로 답함
 - 읽기 전용: 주문·설정·모드는 못 바꿈 (답에서 [적용] 카드·개선 제안·도구 요청을 안 만듦)
-- 하루 호출 상한 ASK_PER_DAY — 생존전 판단 한도(arena_ai_per_day)와 따로 셈 (_cache/ai_ask.json)
+- 하루 호출 상한 ASK_PER_DAY — AI 리그 판단 한도(arena_ai_per_day)와 따로 셈 (_cache/ai_ask.json)
 - 사장님 의견: 메시지에 '의견: …' 또는 '참고: …' 가 있으면 공유 노트에 '참고 의견(검증 전)' 으로만 기록
 """
 
@@ -16,7 +16,7 @@ from . import store
 from .agents import COMPANY_DIR
 
 KST = timezone(timedelta(hours=9))
-ASK_PER_DAY = 30   # 하루 AI 지정 질문 최대 (생존전 판단 한도와 별도)
+ASK_PER_DAY = 30   # 하루 AI 지정 질문 최대 (AI 리그 판단 한도와 별도)
 _lock = threading.Lock()
 
 _SEP = r"(?:\s*AI)?\s*(?:님|에게|한테|야|아)?\s*[,:：]?\s*"
@@ -68,8 +68,8 @@ def match(text: str) -> dict | None:
         return None
     for name, aid, mk in sorted(cands, key=lambda x: -len(x[0])):   # 긴 이름 먼저 (겹침 방지)
         n = re.escape(name)
-        # '@이름' · '생존전 이름' 은 바로, 그냥 '이름' 은 뒤에 님/에게/,/: 가 붙을 때만 (평범한 말과 안 헷갈리게)
-        r = (re.match(r"^\s*(?:@\s*|(?:🏟️\s*)?생존전\s*(?:AI\s*)?)" + n + _SEP + r"(?=\S)", text)
+        # '@이름' · 'AI 리그 이름' 은 바로, 그냥 '이름' 은 뒤에 님/에게/,/: 가 붙을 때만 (평범한 말과 안 헷갈리게)
+        r = (re.match(r"^\s*(?:@\s*|(?:🏟️\s*)?(?:생존전|(?:AI\s*)?리그)\s*(?:AI\s*)?)" + n + _SEP + r"(?=\S)", text)
              or re.match(r"^\s*" + n + r"(?:\s*AI)?\s*(?:님|에게|한테)?\s*[,:：]\s*(?=\S)", text)
              or re.match(r"^\s*" + n + r"(?:\s*AI)?\s*(?:님|에게|한테)\s+(?=\S)", text))
         if r:
@@ -139,8 +139,8 @@ def _arena_block(aid: str, m: str) -> str:
         ca = arena._ctrl_avg(d, c)
         idx = arena._grade_index(d)
     if not a:
-        return f"[{_mk_name(m)}] 이 AI 를 생존전 목록에서 못 찾았어요."
-    lines = [f"[{_mk_name(m)} 생존전 · 가상 전용 · {a.get('gen', 1)}세대]", "지시문·성적:\n" + arena._brief(a, ca, hl, idx.get(aid))]
+        return f"[{_mk_name(m)}] 이 AI 를 AI 리그 목록에서 못 찾았어요."
+    lines = [f"[{_mk_name(m)} AI 리그 · 가상 전용 · {a.get('gen', 1)}세대]", "지시문·성적:\n" + arena._brief(a, ca, hl, idx.get(aid))]
     if a.get("pos"):
         lines.append("지금 가상 보유: " + ", ".join(f"{k} @ {v.get('px')}" for k, v in a["pos"].items()))
     ts = a["trades"][-10:]
@@ -163,7 +163,7 @@ def system_prompt(who: dict) -> str:
         head = f"너는 이 앱 자동매매의 '{who['name']}' AI 다. 사장님이 너에게 직접 물었다. 네 판단(왜 샀고 왜 팔았는지)을 아래 기록으로 설명해라."
         body = "\n\n".join(_lane_block(who["style"], m) for m in who["markets"])
     else:
-        head = (f"너는 AI 생존전 참가자 '{who['name']}' 다 (가상 매매만 함). 사장님이 너에게 직접 물었다. "
+        head = (f"너는 AI 리그 참가자 '{who['name']}' 다 (가상 매매만 함). 사장님이 너에게 직접 물었다. "
                 "네 성격·규칙·성적으로 답해라.")
         body = _arena_block(who["id"], who["markets"][0])
     return head + "\n" + READ_ONLY + "\n\n<record>\n" + body[:9000] + "\n</record>"

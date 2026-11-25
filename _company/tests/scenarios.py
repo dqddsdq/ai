@@ -132,7 +132,7 @@ def setup():
     from engine import agents
     agents.Agent.remember = lambda self, note: None   # 시험 교훈이 진짜 팀 기억에 안 들어가게
     from engine import arena as _arena
-    _arena.ai_json = lambda prompt: None   # 생존전 AI 는 시험에서 안 부름
+    _arena.ai_json = lambda prompt: None   # 리그 AI 는 시험에서 안 부름
     _arena._file = lambda m: tmp / f"arena_{m}.json"
     return at, picker, tmp, store
 
@@ -271,7 +271,7 @@ def 생존전_상위_AI_가_사면_실전으로(at, picker, tmp):
     fresh(at, picker, tmp, live_needs_proof=True, lane_surge_mode="paper", arena_size=3)
     _arena_setup(0, 0)
     r = at.run_once()
-    assert any("생존전 AI 들이 판단 중" in x for x in r["results"]), r["results"][:8]
+    assert any("리그 AI 들이 판단 중" in x for x in r["results"]), r["results"][:8]
     _arena_wait()
     at.run_once()
     buys = [s for s, _ in posted("BUY")]
@@ -295,7 +295,7 @@ def 생존전_실전_끄면_실전_주문_없음(at, picker, tmp):
     fresh(at, picker, tmp, live_needs_proof=True, lane_surge_mode="paper", arena_size=3, arena_live=False)
     _arena_setup(0, 0)
     at.run_once(); _arena_wait(); at.run_once()
-    assert posted("BUY") == [], ("생존전 실전을 껐는데 실전 주문이 나감", posted("BUY"))
+    assert posted("BUY") == [], ("AI 리그 실전을 껐는데 실전 주문이 나감", posted("BUY"))
     from engine import arena
     arena.ai_json = lambda prompt: None
 
@@ -604,7 +604,7 @@ def 노트_정리_회의는_서로_의견을_주고받고_다수가_동의한_�
 
 
 @case
-def 생존전은_안_산_판단까지_채점하고_계속_지는_구간은_안_물어봄(at, picker, tmp):
+def AI_리그는_안_산_판단까지_채점하고_계속_지는_구간은_안_물어봄(at, picker, tmp):
     fresh(at, picker, tmp, arena_size=2)
     from engine import arena
     c = {**at.config(), "arena_on": True}

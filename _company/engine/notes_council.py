@@ -60,7 +60,7 @@ def evidence(market: str, days: int = 60) -> str:
             out.append(f"최근 {days}일 끝난 거래 없음")
     except Exception as e:
         out.append(f"(거래 기록 요약 실패: {type(e).__name__})")
-    try:   # 🏟️ 생존전 상황별 (참가자 전원 합침) · 대조군
+    try:   # 🏟️ AI 리그 상황별 (참가자 전원 합침) · 대조군
         from . import arena
         d = arena.load(market)
         sits: dict[str, list] = {}
@@ -69,7 +69,7 @@ def evidence(market: str, days: int = 60) -> str:
                 if t.get("sit"):
                     sits.setdefault(t["sit"], []).append(t["ret"])
         if sits:
-            out.append("생존전 상황별(가상, 전원): " + ", ".join(f"{k} {len(v)}건 평균 {st.fmean(v):+.2f}%" for k, v in sorted(sits.items(), key=lambda x: -len(x[1]))))
+            out.append("AI 리그 상황별(가상, 전원): " + ", ".join(f"{k} {len(v)}건 평균 {st.fmean(v):+.2f}%" for k, v in sorted(sits.items(), key=lambda x: -len(x[1]))))
         ct = d["ctrl"]["trades"] if d.get("ctrl") else []
         if ct:
             out.append(f"🎲 무작위 대조군: {len(ct)}건 평균 {st.fmean(t['ret'] for t in ct):+.2f}%")

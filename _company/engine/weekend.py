@@ -149,11 +149,11 @@ def run(log=print) -> dict:
                 except Exception as e:
                     r["pattern"] = {"note": f"실패 {type(e).__name__}"}
                 r["missed"] = missed_study(m)
-                try:   # 🏟️ AI 생존전: 꼴찌 탈락 · 1등 변형 투입 · 챔피언
+                try:   # 🏟️ AI 리그: 꼴찌 탈락 · 1등 변형 투입 · 챔피언
                     from . import arena
                     r["arena"] = arena.evolve(at.config(), m, arena.ai_json, tl.add_lesson, tl.lessons_text(m, 8))
                 except Exception as e:
-                    r["arena"] = f"🏟️ 생존전 정리 실패: {type(e).__name__}"
+                    r["arena"] = f"🏟️ AI 리그 정리 실패: {type(e).__name__}"
                 try:
                     s = at.state()
                     fx = 1.0 if m == "KR" else at.usd_krw(c)
@@ -192,7 +192,7 @@ def _ai_review(market: str, r: dict) -> str:
     """주간 종합 복기 (AI 1번) → 교훈 2~3개를 공유 노트에"""
     from . import providers as pv
     from . import team as tm
-    data = {"성적": r.get("score", ""), "AI생존전": r.get("arena", ""), "백테스트": r.get("backtest", ""), "원인별수정": r.get("fixloop", ""), "과거급등패턴": (r.get("pattern") or {}).get("all"),
+    data = {"성적": r.get("score", ""), "AI 리그": r.get("arena", ""), "백테스트": r.get("backtest", ""), "원인별수정": r.get("fixloop", ""), "과거급등패턴": (r.get("pattern") or {}).get("all"),
             "급등구간별": (r.get("pattern") or {}).get("by_chg"), "놓친vs산": r.get("missed"), "공유노트": tl.lessons_text(market, 8)}
     prompt = ("자동매매 엔진의 이번 주 기록이에요. 다음 주 매매에 바로 쓸 교훈 2~3개를 한 줄씩 써 주세요 "
               "(숫자는 아래 자료만, 이미 공유 노트에 있는 건 빼고, 투자 권유 문구 없이).\n"

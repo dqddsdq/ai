@@ -1,9 +1,9 @@
-"""🗣️ 생존전 AI 개개인의 의견 → 의견이 생기면 바로 사장님 채팅으로 (모아서 보내지 않음).
+"""🗣️ 리그 AI 개개인의 의견 → 의견이 생기면 바로 사장님 채팅으로 (모아서 보내지 않음).
 
-- 언제: 생존전 거래가 닫힐 때마다 확인 → 그 AI 가 지난번 뒤로 거래 arena_voice_every(5)건 더 쌓였거나
+- 언제: AI 리그 거래가 닫힐 때마다 확인 → 그 AI 가 지난번 뒤로 거래 arena_voice_every(5)건 더 쌓였거나
   3번 연속 손실이면 그 AI 에게만 물어봄. 할 말이 없다고 하면 안 보냄.
   AI 한 명은 하루 1번 · 하루 전체 arena_voice_per_day(8)번까지 · 🤖 AI 팀 화면 [지금 의견 받기]도 있음
-- 어디로: 채팅의 '🏟️ 생존전 AI 의견 (미장/국장)' 대화 하나에 계속 이어 붙음 (자동매매 팀 대화라 이어서 물어보면 답함)
+- 어디로: 채팅의 '🏟️ 리그 AI 의견 (미장/국장)' 대화 하나에 계속 이어 붙음 (자동매매 팀 대화라 이어서 물어보면 답함)
 - 무엇: AI 마다 메시지 하나 — 왜 지금 · 배운 것·바꾸고 싶은 것
   · 자기 규칙(익절·손절·최대 보유·스스로 정한 규칙 한 줄) — 범위 안이면 바로 바뀜 + 알림 + [되돌리기] 카드
     (그 AI 판단에만 쓰임 · 공통 규칙·안전 한도와 무관)
@@ -78,11 +78,11 @@ def _conv(market: str, meta: dict) -> dict:
         except (OSError, ValueError, KeyError):
             pass
     flag = "미장" if market == "US" else "국장"
-    conv = web.new_conv(f"🏟️ 생존전 AI 의견 ({flag})")
+    conv = web.new_conv(f"🏟️ 리그 AI 의견 ({flag})")
     conv["id"] += f"-arena{market}"   # 같은 초에 두 시장이 만들어도 안 겹치게
     conv["agent"] = ag.TRADER
     conv["messages"].append({"role": "assistant", "agent": ag.TRADER, "model": "", "sources": [], "drafts": [], "steps": [],
-                             "content": ("생존전 AI 들이 의견이 생기면 여기로 바로 보내요. "
+                             "content": ("리그 AI 들이 의견이 생기면 여기로 바로 보내요. "
                                          "AI 자기 규칙은 바로 바뀌고 [되돌리기] 카드가 붙어요. 공통 설정은 [적용]을 눌러야 바뀌어요. "
                                          "궁금한 건 여기서 이어서 물어보세요.")})
     meta.setdefault("conv", {})[market] = conv["id"]
@@ -106,7 +106,7 @@ def post(market: str, o: dict) -> dict:
             m["trade_actions"] = cards
         if code:
             if int(meta.get("code_n", 0)) < MAX_CODE_PER_DAY:
-                job = im.create(code, f"생존전 '{o['name']}' 의견 ({o['stats']['n']}건 · 최근 평균 {o['stats']['wavg']:+.2f}%)", ag.TRADER)
+                job = im.create(code, f"AI 리그 '{o['name']}' 의견 ({o['stats']['n']}건 · 최근 평균 {o['stats']['wavg']:+.2f}%)", ag.TRADER)
                 m["improvements"] = [job["id"]]; meta["code_n"] = int(meta.get("code_n", 0)) + 1
             else:
                 m["content"] += f"\n\n🛠️ 코드 아이디어: {code}"
@@ -121,8 +121,8 @@ def post(market: str, o: dict) -> dict:
     try:
         from . import autotrade as at
         with at.in_market(market):
-            at.event("생존전", (f"🔧 {o['name']} 규칙 바꿈: {o['changed']}" if o.get("changed") else f"🗣️ {o['name']} 의견: {o['opinion'][:80]}")
-                     + " — 채팅 '🏟️ 생존전 AI 의견'에서 되돌릴 수 있어요")
+            at.event("AI 리그", (f"🔧 {o['name']} 규칙 바꿈: {o['changed']}" if o.get("changed") else f"🗣️ {o['name']} 의견: {o['opinion'][:80]}")
+                     + " — 채팅 '🏟️ 리그 AI 의견'에서 되돌릴 수 있어요")
     except Exception:
         pass
     return {"ok": True, "conversation_id": conv["id"], "cards": len(cards)}
@@ -144,7 +144,7 @@ def ask(c: dict, market: str, due: dict, ai_fn=None) -> int:
 
 
 def ask_bg(c: dict, market: str, due: dict) -> None:
-    """생존전 엔진이 부름: 매매를 안 막게 뒤에서"""
+    """AI 리그 엔진이 부름: 매매를 안 막게 뒤에서"""
     threading.Thread(target=ask, args=(c, market, due), daemon=True, name="arena-voice").start()
 
 
@@ -166,4 +166,4 @@ def run_bg(c: dict, markets: list[str]) -> dict:
         finally:
             _running.clear()
     threading.Thread(target=go, daemon=True, name="arena-voice").start()
-    return {"ok": True, "message": "AI 들에게 묻는 중이에요. 할 말 있는 AI 의견이 1~2분 안에 채팅 '🏟️ 생존전 AI 의견' 으로 하나씩 와요"}
+    return {"ok": True, "message": "AI 들에게 묻는 중이에요. 할 말 있는 AI 의견이 1~2분 안에 채팅 '🏟️ 리그 AI 의견' 으로 하나씩 와요"}

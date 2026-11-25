@@ -1,8 +1,8 @@
-"""🏟️ AI 생존전 — 성격이 다른 AI 여러 개가 **가상으로만** 같은 후보를 두고 매매 → 성적으로 탈락·교체.
+"""🏟️ AI 리그 — 성격이 다른 AI 여러 개가 **가상으로만** 같은 후보를 두고 매매 → 성적으로 탈락·교체.
 
 - 가상 전용: 이 파일은 주문 함수를 절대 부르지 않음 (시세는 실전 엔진이 넘겨준 것 + 읽기 전용 조회만)
 - 후보: 실전 엔진이 매 바퀴 고른 후보(규칙 관문 통과한 것)를 그대로 받음
-- 📒 모든 AI 가 같은 공유 노트(1호·2호·생존전·주말 공부 교훈 + 팀 기억 교훈)를 보고 판단
+- 📒 모든 AI 가 같은 공유 노트(1호·2호·AI 리그·주말 공부 교훈 + 팀 기억 교훈)를 보고 판단
 - AI 호출: 후보 한 종목당 1번에 참가자 전원이 같이 판단 (하루 arena_ai_per_day 번까지 · 실전 AI 판단 한도와 따로)
 - 매도: 참가자마다 자기 익절·손절·최대 보유 시간 + 마감 전 정리 (단타)
 - 체결: 0.1% 불리하게 + 수수료·세금 (실전 가상 매매와 같게)
@@ -432,7 +432,7 @@ def _notes(market: str) -> str:
 
 
 def _notes_raw(market: str) -> str:
-    """공유 교훈(1호·2호·생존전·주말 공부) + 자동매매 팀 기억의 교훈"""
+    """공유 교훈(1호·2호·AI 리그·주말 공부) + 자동매매 팀 기억의 교훈"""
     out = []
     try:
         from . import tradelearn as tl
@@ -483,7 +483,7 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
         if asked:   # 다 걸러졌으면 AI 를 안 부름 (빠르고 비용 0)
             e = cd.get("est") or {}
             notes = _notes(market)
-            prompt = ("AI 생존전: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매). "
+            prompt = ("AI 리그: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매). "
                       "'내 기록' 은 그 참가자의 지난 판단 결과예요 — 자기 기록에서 지는 패턴이면 피하세요.\n"
                       f"종목 {sym} 현재가 {price} · 구간: {', '.join(keys) or '모름'} · 고른 이유: {cd.get('reason', '')}\n"
                       + (f"진입 시점: 거래량 폭발 뒤 {spk:.0f}분 · 오늘 {float(chg):+.1f}% (폭발 뒤 {LATE_MIN}분↑ + 오늘 +{LATE_CHG:g}%↑ 면 늦은 진입)\n"
@@ -539,7 +539,7 @@ _wake = None   # 판단 끝나면 실전 엔진을 바로 한 바퀴 (autotrade 
 
 
 def kick(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn=None) -> bool:
-    """실전 엔진이 후보를 처음 봤을 때 바로 생존전 판단 시작 (하루 한 종목 1번 · 하루 횟수 안에서)"""
+    """실전 엔진이 후보를 처음 봤을 때 바로 AI 리그 판단 시작 (하루 한 종목 1번 · 하루 횟수 안에서)"""
     with _lock:
         d = load(market)
         seen = d["seen"].setdefault(day, [])
@@ -676,7 +676,7 @@ def text(market: str) -> str:
         return ""
     ch = load(market).get("champion") or {}
     ctrl = next((r for r in rows if r["ctrl"]), None)
-    return ("🏟️ AI 생존전: " + " · ".join(("💰" if r["live"] else "") + r["name"] + f" {r['n']}건 {r['wavg']:+.2f}%" for r in rows if not r["ctrl"])
+    return ("🏟️ AI 리그: " + " · ".join(("💰" if r["live"] else "") + r["name"] + f" {r['n']}건 {r['wavg']:+.2f}%" for r in rows if not r["ctrl"])
             + (f" · 🎲 대조군 {ctrl['n']}건 {ctrl['wavg']:+.2f}%" if ctrl else "")
             + (f" · 🏆 {ch['name']}" if ch.get("name") else "") + (" · 💰=실전 자격" if any(r["live"] for r in rows) else ""))
 
@@ -686,7 +686,7 @@ def champion_text(market: str) -> str:
     ch = load(market).get("champion") or {}
     if not ch.get("persona"):
         return ""
-    return f"🏆 AI 생존전 1등 전략(가상 {ch['n']}건 평균 {ch['avg']:+.2f}%) — 참고: {ch['persona']}"
+    return f"🏆 AI 리그 1등 전략(가상 {ch['n']}건 평균 {ch['avg']:+.2f}%) — 참고: {ch['persona']}"
 
 
 # ── 매주: 성적 발표 · 실전 자격 ──
@@ -725,13 +725,13 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
     if gone:
         msg.append("⬇️ 가상으로: " + ", ".join(gone))
     if add_lesson and best:
-        add_lesson(market, f"[생존전 1등] '{best['persona'][:80]}' 전략이 {score(best)['n']}건 평균 {score(best)['avg']:+.2f}% (무작위 대조군 {ca:+.2f}%)", "AI 생존전")
+        add_lesson(market, f"[AI 리그 1등] '{best['persona'][:80]}' 전략이 {score(best)['n']}건 평균 {score(best)['avg']:+.2f}% (무작위 대조군 {ca:+.2f}%)", "AI 리그")
     rows = board(market, c)   # 📣 성적 발표: 전원 순위
     rank = [f"{i + 1}. {'💰' if r['live'] else '📘'} {r['name']} — {r['n']}건 최근 평균 {r['wavg']:+.2f}% 승률 {r['win']}%"
             + (f" · 대조군 대비 {r['edge']:+.2f}%p" if r["edge"] is not None else "")
             + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(x for x in rows if not x["ctrl"])]
     ctrl_line = f"🎲 무작위 대조군 — {ctrl_sc['n']}건 최근 평균 {ctrl_sc['wavg']:+.2f}% 승률 {ctrl_sc['win']}% (이보다 나아야 실력)"
-    return "🏟️ AI 생존전 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + ctrl_line + "\n" + "\n".join(msg)
+    return "🏟️ AI 리그 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + ctrl_line + "\n" + "\n".join(msg)
 
 
 # ── 🗣️ AI 개개인의 의견 (공부한 뒤 사장님께 개선안) ──
@@ -766,7 +766,7 @@ def _brief_core(a: dict, ctrl_avg: float, hl: float) -> str:
             f"  파는 이유: {', '.join(f'{k} {v}' for k, v in whys.items()) or '없음'}" + (f"\n  상황별: {sits}" if sits else ""))
 
 
-VOICE_PROMPT = """AI 생존전 참가자가 방금 쌓인 자기 성적을 보고 사장님께 바로 의견을 보낼지 정해요. 참가자마다 자기 성적만 보고 따로 답하세요.
+VOICE_PROMPT = """AI 리그 참가자가 방금 쌓인 자기 성적을 보고 사장님께 바로 의견을 보낼지 정해요. 참가자마다 자기 성적만 보고 따로 답하세요.
 - opinion: 자기 성적에서 배운 것 + 앞으로 바꾸고 싶은 것 (2~3문장, 근거 숫자 포함, 사장님께 존댓말). 지금 딱히 할 말이 없으면 "" (빈칸이면 안 보냄)
 - self: 자기 규칙을 바꾸고 싶으면 {"tp": 익절%, "sl": 손절%, "hold": 최대 보유 분} 중 바꿀 것만. 아니면 null (바로 바뀌어요 — 성적 근거가 있을 때만)
 - habit: 앞으로 자기 판단에 붙일 짧은 규칙 한 줄 (40자 이내, 예: "장 초반 하락장에선 안 삼"). 없으면 ""
@@ -889,7 +889,7 @@ def set_rules(market: str, ai_id: str, changes: dict | None = None, habit: str =
         d = load(market)
         a = next((x for x in d["alive"] if x["id"] == ai_id), None)
         if not a:
-            return {"ok": False, "message": "그 AI 를 못 찾았어요 (생존전 목록이 바뀌었을 수 있어요)"}
+            return {"ok": False, "message": "그 AI 를 못 찾았어요 (AI 리그 목록이 바뀌었을 수 있어요)"}
         before = {k: a[k] for k in clean}
         habits_before = list(a.get("habits") or [])
         a.update(clean)

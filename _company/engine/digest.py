@@ -1,7 +1,7 @@
 """📋 제안 현황 — 흩어진 제안·적용 기록을 한곳에 (읽기 전용 · 매매 판단·주문·공유 노트와 무관).
 
-- 대기 중: 채팅 [적용] 카드(생존전 의견 포함) · 🛠️ 개선 카드 · 📚 학습 조정 제안
-- 최근 적용(24시간): 설정 변경 기록(규칙 로그) · 생존전 AI 자기 규칙 변경 · 🛠️ 코드 개선 적용
+- 대기 중: 채팅 [적용] 카드(AI 리그 의견 포함) · 🛠️ 개선 카드 · 📚 학습 조정 제안
+- 최근 적용(24시간): 설정 변경 기록(규칙 로그) · 리그 AI 자기 규칙 변경 · 🛠️ 코드 개선 적용
 - 적용 뒤 성적: 최근 7일 설정 변경마다 바뀌기 전 7일 vs 바뀐 뒤 끝난 거래 (건수·평균)
 - 언제: 장 마감 뒤 복기 끝에 하루 한 번 텔레그램 (설정 daily_digest) · 🤖 학습·기록 화면 '📋 제안 현황' 은 언제든
 """
@@ -104,7 +104,7 @@ def collect(market: str) -> dict:
             ts = [t for t in tl._load()["trades"] if t.get("closed") and t.get("exits") and tl._tm(t) == market]
         end = lambda t: str(t["exits"][-1].get("t", ""))
         for t0, what in changes:
-            if t0 < _ago(24 * EFFECT_DAYS) or "생존전" in what:   # 생존전 자기 규칙은 가상 전용이라 실전 성적과 무관
+            if t0 < _ago(24 * EFFECT_DAYS) or "AI 리그" in what or "생존전" in what:   # AI 리그(예전 이름 생존전) 자기 규칙은 실전 성적과 무관
                 continue
             try:
                 pre_from = (datetime.strptime(t0, "%Y-%m-%d %H:%M:%S") - timedelta(days=EFFECT_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
