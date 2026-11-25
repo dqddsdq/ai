@@ -1342,6 +1342,7 @@ def _rebound_report(sym: str) -> None:
 
 # ── 🧯 손절 기록: 기준가·발동 시각·체결가 · 1%p 넘게 벌어지면 원인 · 손절 뒤 가격 추적 (기록만, 매매엔 영향 없음) ──
 _last_seen: dict = {}   # 종목 → (직전 확인 가격, 시각(초), 장 날짜) · 메모리만
+STOP_SLIP_PP = 0.3   # 손절선보다 이 %p 넘게 깊게 체결되면 '슬리피지'로 따로 표시
 STOP_TRACK = ((30, "30분"), (120, "2시간"), (1440, "1일"), (4320, "3일"), (7200, "5일"))   # 손절 뒤 확인 시점(분)
 
 
@@ -1364,7 +1365,8 @@ def _stop_open(s: dict, sym: str, held: dict, price: float, reason: str, style: 
                "t": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"), "ts": now, "day": s.get("day"), "minutes": minutes,
                "trigger_px": float(price), "trigger_pnl": round((price / avg - 1) * 100, 2), "ids": [coid], "retries": 0,
                "prev_px": prev[0] if prev else None, "prev_ago_sec": round(now - prev[1]) if prev else None,
-               "prev_same_day": bool(prev and prev[2] == s.get("day")), "track": {}}
+               "prev_same_day": bool(prev and prev[2] == s.get("day")), "track": {},
+               "time_stop": "시간 손절" in (reason or ""), "live": fill is None}   # 슬리피지 집계용 (시간 손절 제외 · 실전/가상)
         log.append(rec)
     s["stop_log"] = log[-100:]
     if fill:
@@ -1404,12 +1406,34 @@ def _stop_fill(s: dict, coid: str, qty: float, fill_px: float) -> str:
     r["fill_pnl"] = round((r["fill_px"] / r["avg"] - 1) * 100, 2)
     r["gap_pp"] = round(r["fill_pnl"] + r["stop_pct"], 2)   # 기준 대비 차이 (%p, 음수 = 기준보다 더 잃음)
     r["cause"] = _stop_cause(r) if r["gap_pp"] <= -1 else ""
+    # 🔻 손절 슬리피지: 체결이 손절선보다 깊으면 따로 표시 (기록만)
+    r["slip"] = (not r.get("time_stop")) and r["gap_pp"] <= -STOP_SLIP_PP
     if not first:
         return ""
     r["low_px"] = r["high_px"] = r["fill_px"]
     return (f"🧯 손절 기록 {r['symbol']}: 기준 -{r['stop_pct']:g}%(기준가 {r['line']:g}) · 발동 {r['t'][5:]} @ {r['trigger_px']:g}"
             f"({r['trigger_pnl']:+.1f}%) · 체결 @ {r['fill_px']:g}({r['fill_pnl']:+.1f}%) · 기준 대비 {r['gap_pp']:+.1f}%p"
+            + (" · 🔻 슬리피지" if r["slip"] else "")
             + (f"\n원인: {r['cause']}" if r["cause"] else ""))
+
+
+def stop_slip_view(n: int = 20) -> dict:
+    """🔻 손절 슬리피지 모아 보기 (손절선보다 깊게 체결된 손절만 · 화면·채팅용)"""
+    rows = [r for r in (state().get("stop_log") or []) if r.get("fill_px") and not r.get("time_stop") and "gap_pp" in r]
+    if not rows:
+        return {"text": "", "rows": []}
+    sl = [r for r in rows if float(r["gap_pp"]) <= -STOP_SLIP_PP]   # 예전 기록도 같은 기준으로 다시 셈
+    if not sl:
+        return {"text": f"🔻 손절 슬리피지: 최근 손절 {len(rows)}건 모두 손절선 근처에서 체결", "rows": []}
+    avg = sum(float(r["gap_pp"]) for r in sl) / len(sl)
+    worst = min(sl, key=lambda r: float(r["gap_pp"]))
+    head = (f"🔻 손절 슬리피지: 손절 {len(rows)}건 중 {len(sl)}건이 손절선보다 깊게 체결 · 평균 {avg:+.2f}%p · "
+            f"최악 {worst['symbol']} {worst['gap_pp']:+.1f}%p")
+    out = [{"t": r.get("fill_t", "")[5:16], "symbol": r["symbol"], "live": r.get("live", True), "stop_pct": r["stop_pct"],
+            "fill_pnl": r["fill_pnl"], "gap_pp": r["gap_pp"], "cause": r.get("cause") or ""} for r in sl[-n:]][::-1]
+    lines = [head] + [f"- {x['t']} {x['symbol']}{'' if x['live'] else '(가상)'} 기준 -{x['stop_pct']:g}% → 체결 {x['fill_pnl']:+.1f}% "
+                      f"({x['gap_pp']:+.1f}%p)" + (f" · {x['cause']}" if x["cause"] else "") for x in out[:5]]
+    return {"text": "\n".join(lines), "rows": out, "n": len(sl), "total": len(rows), "avg_pp": round(avg, 2)}
 
 
 def _stop_track(quotes: dict, minutes) -> list[str]:
@@ -2139,6 +2163,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                                 if r_ and r_.get("fill_px"):
                                     stop_msg = (f"🧯 손절 기록 {sym}(가상): 기준 -{r_['stop_pct']:g}% · 발동 @ {r_['trigger_px']:g}({r_['trigger_pnl']:+.1f}%) · "
                                                 f"체결 @ {r_['fill_px']:g}({r_['fill_pnl']:+.1f}%) · 기준 대비 {r_['gap_pp']:+.1f}%p"
+                                                + (" · 🔻 슬리피지" if r_.get("slip") else "")
                                                 + (f"\n원인: {r_['cause']}" if r_.get("cause") else ""))
                             _save(s_s)
                     if stop_msg:
@@ -2327,7 +2352,15 @@ def overview() -> dict:
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
             "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {},
             "scorecard": _scorecard_safe(c, s), "gates": extras.gate_text(c["market"], s["day"]), "arena": _arena_ov(c["market"]), "rules": extras.rule_history(8),
-            "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "notes_core": tl.core(c["market"]),"halted_lane": s.get("halted_lane") or {}}
+            "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "notes_core": tl.core(c["market"]),"halted_lane": s.get("halted_lane") or {},
+            "stop_slip": _stop_slip_safe()}
+
+
+def _stop_slip_safe() -> dict:
+    try:   # 🔻 손절 슬리피지 (오류 나도 화면은 그대로)
+        return stop_slip_view()
+    except Exception as e:
+        return {"text": f"🔻 손절 슬리피지 계산 오류: {type(e).__name__}", "rows": []}
 
 
 def _brief(m: str) -> dict:
@@ -2775,6 +2808,9 @@ def _summary_one() -> str:
         sl = stop_log_text()
         if sl:
             lines.append(sl)
+        ss = stop_slip_view().get("text")   # 🔻 손절 슬리피지 따로
+        if ss:
+            lines.append(ss)
     except Exception:
         pass
     vd = s.get("verify_daily") or {}

@@ -544,6 +544,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       <div class="card" data-tt="perf"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
         <div id="scorecard" class="tlog" style="margin-top:8px;white-space:pre-wrap"></div>
         <div id="gates" class="muted" style="margin-top:6px;font-size:13px"></div>
+        <div id="stopslip" class="muted" style="margin-top:6px;font-size:13px;white-space:pre-line"></div>
         <div id="rules" class="tlog" style="margin-top:6px"></div>
         <div id="lessons" class="tlog" style="margin-top:8px"></div>
       </div>
@@ -1578,6 +1579,7 @@ async function renderTrade(fillForm = true) {
   const ar = d.arena || {}, ch = ar.champion;
   $("#arena").innerHTML = (ar.board || []).length ? arenaHtml(ar) : "<span class='muted'>장 열리면 시작해요</span>";
   $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
+  if ($("#stopslip")) $("#stopslip").textContent = (d.stop_slip || {}).text || "🔻 손절 슬리피지: 아직 손절 기록 없음";
   $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 8건 뒤 나빠지면 그 변경만 되돌림)</span></div>` + d.rules.map(x =>
     `<div>${esc(x.t.slice(5, 16))} ${x.revert ? "↩️ " : ""}${esc(Object.entries(x.after).map(([k, v]) => `${k} ${x.before[k]}→${v}`).join(", "))} <span class="muted">${esc(x.result || (x.checked ? "" : "효과 확인 중"))}</span></div>`).join("") : "";
   const pf = d.preflight || {};
