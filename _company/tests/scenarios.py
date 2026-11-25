@@ -421,6 +421,23 @@ def 생존전_AI_자기_규칙은_바로_바뀌고_되돌릴_수_있고_공통_�
 
 
 @case
+def 다들_하고_물으면_리그_AI_가_각자_자기_이름으로_답함(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import ai_ask
+    d = _arena_fill([1.5, -0.8], ctrl_ret=0.2)
+    a0, a1 = d["alive"][0]["name"], d["alive"][1]["name"]
+    who = ai_ask.match("다들 오늘 왜 손해 봤어?")
+    assert who and who["kind"] == "all", who
+    assert ai_ask.match("리그 전원 오늘 어땠어?")["kind"] == "all"
+    assert ai_ask.match("모두 팔아줘") is None and ai_ask.match("전원 꺼") is None, "매매 지시가 리그 질문으로 감"
+    assert ai_ask.match(f"{a0}, 왜 샀어?")["kind"] == "arena"   # 이름 부르면 그 AI 만
+    assert a0 in ai_ask.system_prompt(who) and a1 in ai_ask.system_prompt(who)
+    reply = f'답입니다 {{"{a0}": "저는 장 초반에 너무 빨리 샀어요", "{a1}": "", "없는AI": "x"}}'
+    assert ai_ask.split_answers(reply, "US") == [(a0, "저는 장 초반에 너무 빨리 샀어요")]   # 빈 답·모르는 이름은 뺌
+    assert ai_ask.split_answers("JSON 아님", "US") == []
+
+
+@case
 def 채팅_답변_중에_온_생존전_의견이_안_사라짐(at, picker, tmp):
     fresh(at, picker, tmp, arena_size=2)
     from engine import agents as ag, arena_voice, web

@@ -84,7 +84,7 @@ def _conv(market: str, meta: dict) -> dict:
     conv["messages"].append({"role": "assistant", "agent": ag.TRADER, "model": "", "sources": [], "drafts": [], "steps": [],
                              "content": ("리그 AI 들이 의견이 생기면 여기로 바로 보내요. "
                                          "AI 자기 규칙은 바로 바뀌고 [되돌리기] 카드가 붙어요. 공통 설정은 [적용]을 눌러야 바뀌어요. "
-                                         "궁금한 건 여기서 이어서 물어보세요.")})
+                                         "여기서 물으면 리그 AI 전원이 각자 답하고, '돌파,' 처럼 이름을 부르면 그 AI 만 답해요.")})
     meta.setdefault("conv", {})[market] = conv["id"]
     return conv
 
