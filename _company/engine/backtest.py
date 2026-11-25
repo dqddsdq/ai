@@ -140,7 +140,7 @@ def _sim_swing(closes_after: list[float], entry: float, params: dict, base_cfg: 
 
 def _score(rets: list[float], n_all: int) -> dict:
     n = len(rets)
-    return {"n": n, "avg": round(st.mean(rets), 2) if rets else 0, "total": round(sum(rets), 2),
+    return {"n": n, "avg": round(st.fmean(rets), 2) if rets else 0, "total": round(sum(rets), 2),
             "win": round(sum(1 for r in rets if r > 0) / n * 100) if n else 0}
 
 
@@ -233,7 +233,7 @@ def _entries(bars: list[dict], prev: float, vol20: float, c: dict, market: str) 
 def _rstat(xs: list[dict]) -> dict:
     rets = [x["ret"] for x in xs]
     s = _score(rets, len(rets))
-    s["mfe"] = round(st.mean(x["mfe"] for x in xs), 2) if xs else 0
+    s["mfe"] = round(st.fmean(x["mfe"] for x in xs), 2) if xs else 0
     return s
 
 
@@ -264,7 +264,7 @@ def replay(cfg: dict, market: str, signal_surge, log=print) -> dict:
             rng_d = {"from": dates[0][:10], "to": dates[-1][:10], "n": len(dates), "sym": s}
         for i in range(20, len(closes)):
             d_ = dates[i][:10]
-            v20 = st.mean(vols[i - 20:i])
+            v20 = st.fmean(vols[i - 20:i])
             if d_ >= today or not closes[i - 1] or not v20:
                 continue
             chg = (closes[i] / closes[i - 1] - 1) * 100

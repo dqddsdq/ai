@@ -303,8 +303,8 @@ def _stats(ts: list[dict]) -> dict:
     pn = [t["pnl_pct"] for t in ts]
     wins = [p for p in pn if p > 0]
     loss = [p for p in pn if p <= 0]
-    return {"n": len(ts), "win_rate": round(len(wins) / len(ts) * 100), "avg": round(st.mean(pn), 2),
-            "avg_win": round(st.mean(wins), 2) if wins else 0, "avg_loss": round(st.mean(loss), 2) if loss else 0,
+    return {"n": len(ts), "win_rate": round(len(wins) / len(ts) * 100), "avg": round(st.fmean(pn), 2),
+            "avg_win": round(st.fmean(wins), 2) if wins else 0, "avg_loss": round(st.fmean(loss), 2) if loss else 0,
             "sum": round(sum(pn), 2), "mfe_med": round(st.median([t["mfe"] for t in ts]), 2),
             "mae_med": round(st.median([t["mae"] for t in ts]), 2)}
 
@@ -478,11 +478,11 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
            "by_ratio": _bucket(recent, "ratio", [0, 3, 5, 10, 1e9], "배"),
            "by_session": {k: v for k, v in (("프리장", _stats([t for t in recent if t.get("features", {}).get("pre")])),
                                             ("정규장", _stats([t for t in recent if not t.get("features", {}).get("pre")]))) if v["n"]},
-           "missed": {"n": len(missed), "avg_max_up": round(st.mean([m for _, m in missed]), 2) if missed else None,
+           "missed": {"n": len(missed), "avg_max_up": round(st.fmean([m for _, m in missed]), 2) if missed else None,
                       "top": sorted(missed, key=lambda x: -x[1])[:3]},
            "by_prob": _bucket(recent, "p", [0, 0.4, 0.5, 0.6, 1.01], ""),   # 추정 승률 구간별 실제 성적 (추정이 맞는지)
            "ai_chart": {"찬성해서 산 거래": _stats([t for t in recent if (t.get("features") or {}).get("ai_chart") == "찬성"]),
-                        "반대한 종목 그 뒤 최대 상승 평균": round(st.mean([(x["max"] / x["pick_px"] - 1) * 100 for x in w.values()
+                        "반대한 종목 그 뒤 최대 상승 평균": round(st.fmean([(x["max"] / x["pick_px"] - 1) * 100 for x in w.values()
                                                              if x.get("ai") == "반대" and x.get("pick_px")]), 2)
                         if any(x.get("ai") == "반대" for x in w.values()) else None},
            "best": max(today, key=lambda t: t["pnl_pct"], default=None), "worst": min(today, key=lambda t: t["pnl_pct"], default=None)}
@@ -517,10 +517,10 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
             # 3) 고점 대비 하락 매도: 최고점에서 너무 많이 돌려주면 → 더 빨리 팔기
             trail = [t for t in recent if t.get("exit_kind") == "수익 지키기"]
             if len(trail) >= 3:
-                give = st.mean(t["mfe"] - t["pnl_pct"] for t in trail)
+                give = st.fmean(t["mfe"] - t["pnl_pct"] for t in trail)
                 if give > cfg["trail_pct"] * 1.2 and cfg["trail_pct"] > 2:
                     proposals.append(_propose(d, cfg, "trail_pct", _r(cfg["trail_pct"] - 0.5), "최고점에서 수익을 많이 돌려주고 팔고 있어요",
-                                              f"'수익 지키기' 매도 {len(trail)}건 평균: 최고 +{st.mean(t['mfe'] for t in trail):.1f}% → 판 가격 {st.mean(t['pnl_pct'] for t in trail):+.1f}%"))
+                                              f"'수익 지키기' 매도 {len(trail)}건 평균: 최고 +{st.fmean(t['mfe'] for t in trail):.1f}% → 판 가격 {st.fmean(t['pnl_pct'] for t in trail):+.1f}%"))
             # 4) 프리장 성적
             pre = [t for t in recent if t.get("features", {}).get("pre")]
             if len(pre) >= 3:
@@ -537,21 +537,21 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
                 med = st.median(t["features"]["change"] for t in ch)
                 low = [t["pnl_pct"] for t in ch if t["features"]["change"] < med]
                 high = [t["pnl_pct"] for t in ch if t["features"]["change"] >= med]
-                if low and high and st.mean(low) < 0 < st.mean(high) and st.mean(high) - st.mean(low) > 2:
+                if low and high and st.fmean(low) < 0 < st.fmean(high) and st.fmean(high) - st.fmean(low) > 2:
                     proposals.append(_propose(d, cfg, "surge_min_change_pct", _r(max(cfg["surge_min_change_pct"] + 0.5, med)),
-                                              "덜 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 미만에서 산 거래 평균 {st.mean(low):+.2f}% vs 이상 {st.mean(high):+.2f}%"))
-                elif low and high and st.mean(high) < 0 < st.mean(low) and st.mean(low) - st.mean(high) > 2:
+                                              "덜 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 미만에서 산 거래 평균 {st.fmean(low):+.2f}% vs 이상 {st.fmean(high):+.2f}%"))
+                elif low and high and st.fmean(high) < 0 < st.fmean(low) and st.fmean(low) - st.fmean(high) > 2:
                     proposals.append(_propose(d, cfg, "surge_max_change_pct", _r(max(cfg["surge_min_change_pct"] + 3, med), 1),
-                                              "이미 너무 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 이상에서 산 거래 평균 {st.mean(high):+.2f}% vs 미만 {st.mean(low):+.2f}%"))
+                                              "이미 너무 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 이상에서 산 거래 평균 {st.fmean(high):+.2f}% vs 미만 {st.fmean(low):+.2f}%"))
             # 6) 거래량 배수
             rt = [t for t in recent if t.get("features", {}).get("ratio") is not None and not t["features"].get("pre")]
             if len(rt) >= 6:
                 med = st.median(t["features"]["ratio"] for t in rt)
                 low = [t["pnl_pct"] for t in rt if t["features"]["ratio"] < med]
                 high = [t["pnl_pct"] for t in rt if t["features"]["ratio"] >= med]
-                if low and high and st.mean(low) < 0 < st.mean(high) and st.mean(high) - st.mean(low) > 2:
+                if low and high and st.fmean(low) < 0 < st.fmean(high) and st.fmean(high) - st.fmean(low) > 2:
                     proposals.append(_propose(d, cfg, "surge_volume_ratio", _r(max(cfg["surge_volume_ratio"] + 0.5, med)),
-                                              "거래량이 덜 붙은 종목을 산 게 성적이 나빠요", f"거래량 {med:.1f}배 미만 평균 {st.mean(low):+.2f}% vs 이상 {st.mean(high):+.2f}%"))
+                                              "거래량이 덜 붙은 종목을 산 게 성적이 나빠요", f"거래량 {med:.1f}배 미만 평균 {st.fmean(low):+.2f}% vs 이상 {st.fmean(high):+.2f}%"))
         rep["proposals"] = [p["id"] for p in proposals if p]
         rep["note"] = "" if len(recent) >= MIN_TRADES else f"거래가 {len(recent)}건뿐이라 규칙 조정 제안은 {MIN_TRADES}건 이상 쌓이면 시작해요"
         d["reviews"] = [r for r in d["reviews"] if not (r["day"] == day and r["mode"] == mode and r.get("market", "US") == mk)] + [rep]
@@ -648,8 +648,8 @@ def _grp(ts: list[dict]) -> dict:
     if not n:
         return {"n": 0, "win_rate": 0, "avg": 0.0, "mfe_avg": 0.0}
     return {"n": n, "win_rate": round(sum(1 for t in ts if float(t.get("pnl_pct") or 0) > 0) / n * 100),
-            "avg": round(st.mean(float(t.get("pnl_pct") or 0) for t in ts), 2),
-            "mfe_avg": round(st.mean(float(t.get("mfe") or 0) for t in ts), 2)}
+            "avg": round(st.fmean(float(t.get("pnl_pct") or 0) for t in ts), 2),
+            "mfe_avg": round(st.fmean(float(t.get("mfe") or 0) for t in ts), 2)}
 
 
 def rebound_stats(market: str, d: dict | None = None) -> dict:

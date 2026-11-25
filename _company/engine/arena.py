@@ -120,7 +120,7 @@ def _ret(buy: float, sell: float, m: str) -> float:
 
 
 def _avg(ts: list) -> float:
-    return st.mean(t["ret"] for t in ts) if ts else 0.0
+    return st.fmean(t["ret"] for t in ts) if ts else 0.0
 
 
 def _age_days(t: dict, now: datetime | None = None) -> float:
@@ -281,7 +281,7 @@ def blocked_key(e: dict | None, keys: list[str]) -> str:
         if not b:
             continue
         ys, al = b["yes"][-20:], b["all"][-15:]
-        if len(ys) >= FILTER_MIN and st.mean(ys) <= -FILTER_LOSS and not (len(al) >= UNBLOCK_N and st.mean(al) > 0):
+        if len(ys) >= FILTER_MIN and st.fmean(ys) <= -FILTER_LOSS and not (len(al) >= UNBLOCK_N and st.fmean(al) > 0):
             return k
     return ""
 
@@ -291,8 +291,8 @@ def card(e: dict | None, tp: float = 0) -> dict:
     if not e:
         return {"yes_n": 0, "no_n": 0}
     ys, ns = e["yes"][-60:], e["no"][-60:]
-    out = {"yes_n": len(ys), "no_n": len(ns), "yes_avg": round(st.mean(ys), 2) if ys else None,
-           "no_avg": round(st.mean(ns), 2) if ns else None, "missed": sum(1 for x in ns if x >= MISS_PCT)}
+    out = {"yes_n": len(ys), "no_n": len(ns), "yes_avg": round(st.fmean(ys), 2) if ys else None,
+           "no_avg": round(st.fmean(ns), 2) if ns else None, "missed": sum(1 for x in ns if x >= MISS_PCT)}
     if ys and ns:
         out["skill"] = round(out["yes_avg"] - out["no_avg"], 2)
     return out
@@ -310,7 +310,7 @@ def _card_line(e: dict | None, keys: list[str]) -> str:
     for k in keys:
         b = (e or {}).get("by", {}).get(k)
         if b and len(b["yes"]) >= 3:
-            here.append(f"{k} 산 것 {len(b['yes'])}건 {st.mean(b['yes'][-20:]):+.1f}%")
+            here.append(f"{k} 산 것 {len(b['yes'])}건 {st.fmean(b['yes'][-20:]):+.1f}%")
     return "내 기록: " + " · ".join(parts) + (" / 이 종목 구간: " + " · ".join(here[:3]) if here else "")
 
 
@@ -753,7 +753,7 @@ def _brief_core(a: dict, ctrl_avg: float, hl: float) -> str:
     whys: dict[str, int] = {}
     for t in ts:
         whys[t.get("why", "?")] = whys.get(t.get("why", "?"), 0) + 1
-    mins = round(st.mean(t.get("mins", 0) for t in ts)) if ts else 0
+    mins = round(st.fmean(t.get("mins", 0) for t in ts)) if ts else 0
     sits = " · ".join(f"{k} {v['n']}건 {v['avg']:+.2f}%" for k, v in sorted(sit_stats(a, hl).items(), key=lambda x: -x[1]["n"])[:4])
     habits = " / ".join(a.get("habits") or [])
     late = [t for t in ts if t.get("late") is True]   # ⏱️ 늦은 진입 vs 제때 진입 성적

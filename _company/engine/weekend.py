@@ -70,8 +70,8 @@ def pattern_study(market: str, log=print, max_syms: int = 400, days: int = 130) 
     def agg(xs):
         if not xs:
             return {"n": 0}
-        return {"n": len(xs), "d1_avg": round(st.mean(x["d1"] for x in xs), 2), "d1_up": round(sum(x["d1"] > 0 for x in xs) / len(xs) * 100),
-                "d3_avg": round(st.mean(x["d3"] for x in xs), 2), "low3_avg": round(st.mean(x["low3"] for x in xs), 2)}
+        return {"n": len(xs), "d1_avg": round(st.fmean(x["d1"] for x in xs), 2), "d1_up": round(sum(x["d1"] > 0 for x in xs) / len(xs) * 100),
+                "d3_avg": round(st.fmean(x["d3"] for x in xs), 2), "low3_avg": round(st.fmean(x["low3"] for x in xs), 2)}
     out = {"t": datetime.now(KST).isoformat(timespec="seconds"), "market": market, "n_syms": len(syms), "all": agg(events),
            "by_chg": {k: agg([e for e in events if lo <= e["chg"] < hi]) for k, lo, hi in (("20~30%", 20, 30), ("30~50%", 30, 50), ("50%+", 50, 1e9))},
            "by_vol": {k: agg([e for e in events if lo <= e["vr"] < hi]) for k, lo, hi in (("3~5배", 3, 5), ("5~10배", 5, 10), ("10배+", 10, 1e9))}}
@@ -105,9 +105,9 @@ def missed_study(market: str, days: int = 30) -> dict:
     def agg(xs):
         if not xs:
             return {"n": 0}
-        return {"n": len(xs), "up_avg": round(st.mean(x["up"] for x in xs), 2), "down_avg": round(st.mean(x["down"] for x in xs), 2),
-                "chg_avg": round(st.mean(float(x.get("change") or 0) for x in xs), 1),
-                "ratio_avg": round(st.mean(float(x.get("ratio") or 0) for x in xs), 2), "pre_pct": round(sum(bool(x.get("pre")) for x in xs) / len(xs) * 100)}
+        return {"n": len(xs), "up_avg": round(st.fmean(x["up"] for x in xs), 2), "down_avg": round(st.fmean(x["down"] for x in xs), 2),
+                "chg_avg": round(st.fmean(float(x.get("change") or 0) for x in xs), 1),
+                "ratio_avg": round(st.fmean(float(x.get("ratio") or 0) for x in xs), 2), "pre_pct": round(sum(bool(x.get("pre")) for x in xs) / len(xs) * 100)}
     bought, missed = [p for p in picks if p.get("bought")], [p for p in picks if not p.get("bought")]
     big = sorted(missed, key=lambda p: -p["up"])[:5]
     return {"bought": agg(bought), "missed": agg(missed), "missed_top": [(p["sym"], p["day"], round(p["up"], 1)) for p in big]}

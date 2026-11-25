@@ -113,8 +113,8 @@ def collect(market: str) -> dict:
             pre = [float(t.get("pnl_pct") or 0) for t in ts if pre_from <= end(t) < t0]
             post = [float(t.get("pnl_pct") or 0) for t in ts if end(t) >= t0]
             d["effects"].append({"what": what, "t": t0[5:16],
-                                 "pre_n": len(pre), "pre_avg": round(st.mean(pre), 2) if pre else None,
-                                 "post_n": len(post), "post_avg": round(st.mean(post), 2) if post else None})
+                                 "pre_n": len(pre), "pre_avg": round(st.fmean(pre), 2) if pre else None,
+                                 "post_n": len(post), "post_avg": round(st.fmean(post), 2) if post else None})
     except Exception:
         pass
     return d

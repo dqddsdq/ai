@@ -464,8 +464,8 @@ def _edge_cells(rows: list) -> dict:
     for g, xs in groups.items():
         rs = [r for _, r in sorted(xs, key=lambda x: str(x[0]))]   # 오래된 것부터 → 앞 절반 / 뒤 절반
         h = len(rs) // 2
-        out[g] = {"n": len(rs), "avg": round(st.mean(rs), 2),
-                  "front": round(st.mean(rs[:h]), 2) if h else 0.0, "back": round(st.mean(rs[h:]), 2)}
+        out[g] = {"n": len(rs), "avg": round(st.fmean(rs), 2),
+                  "front": round(st.fmean(rs[:h]), 2) if h else 0.0, "back": round(st.fmean(rs[h:]), 2)}
     return out
 
 
@@ -556,7 +556,7 @@ def improve_effect(log=print, restart=None) -> str:
     after = [t for t in ts if t["exits"][-1]["t"] >= t0]
     if len(after) < 10 or len(before) < 10:
         return ""
-    ba, aa = st.mean(t["pnl_pct"] for t in before), st.mean(t["pnl_pct"] for t in after)
+    ba, aa = st.fmean(t["pnl_pct"] for t in before), st.fmean(t["pnl_pct"] for t in after)
     ev = f"바뀌기 전 {len(before)}건 평균 {ba:+.2f}% → 바뀐 뒤 {len(after)}건 평균 {aa:+.2f}%"
     if aa < ba - 0.5 and aa < 0:
         r = im.rollback(job["id"])
@@ -643,7 +643,7 @@ def rule_check(log=print) -> str:
         if len(before) < 8:
             it["result"] = "비교할 이전 거래가 적어서 유지"
             continue
-        ba, aa = st.mean(t["pnl_pct"] for t in before), st.mean(t["pnl_pct"] for t in after)
+        ba, aa = st.fmean(t["pnl_pct"] for t in before), st.fmean(t["pnl_pct"] for t in after)
         ev = f"바뀌기 전 {len(before)}건 평균 {ba:+.2f}% → 바뀐 뒤 {len(after)}건 {aa:+.2f}%"
         if aa < ba - 0.5 and aa < 0:
             cur = at.config()

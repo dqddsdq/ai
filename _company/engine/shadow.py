@@ -229,7 +229,7 @@ def _fin(v: dict) -> list[dict]:
 
 
 def _avg(ts: list[dict]) -> float:
-    return st.mean(_ret(t) for t in ts) if ts else 0.0
+    return st.fmean(_ret(t) for t in ts) if ts else 0.0
 
 
 def _is_base(v: dict) -> bool:
@@ -924,7 +924,7 @@ def _stall_pair(d: dict) -> dict | None:
     n = len(pairs)
     if not n:
         return {"n": 0, "cand": False}
-    a, b = st.mean(x for x, _ in pairs), st.mean(y for _, y in pairs)
+    a, b = st.fmean(x for x, _ in pairs), st.fmean(y for _, y in pairs)
     return {"n": n, "st": round(a, 2), "base": round(b, 2), "diff": round(a - b, 2),
             "cand": n >= STALL_CAND_N and a - b >= STALL_CAND_EDGE}
 
@@ -974,7 +974,7 @@ def _flash_reports(d: dict, market: str) -> list[str]:
         for w in FLASH_WINDOWS:
             xs = [s["after"][str(w)] for s in sg if s["after"].get(str(w))]
             if xs:
-                parts.append(f"{w}분 최고 {st.mean(x['hi_pct'] for x in xs):+.1f}%/최저 {st.mean(x['lo_pct'] for x in xs):+.1f}%")
+                parts.append(f"{w}분 최고 {st.fmean(x['hi_pct'] for x in xs):+.1f}%/최저 {st.fmean(x['lo_pct'] for x in xs):+.1f}%")
         if parts:
             line += f"\n신호 {len(sg)}건 뒤 평균: " + " · ".join(parts)
         if v.get("key") == "ST":
@@ -1006,7 +1006,7 @@ def base_blocks(market: str, size: int = 200) -> dict:
         fin = _fin(v) if v else []
     def blk(ts):
         rs = [_ret(t) for t in ts]
-        return {"n": len(rs), "avg": round(st.mean(rs), 2) if rs else 0,
+        return {"n": len(rs), "avg": round(st.fmean(rs), 2) if rs else 0,
                 "win": round(sum(1 for r in rs if r > 0) / len(rs) * 100) if rs else 0}
     return {"size": size, "total": len(fin), "last": blk(fin[-size:]), "prev": blk(fin[-2 * size:-size])}
 
@@ -1078,7 +1078,7 @@ def summary(v: dict) -> dict:
     fin = _fin(v)
     rs = [_ret(t) for t in fin]
     return {"n_all": len(rs), "win_all": round(sum(1 for r in rs if r > 0) / len(rs) * 100) if rs else 0,
-            "avg_all": round(st.mean(rs), 2) if rs else 0, "worst": round(min(rs), 2) if rs else 0}
+            "avg_all": round(st.fmean(rs), 2) if rs else 0, "worst": round(min(rs), 2) if rs else 0}
 
 
 def totals(market: str) -> dict:
@@ -1126,7 +1126,7 @@ def _live_avg(market: str, since: str) -> tuple[int, float]:
               and str(t["exits"][-1].get("t", "")) >= since and "pnl_pct" in t]
     except Exception:
         return 0, 0.0
-    return len(ts), (st.mean(float(t["pnl_pct"]) for t in ts) if ts else 0.0)
+    return len(ts), (st.fmean(float(t["pnl_pct"]) for t in ts) if ts else 0.0)
 
 
 def maybe_promote(c: dict, market: str, apply_fn) -> str:

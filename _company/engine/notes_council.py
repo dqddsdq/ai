@@ -69,10 +69,10 @@ def evidence(market: str, days: int = 60) -> str:
                 if t.get("sit"):
                     sits.setdefault(t["sit"], []).append(t["ret"])
         if sits:
-            out.append("생존전 상황별(가상, 전원): " + ", ".join(f"{k} {len(v)}건 평균 {st.mean(v):+.2f}%" for k, v in sorted(sits.items(), key=lambda x: -len(x[1]))))
+            out.append("생존전 상황별(가상, 전원): " + ", ".join(f"{k} {len(v)}건 평균 {st.fmean(v):+.2f}%" for k, v in sorted(sits.items(), key=lambda x: -len(x[1]))))
         ct = d["ctrl"]["trades"] if d.get("ctrl") else []
         if ct:
-            out.append(f"🎲 무작위 대조군: {len(ct)}건 평균 {st.mean(t['ret'] for t in ct):+.2f}%")
+            out.append(f"🎲 무작위 대조군: {len(ct)}건 평균 {st.fmean(t['ret'] for t in ct):+.2f}%")
     except Exception:
         pass
     return "\n".join(out)[:7000]
