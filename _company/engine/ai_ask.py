@@ -225,16 +225,12 @@ def system_prompt(who: dict) -> str:
         from . import arena
         m = who["markets"][0]
         names = [a["name"] for a in arena.load(m)["alive"]]
-        head = ("너는 AI 리그 참가자 전원을 한꺼번에 연기한다 (모두 가상 매매만 함). 사장님이 전원에게 물었다. "
-                "참가자마다 자기 성격·규칙·성적으로 따로 2~4문장 답해라. 서로 의견이 다르면 다르게 답해라. "
-                f"형식: JSON 한 덩어리 {{\"참가자이름\": \"답\", ...}} 로만. 이름은 정확히: {', '.join(names)}")
-        try:   # 거래 0건 AI 는 지금 쓰는 자료·더 필요한 도구도 한 번 답함
-            due = _tools_due(m)
-            if due:
-                who["tools_due"] = {m: due}
-                head += _tools_ask(list(due.values()))
-        except Exception:
-            pass
+        # 전원에게 물어도 질문과 관련 있는 AI 만 답함 (도구·개선 질문은 이름 지정 질문에서만 — 전원 답이 개선점으로 도배되지 않게)
+        head = ("너는 AI 리그 참가자들을 연기한다 (모두 가상 매매만 함). 사장님이 리그 대화방에서 물었다. "
+                "먼저 이 질문에 할 말이 있는 참가자만 골라라: 질문이 특정 종목·거래면 그걸 사거나 판단한 참가자, "
+                "특정 성격·전략이면 그 성격의 참가자, 정말 모두에게 해당할 때만 전원. 할 말 없는 참가자는 빼라 (보통 1~3명). "
+                "고른 참가자만 자기 성격·규칙·성적으로 2~4문장 답해라. 질문에 답만 하고, 묻지 않은 개선점·필요한 도구는 말하지 마라. "
+                f"형식: JSON 한 덩어리 {{\"참가자이름\": \"답\", ...}} 로만 (고른 참가자만, 최소 1명). 이름은 정확히: {', '.join(names)}")
         body = "\n\n".join(_arena_block(a["id"], m)[:1500] for a in arena.load(m)["alive"])
         return head + "\n" + READ_ONLY + "\n\n<record>\n" + body[:20000] + "\n</record>"
     if who["kind"] == "lane":
