@@ -591,6 +591,19 @@ def swing_feats(sym: str, price: float, fx: float, day: str | None = None) -> di
             "vratio": round(today_vol / v20, 2) if today_vol and v20 else None}
 
 
+def vol_trend(sym: str) -> dict:
+    """진입 시점 거래량 추세 (기록용): 1분봉 최근 5분 평균 ÷ 그 전 10분 평균 → 증가/감소/보합"""
+    from . import chart
+    cs = chart.candles(sym, "1m", 16)[:-1]   # 마지막(진행 중) 봉은 뺌
+    if len(cs) < 15:
+        return {}
+    a, b = sum(x["v"] for x in cs[-5:]) / 5, sum(x["v"] for x in cs[-15:-5]) / 10
+    if not b:
+        return {}
+    r = a / b
+    return {"vtrend": "증가" if r >= 1.2 else "감소" if r <= 0.8 else "보합", "vtrend_r": round(r, 2)}
+
+
 def explore_value_ok(sym: str, price: float, fx: float, c: dict) -> tuple[bool, str]:
     """🔬 탐색 매수용 최소 거래대금 확인: 20일 평균·오늘 거래대금 중 큰 값이 기준 이상이어야 삼 (확인 못 하면 안 삼)"""
     need = float(c["min_trading_value_krw"])
@@ -1032,7 +1045,7 @@ WHY_KEYS = (("rb_pullback", "고점 후 눌림 {:.2f}%"), ("rb_from_low", "바�
             ("rb_ma5_gap", "MA5 대비 {:+.2f}%"), ("rb_up_bars", "연속 상승 {:.0f}봉"),
             ("change", "오늘 {:+.1f}%"), ("ratio", "거래량 {:.1f}배"), ("vol_ratio", "거래량 {:.1f}배"), ("pre", "프리장 거래량 {:.2f}"),
             ("score", "점수 {:.2f}"), ("from_high", "고점 대비 {:+.2f}%"), ("range_pos", "범위 위치 {:.0f}%"),
-            ("pullback5", "5분 되돌림 {:.2f}%"), ("run5", "5분 상승 {:+.2f}%"))
+            ("pullback5", "5분 되돌림 {:.2f}%"), ("run5", "5분 상승 {:+.2f}%"), ("vtrend_r", "거래량 추세 {:.2f}배"))
 
 
 def why_buy_text(feat: dict, est: dict | None, price: float, reason: str, ai_why: str = "") -> str:
@@ -2092,6 +2105,10 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                             feat[k_] = v_
                 except Exception as e:
                     results.append(f"{sym}: 📚 스윙 진입 조건 기록 실패 — {type(e).__name__}: {e}")
+            try:   # 📈 진입 시점 거래량 추세 (기록용 · 매수엔 영향 없음)
+                feat.update(vol_trend(sym))
+            except Exception as e:
+                results.append(f"{sym}: 📈 거래량 추세 기록 실패 — {type(e).__name__}: {e}")
             if c["ai_decide"] and why:
                 feat["ai_decide"] = "산다"
             for k_, v_ in chase_m.items():   # 🧗 고점 위치·되돌림 수치도 학습 기록에
@@ -2933,11 +2950,12 @@ def _entry_text(f: dict) -> str:
     """일지의 '살 때 조건' 문구 (스윙/단타 따로, 값 없으면 '-')"""
     def v(k, fmt="{:g}"):
         return fmt.format(f[k]) if isinstance(f.get(k), (int, float)) else "-"
+    vt = f" · 거래량 추세 {f['vtrend']}({v('vtrend_r')}배)" if f.get("vtrend") else ""   # 📈 진입 시점 거래량 추세
     if f.get("style") == "swing":
         val = f"{f['value20'] / 1e8:,.0f}억원" if isinstance(f.get("value20"), (int, float)) else "-"
         return (f"살 때 [스윙] 20일 {v('r20', '{:+.1f}')}% · 60일 {v('r60', '{:+.1f}')}% · RSI {v('rsi', '{:.0f}')} · 거래대금 {val}/일"
-                f" · 변동성 {v('volat', '{:.0f}')}% · 당일 {v('chg1d', '{:+.1f}')}% · 거래량 {v('vratio')}배")
-    return f"살 때 {v('change')}% 거래량 {v('ratio')}배{' 프리장' if f.get('pre') else ''}"
+                f" · 변동성 {v('volat', '{:.0f}')}% · 당일 {v('chg1d', '{:+.1f}')}% · 거래량 {v('vratio')}배{vt}")
+    return f"살 때 {v('change')}% 거래량 {v('ratio')}배{' 프리장' if f.get('pre') else ''}{vt}"
 
 
 _ACT = re.compile(r"\[\[TRADE_(SET|MODE|STOP|EXCLUDE|INCLUDE):\s*([^\]|]*?)\s*(?:\|\s*([^\]]*?))?\s*\]\]")
