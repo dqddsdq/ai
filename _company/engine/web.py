@@ -587,8 +587,8 @@ class Handler(BaseHTTPRequestHandler):
             from . import ai_ask
             who = ai_ask.match(text)
             lm = re.search(r"-arena(US|KR)$", conv.get("id", ""))
-            if not who and lm:   # 리그 AI 의견 대화방에서 이름 없이 물으면 전원이 각자 답함
-                who = ai_ask.everyone(lm.group(1), text)
+            if who and who["kind"] == "all" and lm:   # 이름 없이 물으면 자동매매 봇 혼자 답함 · '다들 …' 만 리그 전원 (이 방의 시장)
+                who = ai_ask.everyone(lm.group(1), who["question"])
         except Exception:
             who = None
         if who:
