@@ -636,6 +636,7 @@ def AI_리그는_안_산_판단까지_채점하고_계속_지는_구간은_안_�
     # ① 채점: a0 '산다' · a1 '안 산다' → 둘 다 '샀다면' 으로 계산 → +5% 가면 a1 은 놓친 기회
     arena._decide(c, "US", "ZZ", cd, 100.0, "D1", ai)
     assert len(arena.load("US")["probes"]) == 1
+    assert prompts[-1].count("🔰 기록 적음 (거래 0건)") == 2, "거래 적은 AI 에게 가상으로 사 보라는 표시가 없음"
     arena.step(c, "US", {}, {"ZZ": {"price": 105.0}}, 30, "D1")
     d = arena.load("US")
     assert not d["probes"] and len(d["graded"]) == 1, (d.get("probes"), d.get("graded"))

@@ -482,20 +482,25 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
                     continue
                 asked.append({"id": a["id"], "name": a["name"],
                               "persona": a["persona"] + (f" (스스로 정한 규칙: {' / '.join(a['habits'])})" if a.get("habits") else ""),
-                              "rec": _card_line(idx.get(a["id"]), keys)})
+                              "rec": _card_line(idx.get(a["id"]), keys),
+                              "n": len(a["trades"])})
         r: dict = {}
         if asked:   # 다 걸러졌으면 AI 를 안 부름 (빠르고 비용 0)
             e = cd.get("est") or {}
             notes = _notes(market)
-            prompt = ("AI 리그: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매). "
-                      "'내 기록' 은 그 참가자의 지난 판단 결과예요 — 자기 기록에서 지는 패턴이면 피하세요.\n"
+            mt = int(c.get("arena_min_trades", 20))
+            prompt = ("AI 리그: 아래 참가자들이 각자 성격대로 이 종목을 지금 살지 따로 판단해요 (가상 매매 — 돈이 안 들고, 사 봐야 배워요). "
+                      "성격에 대체로 맞으면 true, 성격과 반대일 때만 false. 완벽한 자리만 기다리지 마세요. "
+                      "'내 기록' 은 그 참가자의 지난 판단 결과예요 — 자기 기록에서 지는 패턴이면 피하세요. "
+                      "'🔰 기록 적음' 참가자는 성격에 조금이라도 맞으면 사 보세요.\n"
                       f"종목 {sym} 현재가 {price} · 구간: {', '.join(keys) or '모름'} · 고른 이유: {cd.get('reason', '')}\n"
                       + (f"진입 시점: 거래량 폭발 뒤 {spk:.0f}분 · 오늘 {float(chg):+.1f}% (폭발 뒤 {LATE_MIN}분↑ + 오늘 +{LATE_CHG:g}%↑ 면 늦은 진입)\n"
                          if spk is not None and chg is not None else "")
                       + (f"최근 공시: {news.note(cd.get('news'))}\n" if news.note(cd.get("news")) else "")
                       + (f"학습 추정: 승률 {float(e.get('p', 0)) * 100:.0f}% · 기대 수익 {float(e.get('ev', 0)):+.2f}%\n" if e else "")
                       + (f"공유 노트: {notes}\n" if notes else "")
-                      + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" + (f" | {a['rec']}" if a["rec"] else "") for a in asked)
+                      + "참가자:\n" + "\n".join(f"- {a['id']} ({a['name']}): {a['persona']}" + (f" | {a['rec']}" if a["rec"] else "")
+                                                + (f" | 🔰 기록 적음 (거래 {a['n']}건)" if a["n"] < mt else "") for a in asked)
                       + '\n형식: {"참가자id": true/false, ...} (성격에 맞을 때만 true)')
             got = ai_fn(prompt) if ai_fn else None
             if not isinstance(got, dict):
