@@ -225,10 +225,17 @@ def _checks(box: Path, files: list[dict]) -> list[dict]:
         html = (box / "engine/web/index.html").read_text(encoding="utf-8")
         m = re.search(r"<script>([\s\S]*)</script>", html)
         if m:
-            tmp = Path(tempfile.mkstemp(suffix=".js")[1])
+            fd, name = tempfile.mkstemp(suffix=".js")
+            os.close(fd)   # 윈도우: 열린 채로 두면 node 가 읽거나 지울 때 '다른 프로세스가 사용 중' 오류
+            tmp = Path(name)
             tmp.write_text(m.group(1), encoding="utf-8")
-            r = subprocess.run(["node", "--check", str(tmp)], capture_output=True, text=True)
-            tmp.unlink(missing_ok=True)
+            try:
+                r = subprocess.run(["node", "--check", str(tmp)], capture_output=True, text=True, timeout=60)
+            finally:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass   # 못 지워도 검사는 계속 (임시 폴더라 윈도우가 나중에 정리)
             res.append({"name": "화면 스크립트 문법", "ok": r.returncode == 0, "detail": "정상" if r.returncode == 0 else r.stderr[-300:]})
     if not files:
         res.append({"name": "변경 사항", "ok": False, "detail": "바뀐 파일이 없어요"})
