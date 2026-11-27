@@ -3,7 +3,10 @@
 - 가상 전용: 이 파일은 주문 함수를 절대 부르지 않음 (시세는 실전 엔진이 넘겨준 것 + 읽기 전용 조회만)
 - 후보: 실전 엔진이 매 바퀴 고른 후보(규칙 관문 통과한 것)를 그대로 받음
 - 📒 모든 AI 가 같은 공유 노트(1호·2호·생존전·주말 공부 교훈 + 팀 기억 교훈)를 보고 판단
-- AI 호출: 후보 한 종목당 1번에 참가자 전원이 같이 판단 (하루 arena_ai_per_day 번까지 · 실전 AI 판단 한도와 따로)
+- AI 호출: 후보 한 종목당 1번에 참가자 전원이 같이 판단 (가상은 표본 제한 없음: arena_ai_per_day 0 = 무제한 · 같은 종목도 60분 뒤 다시 판단)
+- 후보 넓히기: 실전 후보(관문에 걸린 것 포함) + 30%↑ 급등 검증 후보 · 참가자당 동시 보유 10종목
+- 📘 '안 산다' 판단도 채점: 샀다면 자기 규칙으로 어땠을지 → 정확도 · 가중치 0.3 (산 거래 1.0)
+- 질 관리: 실전 자격은 앞 70%·뒤 30% 모두 플러스 + 제일 크게 번 종목 빼도 플러스 + 가중 점수 플러스
 - 매도: 참가자마다 자기 익절·손절·최대 보유 시간 + 마감 전 정리 (단타)
 - 체결: 0.1% 불리하게 + 수수료·세금 (실전 가상 매매와 같게)
 - 매주 토요일 아침(주말 공부) 성적 발표(텔레그램) · 탈락 없음 — 전원 가상 매매로 계속 같이 공부
@@ -30,7 +33,9 @@ from .agents import COMPANY_DIR
 KST = timezone(timedelta(hours=9))
 SLIP = 0.1                      # % 불리한 체결 (한쪽)
 FEE = {"US": 0.2, "KR": 0.21}   # % 왕복 수수료+세금 (미장 0.1%×2 · 국장 0.015%×2 + 매도세 0.18%)
-MAX_POS = 3                     # 참가자당 동시 보유
+MAX_POS = 10                    # 참가자당 동시 보유 (가상이라 넉넉히 → 표본 빨리)
+W_BUY, W_SKIP = 1.0, 0.3        # 표본 가중치: 산 거래 1.0 · '안 산다' 판단 채점 0.3 (쉽게 쌓이는 표본이 판정을 좌우 못 하게)
+REJUDGE_MIN = 60                # 같은 종목도 60분 지나면 다시 판단 (안 들고 있을 때)
 _lock = threading.Lock()
 _pending: dict[str, float] = {}   # "시장:종목" → AI 판단 시작 시각
 
@@ -59,13 +64,15 @@ def _now() -> str:
 def _new(seed: dict, gen: int = 1, parent: str = "") -> dict:
     return {"id": f"a{int(time.time() * 1000) % 10**9}{random.randint(10, 99)}", "name": seed["name"], "persona": seed["persona"],
             "tp": float(seed["tp"]), "sl": float(seed["sl"]), "hold": int(seed["hold"]), "gen": gen, "parent": parent,
-            "born": _now(), "pos": {}, "trades": []}
+            "born": _now(), "pos": {}, "trades": [], "ghost": {}, "skips": []}
 
 
 def load(m: str, size: int | None = None) -> dict:
     d = store.load(_file(m), lambda: {})
     d.setdefault("alive", []); d.setdefault("dead", []); d.setdefault("seen", {}); d.setdefault("calls", {}); d.setdefault("champion", None)
     used = {a["name"] for a in d["alive"]} | {x["name"] for x in d["dead"]}   # 탈락한 전략은 다시 안 들어옴
+    for a in d["alive"]:
+        a.setdefault("ghost", {}); a.setdefault("skips", [])
     for s in SEEDS if size else []:
         if len(d["alive"]) >= size:
             break
@@ -77,7 +84,8 @@ def load(m: str, size: int | None = None) -> dict:
 def _save(m: str, d: dict) -> None:
     d["dead"] = d["dead"][-30:]
     for a in d["alive"]:
-        a["trades"] = a["trades"][-200:]
+        a["trades"] = a["trades"][-500:]
+        a["skips"] = a["skips"][-1000:]
     store.save(_file(m), d)
 
 
@@ -90,61 +98,78 @@ def _avg(ts: list) -> float:
 
 
 # ── 매 바퀴 ──
-def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, price_fn=None, ai_fn=None) -> list[str]:
-    """보유 정리 + 새 후보 AI 판단 시작. 결과 줄 목록"""
+def _seen_ok(seen: dict, sym: str, now: float) -> bool:
+    t = seen.get(sym)
+    return t is None or now - float(t) >= REJUDGE_MIN * 60
+
+
+def _exit_why(a: dict, p: dict, px: float, now: float, minutes, day: str) -> str:
+    r = (px / p["px"] - 1) * 100
+    mins = (now - p["t"]) / 60
+    return ("익절" if r >= a["tp"] else "손절" if r <= -a["sl"] else "시간" if mins >= a["hold"]
+            else "마감" if (minutes is not None and minutes >= 380) or p.get("day") != day else "")
+
+
+def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, price_fn=None, ai_fn=None, extra: dict | None = None) -> list[str]:
+    """보유·'안 산' 판단 채점 정리 + 새 후보 AI 판단 시작 (가상 전용 · 표본 제한 없음). 결과 줄 목록"""
     if not c.get("arena_on"):
         return []
     out: list[str] = []
     quotes = {k: (v.get("price") if isinstance(v, dict) else v) for k, v in (quotes or {}).items()}
     quotes = {k: float(v) for k, v in quotes.items() if v}
-    cands = {k: v for k, v in (cands or {}).items() if (v.get("style") or "surge") == "surge"}   # 단타 후보만
+    # 후보 넓히기: 실전 후보(관문에 걸린 것 포함) + 30%↑ 급등 검증 후보 — 가상이라 위험 없음
+    cands = {k: v for k, v in {**(extra or {}), **(cands or {})}.items() if (v.get("style") or "surge") == "surge"}
+    now = time.time()
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
-        held = {s for a in d["alive"] for s in a["pos"]}
-        need = [s for s in held if not quotes.get(s)]
+        seen = d["seen"].get(day)
+        seen = seen if isinstance(seen, dict) else {x: 0 for x in (seen or [])}
+        held = {s for a in d["alive"] for s in list(a["pos"]) + list(a["ghost"])}
+        new = [s for s in cands if _seen_ok(seen, s, now)]
+        need = [s for s in set(held) | set(new) if not quotes.get(s)]
     if need and price_fn:
         try:
-            got = price_fn(need) or {}
+            got = price_fn(need[:200]) or {}
             quotes = {**quotes, **{k: float(v["price"] if isinstance(v, dict) else v) for k, v in got.items() if v}}
         except Exception:
             pass
-    now = time.time()
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
         for a in d["alive"]:
             for sym, p in list(a["pos"].items()):
                 px = float(quotes.get(sym) or 0)
-                if not px:
-                    continue
-                r = (px / p["px"] - 1) * 100
-                mins = (now - p["t"]) / 60
-                why = ("익절" if r >= a["tp"] else "손절" if r <= -a["sl"] else "시간" if mins >= a["hold"]
-                       else "마감" if (minutes is not None and minutes >= 380) or p.get("day") != day else "")
+                why = _exit_why(a, p, px, now, minutes, day) if px else ""
                 if why:
                     ret = _ret(p["px"], px, market)
                     a["trades"].append({"sym": sym, "day": p.get("day", day), "ret": round(ret, 3), "why": why,
-                                        "mins": round(mins), "t": _now()})
+                                        "mins": round((now - p["t"]) / 60), "t": _now()})
                     del a["pos"][sym]
                     out.append(f"🏟️ {a['name']} {sym} {why} {ret:+.2f}%")
-        # 새 후보 → 참가자 전원 판단 (한 종목 하루 1번)
-        calls = d["calls"].get(day, 0)
-        seen = d["seen"].setdefault(day, [])
-        for k in [k for k in d["seen"] if k != day]:
-            d["seen"].pop(k, None)
-        d["calls"] = {day: calls}
-        todo = [s for s, cd in cands.items() if s not in seen and quotes.get(s)
-                and (minutes is None or minutes <= 360) and f"{market}:{s}" not in _pending]
-        limit = int(c.get("arena_ai_per_day", 40))
+            for sym, p in list(a["ghost"].items()):   # 📘 '안 산다' 판단 채점: 샀다면 자기 규칙으로 어땠을지
+                px = float(quotes.get(sym) or 0)
+                why = _exit_why(a, p, px, now, minutes, day) if px else ""
+                if why:
+                    a["skips"].append({"sym": sym, "day": p.get("day", day), "ret": round(_ret(p["px"], px, market), 3), "t": _now()})
+                    del a["ghost"][sym]
+        seen = d["seen"].get(day)
+        seen = seen if isinstance(seen, dict) else {x: 0 for x in (seen or [])}
+        d["seen"] = {day: seen}
+        calls = int(d["calls"].get(day, 0))
+        limit = int(c.get("arena_ai_per_day", 0) or 0)   # 0 = 제한 없음
         start = []
-        for s in todo:
-            if calls >= limit:
+        for sym in cands:
+            if not quotes.get(sym) or not _seen_ok(seen, sym, now) or f"{market}:{sym}" in _pending:
+                continue
+            if minutes is not None and minutes > 360:
                 break
-            calls += 1; seen.append(s); start.append(s)
-        d["calls"][day] = calls
+            if limit and calls >= limit:
+                break
+            calls += 1; seen[sym] = now; start.append(sym)
+        d["calls"] = {day: calls}
         _save(market, d)
-    for s in start:
-        _pending[f"{market}:{s}"] = now
-        threading.Thread(target=_decide, args=(c, market, s, cands[s], float(quotes[s]), day, ai_fn),
+    for sym in start:
+        _pending[f"{market}:{sym}"] = now
+        threading.Thread(target=_decide, args=(c, market, sym, cands[sym], float(quotes[sym]), day, ai_fn or ai_json),
                          daemon=True, name="arena-ai").start()
     return out
 
@@ -189,10 +214,12 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
             for a in d["alive"]:
                 if a["id"] in yes and sym not in a["pos"] and len(a["pos"]) < MAX_POS:
                     a["pos"][sym] = {"px": price, "t": time.time(), "day": day}
+                elif a["id"] not in yes and sym not in a["ghost"] and sym not in a["pos"]:
+                    a["ghost"][sym] = {"px": price, "t": time.time(), "day": day}   # 📘 안 산 판단도 결과로 채점
             v = d.setdefault("votes", {})
             for k in [k for k in v if k != day]:
                 v.pop(k, None)
-            v.setdefault(day, {})[sym] = yes
+            v.setdefault(day, {})[sym] = {"yes": yes, "t": time.time()}
             _save(market, d)
     except Exception:
         pass
@@ -212,11 +239,14 @@ def kick(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai_fn
     """실전 엔진이 후보를 처음 봤을 때 바로 생존전 판단 시작 (하루 한 종목 1번 · 하루 횟수 안에서)"""
     with _lock:
         d = load(market)
-        seen = d["seen"].setdefault(day, [])
+        seen = d["seen"].get(day)
+        seen = seen if isinstance(seen, dict) else {x: 0 for x in (seen or [])}
+        d["seen"] = {day: seen}
         calls = int(d["calls"].get(day, 0))
-        if sym in seen or f"{market}:{sym}" in _pending or calls >= int(c.get("arena_ai_per_day", 60)):
+        limit = int(c.get("arena_ai_per_day", 0) or 0)
+        if sym in seen or f"{market}:{sym}" in _pending or (limit and calls >= limit):
             return f"{market}:{sym}" in _pending
-        seen.append(sym); d["calls"] = {day: calls + 1}
+        seen[sym] = time.time(); d["calls"] = {day: calls + 1}
         _save(market, d)
     _pending[f"{market}:{sym}"] = time.time()
     threading.Thread(target=_decide, args=(c, market, sym, cd, price, day, ai_fn or ai_json), daemon=True, name="arena-ai").start()
@@ -233,18 +263,35 @@ def live_vote(market: str, day: str, sym: str) -> tuple[str, dict | None]:
         return "no", None
     v = (d.get("votes") or {}).get(day, {})
     if sym not in v:
-        return ("no" if sym in d["seen"].get(day, []) else "unseen"), None
+        return ("no" if sym in (d["seen"].get(day) or {}) else "unseen"), None
+    x = v[sym] if isinstance(v[sym], dict) else {"yes": v[sym], "t": time.time()}
+    if time.time() - float(x.get("t", 0)) > 600:   # 10분 지난 판단은 실전에 안 씀 (가격이 달라졌을 수 있음)
+        return "no", None
     by = {a["id"]: a for a in d["alive"]}
     for i, aid in enumerate(live):
-        if aid in v[sym] and aid in by:
+        if aid in x["yes"] and aid in by:
             return "yes", {"id": aid, "name": by[aid]["name"], "rank": i + 1}
     return "no", None
 
 
 def _qualified(a: dict, min_n: int) -> bool:
-    ts = a["trades"][-max(min_n, 30):]
-    h = len(ts) // 2
-    return len(a["trades"]) >= min_n and _avg(ts) > 0 and _avg(ts[:h]) > 0 and _avg(ts[h:]) > 0
+    """💰 실전 자격 (질 관리): 산 거래 min_n 건↑ ·
+    ① 앞 70% · 뒤 30%(처음 보는 기간) 모두 평균 플러스 ② 제일 크게 번 종목 하나를 빼도 플러스 (대박 하나로 1등 방지)
+    ③ '안 산 판단' 채점까지 합친 가중 점수도 플러스"""
+    ts = a["trades"][-max(min_n, 50):]
+    if len(a["trades"]) < min_n or not ts:
+        return False
+    k = max(1, int(len(ts) * 0.7))
+    if not (_avg(ts[:k]) > 0 and _avg(ts[k:]) > 0):
+        return False
+    by: dict = {}
+    for t in ts:
+        by[t["sym"]] = by.get(t["sym"], 0) + t["ret"]
+    top = max(by, key=by.get)
+    rest = [t for t in ts if t["sym"] != top]
+    if not rest or _avg(rest) <= 0:
+        return False
+    return score(a)["q"] > 0
 
 
 def recheck(c: dict, market: str) -> str:
@@ -262,11 +309,13 @@ def recheck(c: dict, market: str) -> str:
 
 
 # ── 성적 ──
-def score(a: dict, n: int = 30) -> dict:
-    ts = a["trades"][-n:]
-    if not ts:
-        return {"n": len(a["trades"]), "avg": 0.0, "win": 0}
-    return {"n": len(a["trades"]), "avg": round(_avg(ts), 2), "win": round(sum(t["ret"] > 0 for t in ts) / len(ts) * 100)}
+def score(a: dict, n: int = 50) -> dict:
+    """성적: 산 거래(최근 n건) 평균·승률 + '안 산 판단' 정확도 + 가중 점수 q (산 거래 1.0 · 안 산 판단 0.3)"""
+    ts, sk = a["trades"][-n:], (a.get("skips") or [])[-n * 2:]
+    wsum = W_BUY * len(ts) + W_SKIP * len(sk)
+    q = (W_BUY * sum(t["ret"] for t in ts) - W_SKIP * sum(t["ret"] for t in sk)) / wsum if wsum else 0.0
+    return {"n": len(a["trades"]), "avg": round(_avg(ts), 2), "win": round(sum(t["ret"] > 0 for t in ts) / len(ts) * 100) if ts else 0,
+            "skips": len(a.get("skips") or []), "skip_ok": round(sum(t["ret"] <= 0 for t in sk) / len(sk) * 100) if sk else 0, "q": round(q, 3)}
 
 
 def board(market: str) -> list[dict]:
@@ -274,7 +323,7 @@ def board(market: str) -> list[dict]:
     live = d.get("live") or []
     rows = [{"name": a["name"], "gen": a["gen"], "live": (live.index(a["id"]) + 1) if a["id"] in live else 0, "persona": a["persona"], "tp": a["tp"], "sl": a["sl"], "hold": a["hold"],
              "held": len(a["pos"]), **score(a)} for a in d["alive"]]
-    return sorted(rows, key=lambda r: (-(r["n"] >= 5), -r["avg"]))
+    return sorted(rows, key=lambda r: (-(r["n"] >= 5), -r["q"]))
 
 
 def text(market: str) -> str:
@@ -304,7 +353,7 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
     msg = []
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
-        alive = sorted(d["alive"], key=lambda a: -score(a)["avg"])
+        alive = sorted(d["alive"], key=lambda a: -score(a)["q"])
         q = [a for a in alive if _qualified(a, min_n)][:n_live]
         old = set(d.get("live") or [])
         d["live"] = [a["id"] for a in q]
@@ -329,7 +378,7 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
     rows = board(market)   # 📣 성적 발표: 전원 순위
     live = set(d["live"])
     ids = {a["name"]: a["id"] for a in d["alive"]}
-    rank = [f"{i + 1}. {'💰' if ids.get(r['name']) in live else '📘'} {r['name']} — {r['n']}건 평균 {r['avg']:+.2f}% 승률 {r['win']}%"
+    rank = [f"{i + 1}. {'💰' if ids.get(r['name']) in live else '📘'} {r['name']} — {r['n']}건 평균 {r['avg']:+.2f}% 승률 {r['win']}% · 안 산 판단 {r['skips']}건 정확도 {r['skip_ok']}% · 점수 {r['q']:+.2f}"
             + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(rows)]
     return "🏟️ AI 생존전 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + "\n".join(msg)
 

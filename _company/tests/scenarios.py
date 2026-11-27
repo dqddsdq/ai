@@ -251,7 +251,7 @@ def _arena_setup(live_idx, vote_idx):
     from engine import arena
     d = arena.load("US", 3)
     for i, a in enumerate(d["alive"]):
-        a["trades"] = [{"sym": "X", "day": "D", "ret": 1.0 if i == 0 else -0.5, "why": "t", "mins": 5, "t": ""} for _ in range(30)]
+        a["trades"] = [{"sym": f"X{j}", "day": "D", "ret": 1.0 if i == 0 else -0.5, "why": "t", "mins": 5, "t": ""} for j in range(30)]
     d["live"] = [d["alive"][live_idx]["id"]]
     arena._save("US", d)
     yes = d["alive"][vote_idx]["id"]

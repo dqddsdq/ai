@@ -436,6 +436,7 @@ def 자동_규칙_변경은_하루_1번():
 @case
 def AI_생존전_가상_공부와_상위_실전_자격():
     import re as _re
+    import time as _t
     from . import arena
     src = (Path(arena.__file__)).read_text(encoding="utf-8")
     code = "\n".join(x for x in src.splitlines() if not x.strip().startswith("#") and '"""' not in x)
@@ -471,6 +472,14 @@ def AI_생존전_가상_공부와_상위_실전_자격():
             dd["alive"][0]["trades"] += [{"sym": "Z", "day": "D", "ret": -9.0, "why": "t", "mins": 1, "t": ""} for _ in range(6)]
             arena._save("US", dd)
             assert arena.recheck(c, "US") and arena.load("US")["live"] == [], "성적 떨어지면 바로 자격 내림"
+            sk = arena.load("US")["alive"][2]
+            assert sk["skips"] and sk["skips"][0]["sym"] == "S0", "안 산 판단이 채점 안 됨"
+            lucky = {"trades": [{"sym": "BIG", "ret": 40.0}] + [{"sym": f"L{j}", "ret": -0.5} for j in range(29)], "skips": []}
+            assert not arena._qualified(lucky, 20), "대박 한 종목으로 실전 자격을 받음"
+            late = {"trades": [{"sym": f"E{j}", "ret": 1.0} for j in range(35)] + [{"sym": f"F{j}", "ret": -1.0} for j in range(15)], "skips": []}
+            assert not arena._qualified(late, 20), "최근(뒤 30%)이 마이너스인데 실전 자격을 받음"
+            seen = {"S9": _t.time() - 3700, "S8": _t.time() - 60}
+            assert arena._seen_ok(seen, "S9", _t.time()) and not arena._seen_ok(seen, "S8", _t.time()), "60분 뒤 다시 판단"
         finally:
             arena._file = orig
 

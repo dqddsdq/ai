@@ -604,7 +604,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-shadow_on"> 🧪 그림자 가상 매매 (규칙 조합 여러 개 동시에 가상으로)</label>
         <div class="trade-grid"><label>그림자 조합 수 (2~1000)<input id="t-shadow_count" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 생존전 (성격 다른 AI 들이 같은 후보를 각자 판단 · 토요일 아침 성적 발표)</label>
-        <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수<input id="t-arena_ai_per_day" type="number"></label><label>실전 자격 최소 거래<input id="t-arena_min_trades" type="number"></label><label>실전 자격 인원 (0~5)<input id="t-arena_live_n" type="number"></label><label>실전 예산 중 생존전 몫(%)<input id="t-arena_live_pct" type="number"></label></div>
+        <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수 (0=제한 없음)<input id="t-arena_ai_per_day" type="number"></label><label>실전 자격 최소 거래<input id="t-arena_min_trades" type="number"></label><label>실전 자격 인원 (0~5)<input id="t-arena_live_n" type="number"></label><label>실전 예산 중 생존전 몫(%)<input id="t-arena_live_pct" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_live"> 💰 상위 AI(거래 충분·평균 플러스·앞뒤 절반 모두 플러스)가 '산다'고 하면 실전 매수 — 나머지는 가상으로 공부 (실전 모드일 때만 · 현금만·봇 장부·손실 한도 그대로)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_promote"> 🏆 1등 전략을 2호 급등주 AI 판단에도 참고로</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
@@ -1464,7 +1464,7 @@ async function renderTrade(fillForm = true) {
   $("#scorecard").textContent = (d.scorecard || {}).text || "아직 기록 없음";
   const ar = d.arena || {}, ch = ar.champion;
   $("#arena").innerHTML = (ar.board || []).length ? (ch ? `<div>🏆 1등 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${(+ch.avg).toFixed(2)}% · 승률 ${ch.win}%</div>` : "")
-    + ar.board.map((r, i) => `<div>${i + 1}. ${r.live ? "💰" : "📘"} <b>${esc(r.name)}</b>${r.gen > 1 ? ` <span class="muted">${r.gen}세대</span>` : ""} — ${r.n}건 평균 ${(+r.avg).toFixed(2)}% 승률 ${r.win}% · 보유 ${r.held} <span class="muted">(익절 ${r.tp}% 손절 ${r.sl}% 최대 ${r.hold}분 · ${esc(r.persona)})</span></div>`).join("")
+    + ar.board.map((r, i) => `<div>${i + 1}. ${r.live ? "💰" : "📘"} <b>${esc(r.name)}</b>${r.gen > 1 ? ` <span class="muted">${r.gen}세대</span>` : ""} — ${r.n}건 평균 ${(+r.avg).toFixed(2)}% 승률 ${r.win}% · 안 산 판단 ${r.skips}건 정확도 ${r.skip_ok}% · 점수 ${(+r.q).toFixed(2)} · 보유 ${r.held} <span class="muted">(익절 ${r.tp}% 손절 ${r.sl}% 최대 ${r.hold}분 · ${esc(r.persona)})</span></div>`).join("")
     : "<span class='muted'>장 열리면 시작해요</span>";
   $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
   $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 8건 뒤 나빠지면 그 변경만 되돌림)</span></div>` + d.rules.map(x =>
