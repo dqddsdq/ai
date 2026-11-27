@@ -351,6 +351,35 @@ def _probe_tick(d: dict, market: str, quotes: dict, minutes, day: str, now: floa
     return done + (n0 - len(d["probes"]))
 
 
+AFTER_MAX = 100   # 시간 청산 뒤 동시에 추적하는 최대 건수
+
+
+def _after_tick(d: dict, quotes: dict, minutes, day: str, now: float) -> bool:
+    """시간 청산한 종목의 이후 고점을 장 마감까지 따라가 거래 기록(after_hi %, after_min 분)에 적음"""
+    ws = d.get("after") or []
+    if not ws:
+        return False
+    by_id = {a["id"]: a for a in _all(d)}
+    keep, changed = [], False
+    for w in ws:
+        px = float(quotes.get(w["sym"]) or 0)
+        if px > w["hi"]:
+            w["hi"] = px
+            a = by_id.get(w["aid"])
+            for tr in reversed((a or {}).get("trades") or []):
+                if tr.get("t") == w["t"] and tr.get("sym") == w["sym"]:
+                    tr["after_hi"] = round((px / w["px"] - 1) * 100, 2)
+                    tr["after_min"] = round((now - w["at"]) / 60)
+                    break
+            changed = True
+        if w["day"] == day and not (minutes is not None and minutes >= 380) and w["aid"] in by_id:
+            keep.append(w)
+        else:
+            changed = True   # 장 마감·날 바뀜 → 추적 끝
+    d["after"] = keep[-AFTER_MAX:]
+    return changed
+
+
 # ── 매 바퀴 ──
 def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, price_fn=None, ai_fn=None) -> list[str]:
     """보유 정리 + 새 후보 AI 판단 시작. 결과 줄 목록"""
@@ -363,6 +392,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
         held = {s for a in _all(d) for s in a["pos"]} | {p["sym"] for p in d.get("probes") or []}   # 채점 중인 후보 시세도
+        held |= {w["sym"] for w in d.get("after") or []}   # 시간 청산 뒤 고점 추적 중인 종목도
         need = [s for s in held if not quotes.get(s)]
     if need and price_fn:
         try:
@@ -380,6 +410,7 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
                     continue
                 r = (px / p["px"] - 1) * 100
                 mins = (now - p["t"]) / 60
+                p["hi"] = max(float(p.get("hi") or p["px"]), px)   # 보유 중 고점
                 why = ("익절" if r >= a["tp"] else "손절" if r <= -a["sl"] else "시간" if mins >= a["hold"]
                        else "마감" if (minutes is not None and minutes >= 380) or p.get("day") != day else "")
                 if why:
@@ -388,9 +419,17 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
                                         "mins": round(mins), "t": _now(), "sit": p.get("sit", ""),
                                         "spike_min": p.get("spike_min"), "chg": p.get("chg"),
                                         "late": "늦은 진입" in entry_keys(p.get("spike_min"), p.get("chg"))})
+                    if why == "시간":   # ⏳ 보유 시간 조정 근거: 청산 시점 수익률 + 보유 중 고점 + 이후 고점(장 마감까지 추적)
+                        tr = a["trades"][-1]
+                        tr["exit_r"] = round(r, 2)
+                        tr["hi_in"] = round((p["hi"] / p["px"] - 1) * 100, 2)
+                        tr["after_hi"] = 0.0; tr["after_min"] = 0
+                        d.setdefault("after", []).append({"aid": a["id"], "sym": sym, "t": tr["t"], "day": tr["day"],
+                                                          "px": px, "hi": px, "at": now})
                     del a["pos"][sym]
                     out.append(f"🏟️ {a['name']} {sym} {why} {ret:+.2f}%")
         changed = _probe_tick(d, market, quotes, minutes, day, now) > 0   # 🧮 '샀다면' 채점 (AI 호출 없음)
+        changed |= _after_tick(d, quotes, minutes, day, now)   # ⏳ 시간 청산 뒤 고점
         changed |= any(k != day for k in d["seen"])
         # 새 후보 → 참가자 전원 판단 (한 종목 하루 1번)
         calls = d["calls"].get(day, 0)
