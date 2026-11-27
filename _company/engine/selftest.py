@@ -572,7 +572,7 @@ def 과거_장_복습은_그시점_정보만_채점하고_한번만():
     import re as _re
     from . import arena, arena_replay as ar
     src = Path(ar.__file__).read_text(encoding="utf-8")
-    assert not _re.search(r"place_limit_order|cancel_order|toss\.", src), "과거 장 복습이 주문·토스를 직접 부름"
+    assert not _re.search(r"place_limit_order|cancel_order|order_price|buying_power|_post\(", src), "과거 장 복습이 주문 함수를 부름 (읽기만 해야 함)"
     # 한 봉에서 손절·익절이 같이 닿으면 손절 (보수적)
     assert ar._sim([{"h": 110, "l": 90, "c": 100}], 100, 5, 3, 60, "US") < 0
     assert ar._sim([{"h": 101, "l": 99.5, "c": 100}, {"h": 106, "l": 100, "c": 105}], 100, 5, 3, 60, "US") > 4
@@ -597,6 +597,22 @@ def 과거_장_복습은_그시점_정보만_채점하고_한번만():
             assert rows[a0["name"]]["n_buy"] == 3 and rows[a0["name"]]["n"] == 3, rows
             ar.run(c, "US", lambda *a: None, ai_fn=fake)
             assert len(seen) == 3, "같은 후보를 또 복습함"
+            # 🌐 시장 전체 과거 급등일: 일봉에서 찾고 1분봉 진입 시점으로 재현
+            from . import backtest as bt, picker, toss
+            o2 = (picker.load_base, toss.daily, bt._hist_1m, picker.session_minutes, picker.session_date)
+            try:
+                picker.load_base = lambda m: {"rows": {"MK1": {"value20_krw": 1e10}}}
+                toss.daily = lambda s_, n: ([10.0] * 21 + [10.0, 13.0], [100.0] * 21 + [100.0, 900.0],
+                                            [f"2026-01-{i + 1:02d}T00:00:00Z" for i in range(23)])
+                bars = [{"t": f"2026-01-23T10:{i:02d}:00+00:00", "o": 10 + i * 0.05, "c": 10 + i * 0.05 + 0.04, "h": 10 + i * 0.05 + 0.06,
+                         "l": 10 + i * 0.05 - 0.02, "v": 200.0} for i in range(60)]
+                bt._hist_1m = lambda s_, m, f, t: (bars, {})
+                picker.session_minutes = lambda m, now=None, extended=False: 60
+                picker.session_date = lambda m, now=None: "2026-01-23" if now is not None else "2026-02-01"
+                ev = ar._market_events({"surge_min_change_pct": 10, "surge_max_change_pct": 100, "surge_volume_ratio": 1}, "US", set(), 5)
+                assert ev and ev[0]["key"] == "2026-01-23:MK1:m" and len(ev[0]["_bars"][0]) >= 10 and ev[0]["_bars"][1], ev[:1]
+            finally:
+                picker.load_base, toss.daily, bt._hist_1m, picker.session_minutes, picker.session_date = o2
         finally:
             arena._file, ar._candidates, ar._bars_around = o
 
