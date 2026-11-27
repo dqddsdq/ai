@@ -214,6 +214,17 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
         _save(d)
 
 
+def note_stop(sym: str, mode: str, info: dict) -> None:
+    """🧯 손절 체결 분석(지연·미끄러짐·원인)을 그 종목 최근 거래에 붙임 (기록만)"""
+    with _lock:
+        d = _load()
+        t = next((x for x in reversed(d["trades"]) if x["sym"] == sym and x["mode"] == mode and x.get("exits")), None)
+        if not t:
+            return
+        t["stop_info"] = dict(info)
+        _save(d)
+
+
 EXIT_KINDS = (("안전장치", "수익 지키기"), ("AI 판단", "AI 판단"), ("🤖 AI", "AI 판단"), ("손절", "손절"), ("본전", "본전 정리"),
               ("고점 대비", "수익 지키기"), ("익절", "익절"), ("마감", "마감 정리"), ("장 끝", "마감 정리"),
               ("일 보유", "시간 초과"), ("보유 일수", "시간 초과"), ("시간 초과", "시간 초과"),

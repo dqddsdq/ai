@@ -1400,6 +1400,8 @@ def _stop_cause(r: dict) -> str:
             out.append(f"확인 지연(직전 확인 {r.get('prev_ago_sec')}초 사이 급락, 발동 때 기준보다 {trig_dev:+.1f}%p)")
     if int(r.get("retries", 0)) > 0:
         out.append(f"확인 지연(미체결로 {r['retries']}번 다시 주문)")
+    if float(r.get("delay_sec") or 0) >= 30:   # 발동→체결까지 오래 걸림
+        out.append(f"체결 지연(발동 뒤 {r['delay_sec']:.0f}초 만에 체결)")
     if slip <= -0.5:
         out.append(f"호가 공백(발동가 대비 체결 {slip:+.1f}%)")
     return " · ".join(out) or "작은 차이 누적"
@@ -1418,14 +1420,26 @@ def _stop_fill(s: dict, coid: str, qty: float, fill_px: float) -> str:
     r["fill_t"] = r.get("fill_t") or datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
     r["fill_pnl"] = round((r["fill_px"] / r["avg"] - 1) * 100, 2)
     r["gap_pp"] = round(r["fill_pnl"] + r["stop_pct"], 2)   # 기준 대비 차이 (%p, 음수 = 기준보다 더 잃음)
+    # ⏱️ 지연·미끄러짐 나눠 기록: 발동 때 이미 밀린 몫(확인 지연·갭) + 발동가→체결가 몫(호가·체결 지연)
+    r["delay_sec"] = round(float(r["fill_ts"]) - float(r.get("ts") or r["fill_ts"]), 1)
+    r["trig_dev_pp"] = round(r["trigger_pnl"] + r["stop_pct"], 2)
+    r["fill_slip_pct"] = round((r["fill_px"] / r["trigger_px"] - 1) * 100, 2) if r.get("trigger_px") else 0.0
     r["cause"] = _stop_cause(r) if r["gap_pp"] <= -1 else ""
     # 🔻 손절 슬리피지: 체결이 손절선보다 깊으면 따로 표시 (기록만)
     r["slip"] = (not r.get("time_stop")) and r["gap_pp"] <= -STOP_SLIP_PP
+    try:   # 🧯 거래 기록(tradelearn)에도 붙임 (오류 나도 체결 처리는 그대로)
+        tl.note_stop(r["symbol"], "live" if r.get("live", True) else "paper",
+                     {k: r.get(k) for k in ("stop_pct", "line", "t", "trigger_px", "trigger_pnl", "prev_ago_sec", "retries",
+                                            "fill_t", "fill_px", "fill_pnl", "gap_pp", "delay_sec", "trig_dev_pp",
+                                            "fill_slip_pct", "cause", "slip", "time_stop")})
+    except Exception:
+        pass
     if not first:
         return ""
     r["low_px"] = r["high_px"] = r["fill_px"]
     return (f"🧯 손절 기록 {r['symbol']}: 기준 -{r['stop_pct']:g}%(기준가 {r['line']:g}) · 발동 {r['t'][5:]} @ {r['trigger_px']:g}"
             f"({r['trigger_pnl']:+.1f}%) · 체결 @ {r['fill_px']:g}({r['fill_pnl']:+.1f}%) · 기준 대비 {r['gap_pp']:+.1f}%p"
+            f"\n지연·미끄러짐: 발동까지 {r['trig_dev_pp']:+.1f}%p · 발동→체결 {r['delay_sec']:.0f}초 {r['fill_slip_pct']:+.1f}%"
             + (" · 🔻 슬리피지" if r["slip"] else "")
             + (f"\n원인: {r['cause']}" if r["cause"] else ""))
 
@@ -1503,6 +1517,8 @@ def stop_log_text(n: int = 5) -> str:
     for r in rows:
         tr = " · ".join(f"{k} {v['pct']:+.1f}%" for k, v in (r.get("track") or {}).items())
         out.append(f"- {r['fill_t'][5:16]} {r['symbol']} 기준 -{r['stop_pct']:g}% → 체결 {r['fill_pnl']:+.1f}% ({r['gap_pp']:+.1f}%p)"
+                   + (f" · 발동까지 {r['trig_dev_pp']:+.1f}%p · 발동→체결 {r['delay_sec']:.0f}초 {r['fill_slip_pct']:+.1f}%"
+                      if "delay_sec" in r else "")   # 예전 기록엔 없음
                    + (f" · 원인: {r['cause']}" if r.get("cause") else "") + (f" · 뒤 {tr}" if tr else "")
                    + (f" · {r['verdict']}" if r.get("verdict") else ""))
     return "\n".join(out)
