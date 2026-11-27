@@ -76,11 +76,27 @@ def push(reason: str = "PC 자동 개선") -> dict:
         rc, out = _git("pull", "-q", "--rebase", "--autostash", REMOTE, BRANCH, timeout=180)
         if rc:
             _git("rebase", "--abort")
-            return _set(False, "GitHub 쪽과 같은 곳이 바뀌어서 자동으로 못 합쳤어요 — 그대로 두면 다음에 다시 시도해요. 계속되면 Claude 에게 알려 주세요")
+            return _set(False, "GitHub 쪽과 같은 곳이 바뀌어서 지금은 안 올렸어요 — 바로 이어서 받기에서 정리해요")
         rc, out = _git("push", "-q", REMOTE, f"HEAD:{BRANCH}", timeout=180)
         if rc:
             return _set(False, f"올리기 실패 (GitHub 로그인 필요할 수 있어요): {out[-200:]}")
         return _set(True, "GitHub 에 올렸어요" + (f" (키·기록 파일 {len(bad)}개는 빼고)" if bad else ""))
+
+
+def _take_github(log=print) -> str:
+    """같은 곳이 달라 자동으로 못 합칠 때: PC 변경은 GitHub 백업 브랜치에 보관 → 코드 폴더만 GitHub 최신으로.
+    코드 폴더(SYNC_PATHS) 밖의 파일(키·기록·설정·팀 기억)은 안 건드림. 백업 브랜치 이름(실패면 '')"""
+    _git("rebase", "--abort"); _git("merge", "--abort")
+    ts = datetime.now().strftime("%Y%m%d-%H%M")
+    name = f"pc-backup/{ts}"
+    rc, _ = _git("push", "-q", REMOTE, f"HEAD:refs/heads/{name}", timeout=180)
+    if rc:
+        return ""
+    _git("branch", "-q", "-f", f"pc-backup-{ts}", "HEAD")   # PC 안에도 보관
+    _git("reset", "-q", "--mixed", f"{REMOTE}/{BRANCH}")
+    _git("checkout", f"{REMOTE}/{BRANCH}", "--", *[p for p in SYNC_PATHS if _git("cat-file", "-e", f"{REMOTE}/{BRANCH}:{p}")[0] == 0])
+    log(f"🔄 충돌 → PC 변경은 GitHub '{name}' 에 보관하고 코드는 GitHub 최신으로")
+    return name
 
 
 def _engine_rev() -> str:
@@ -105,9 +121,12 @@ def pull_and_check(log=print, restart=None) -> dict:
         if _git("diff", "--cached", "--quiet")[0] == 1:
             _git("commit", "-q", "-m", f"PC 변경 (받기 전 보관, {datetime.now():%Y-%m-%d %H:%M})")
         rc, out = _git("pull", "-q", "--rebase", "--autostash", REMOTE, BRANCH, timeout=180)
+        backup = ""
         if rc:
             _git("rebase", "--abort")
-            return _set(False, "새 코드와 PC 코드가 같은 곳이 달라서 자동으로 못 합쳤어요 — 지금 코드 그대로 계속 돌아요")
+            backup = _take_github(log)
+            if not backup:
+                return _set(False, "새 코드와 PC 코드가 같은 곳이 달라서 못 합쳤고, PC 변경 백업 올리기도 실패했어요 — 지금 코드 그대로 계속 돌아요")
         _, changed = _git("diff", "--name-only", before, "HEAD")
         code = any(f.startswith("_company/engine/") for f in changed.splitlines())
         r = subprocess.run([sys.executable, "-B", "-m", "engine.selftest"], cwd=COMPANY_DIR, capture_output=True,
@@ -116,11 +135,16 @@ def pull_and_check(log=print, restart=None) -> dict:
             r = subprocess.run([sys.executable, "-B", "-m", "tests.scenarios"], cwd=COMPANY_DIR, capture_output=True,
                                text=True, encoding="utf-8", errors="replace", timeout=600)
         if r.returncode:
-            _git("reset", "-q", "--keep", before)
+            if _git("reset", "-q", "--keep", before)[0] and backup:
+                _git("reset", "-q", "--mixed", before)
+                _git("checkout", before, "--", *[p for p in SYNC_PATHS if _git("cat-file", "-e", f"{before}:{p}")[0] == 0])
             tail = (r.stdout or "").strip().splitlines()[-1:] or [""]
             return _set(False, f"받은 코드가 자체 점검·시나리오 시험에 실패해서 되돌렸어요 ({tail[0][:80]})")
         n = len(changed.splitlines())
         msg = f"GitHub 새 코드 받음 ({n}개 파일)" + (" → 앱 다시 켜요" if code else "")
+        if backup:
+            code = True
+            msg += f" · ⚠️ PC 자동 개선 변경이 겹쳐서 GitHub '{backup}' 에 보관했어요 — Claude 에게 '백업 합쳐줘' 라고 하면 합쳐요"
         _set(True, msg)
     log("🔄 " + msg)
     try:
