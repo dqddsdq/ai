@@ -40,6 +40,8 @@ def _load() -> dict:
     for t in d["trades"]:   # 예전에 '기타'로 분류된 청산 사유를 다시 분류
         if t.get("closed") and t.get("exit_kind") == "기타" and t.get("exits"):
             t["exit_kind"] = _kind(t["exits"][-1].get("reason", ""))
+            t["exit_kind_old"] = "기타"   # 📏 다시 분류한 기록 표시 (분류 기준 바뀌기 전 통계와 섞어 비교하지 않게)
+            d.setdefault("relabel_at", _now())
     return d
 
 
@@ -814,7 +816,10 @@ def add_lesson(market: str, text: str, by: str = "") -> None:
         d = store.load(LESSONS, lambda: {"items": []})
         sim = [x for x in d["items"] if x.get("market") == market and x.get("kind") != "owner_ref" and _similar(x.get("text", ""), text)]
         n_rep = len(sim) + 1
-        propose = n_rep >= REPEAT_TO_RULE and not any(x.get("proposed") for x in sim)
+        today = _now()[:10]
+        # 하루 1건까지만 (자동 개선 하루 한도를 교훈 제안이 다 쓰지 않게)
+        propose = n_rep >= REPEAT_TO_RULE and not any(x.get("proposed") for x in sim) \
+            and not any(str(x.get("proposed", "")).startswith(today) for x in d["items"])
         item = {"t": _now(), "market": market, "text": text[:300], "by": by}
         if propose:
             item["proposed"] = _now()

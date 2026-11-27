@@ -5,6 +5,7 @@
 - 📒 모든 AI 가 같은 공유 노트(1호·2호·AI 리그·주말 공부 교훈 + 팀 기억 교훈)를 보고 판단
 - AI 호출: 후보 한 종목당 1번에 참가자 전원이 같이 판단 (가상은 표본 제한 없음: arena_ai_per_day 0 = 무제한 · 30%↑ 급등 후보도 판단)
 - 🧮 독립 표본: 실전 자격 판정은 같은 종목·같은 날을 1건으로 · 제일 크게 번 종목 하나를 빼도 플러스여야 함
+- 🚀 30%↑ 급등 후보 가상 거래: 체결을 한쪽 1% 불리하게 · 공부용으로만 쓰고 실전 자격 판정에서는 뺌
 - 매도: 참가자마다 자기 익절·손절·최대 보유 시간 + 마감 전 정리 (단타)
 - 체결: 0.1% 불리하게 + 수수료·세금 (실전 가상 매매와 같게)
 - 매주 토요일 아침(주말 공부) 성적 발표(텔레그램) · 탈락 없음 — 전원 가상 매매로 계속 같이 공부
@@ -38,6 +39,7 @@ from .agents import COMPANY_DIR
 KST = timezone(timedelta(hours=9))
 SLIP = 0.1                      # % 불리한 체결 (한쪽)
 FEE = {"US": 0.2, "KR": 0.21}   # % 왕복 수수료+세금 (미장 0.1%×2 · 국장 0.015%×2 + 매도세 0.18%)
+HOT_SLIP = 1.0                  # % 한쪽 — 30%↑ 급등 후보는 실제 미끄러짐이 커서 가상 체결도 이만큼 불리하게
 MAX_POS = 10                    # 참가자당 동시 보유 (가상이라 넉넉히 → 표본 빨리)
 _lock = threading.Lock()
 _pending: dict[str, float] = {}   # "시장:종목" → AI 판단 시작 시각
@@ -390,7 +392,8 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
     quotes = {k: (v.get("price") if isinstance(v, dict) else v) for k, v in (quotes or {}).items()}
     quotes = {k: float(v) for k, v in quotes.items() if v}
     # 단타 후보만 · 가상이라 30%↑ 급등 검증 후보(extra)까지 넓혀서 표본 빨리
-    cands = {k: v for k, v in {**(extra or {}), **(cands or {})}.items() if (v.get("style") or "surge") == "surge"}
+    cands = {k: v for k, v in {**{k: {**v, "_hot": True} for k, v in (extra or {}).items()}, **(cands or {})}.items()
+             if (v.get("style") or "surge") == "surge"}
     with _lock:
         d = load(market, int(c.get("arena_size", 10)))
         held = {s for a in _all(d) for s in a["pos"]} | {p["sym"] for p in d.get("probes") or []}   # 채점 중인 후보 시세도
@@ -416,11 +419,12 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
                 why = ("익절" if r >= a["tp"] else "손절" if r <= -a["sl"] else "시간" if mins >= a["hold"]
                        else "마감" if (minutes is not None and minutes >= 380) or p.get("day") != day else "")
                 if why:
-                    ret = _ret(p["px"], px, market)
+                    ret = _ret(p["px"], px, market) - (2 * (HOT_SLIP - SLIP) if p.get("hot") else 0)   # 🚀 급등 후보는 더 불리하게
                     a["trades"].append({"sym": sym, "day": p.get("day", day), "ret": round(ret, 3), "why": why,
                                         "mins": round(mins), "t": _now(), "sit": p.get("sit", ""),
                                         "spike_min": p.get("spike_min"), "chg": p.get("chg"),
-                                        "late": "늦은 진입" in entry_keys(p.get("spike_min"), p.get("chg"))})
+                                        "late": "늦은 진입" in entry_keys(p.get("spike_min"), p.get("chg")),
+                                        **({"hot": True} if p.get("hot") else {})})
                     if why == "시간":   # ⏳ 보유 시간 조정 근거: 청산 시점 수익률 + 보유 중 고점 + 이후 고점(장 마감까지 추적)
                         tr = a["trades"][-1]
                         tr["exit_r"] = round(r, 2)
@@ -553,11 +557,11 @@ def _decide(c: dict, market: str, sym: str, cd: dict, price: float, day: str, ai
             yes = [a["id"] for a in d["alive"] if a["id"] in ids_asked and r.get(a["id"]) is True]
             for a in d["alive"]:
                 if a["id"] in yes and sym not in a["pos"] and len(a["pos"]) < MAX_POS:
-                    a["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit, **ent}
+                    a["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit, **ent, **({"hot": True} if cd.get("_hot") else {})}
             ctrl = d["ctrl"]   # 🎲 대조군: 같은 후보를 같은 빈도로 무작위 매수
             ctrl_buy = random.random() < _ctrl_p(d)
             if ctrl_buy and sym not in ctrl["pos"] and len(ctrl["pos"]) < MAX_POS:
-                ctrl["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit, **ent}
+                ctrl["pos"][sym] = {"px": price, "t": time.time(), "day": day, "sit": sit, **ent, **({"hot": True} if cd.get("_hot") else {})}
             vs = d["vote_stats"]
             vs["asked"] = int(vs.get("asked", 0)) + len(asked); vs["yes"] = int(vs.get("yes", 0)) + len(yes)
             v = d.setdefault("votes", {})
@@ -650,7 +654,7 @@ def live_vote(market: str, day: str, sym: str, c: dict | None = None) -> tuple[s
 
 
 def _ctrl_avg(d: dict, c: dict | None = None) -> float:
-    ts = d["ctrl"]["trades"][-30:] if d.get("ctrl") else []
+    ts = [t for t in d["ctrl"]["trades"] if not t.get("hot")][-30:] if d.get("ctrl") else []
     return _wavg(ts, _hl(c)) if len(ts) >= 5 else 0.0
 
 
@@ -667,7 +671,7 @@ def _indep(ts: list) -> list:
 
 
 def _qualified(a: dict, min_n: int, ctrl_avg: float = 0.0, margin: float = CTRL_MARGIN, half_life: float = HALF_LIFE_DAYS) -> bool:
-    ts = _indep(a["trades"])[-max(min_n, 30):]
+    ts = _indep([t for t in a["trades"] if not t.get("hot")])[-max(min_n, 30):]   # 🚀 30%↑ 급등 후보 가상 거래는 실전 자격에서 뺌 (실전은 그 구간을 안 삼)
     if len(ts) < min_n:
         return False
     h = len(ts) // 2

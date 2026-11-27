@@ -618,14 +618,26 @@ def rule_record(before: dict, after: dict, revert: bool = False) -> None:
         for k in keys:   # 같은 한 번의 자동 조정이면 합침
             last["before"].setdefault(k, before.get(k)); last["after"][k] = after.get(k)
     else:
-        d["items"].append({"t": _now(), "ts": time.time(), "day": day, "before": {k: before.get(k) for k in keys},
+        try:
+            from . import autotrade as _at
+            mk = _at.cur_market()
+        except Exception:
+            mk = ""
+        d["items"].append({"t": _now(), "ts": time.time(), "day": day, "market": mk, "before": {k: before.get(k) for k in keys},
                            "after": {k: after.get(k) for k in keys}, "revert": revert, "checked": revert})
     d["items"] = d["items"][-200:]
     store.save(RULE_LOG, d)
 
 
+RULE_MIN_AFTER, RULE_MIN_BEFORE, RULE_FINAL_AFTER = 20, 20, 60
+
+
 def rule_check(log=print) -> str:
-    """규칙 변경 뒤 끝난 거래 8건↑이면: 바뀌기 전 20건보다 평균이 0.5%p 넘게 나쁘고 마이너스면 그 변경만 되돌림"""
+    """규칙 변경 효과 확인 — 같은 시장의 끝난 거래(실전+가상 장부 · 그림자 제외)로 비교.
+    바뀐 뒤 RULE_MIN_AFTER(20)건↑ · 바뀌기 전 최근 40건(최소 20건)과 비교해서
+    평균이 마이너스 · 0.5%p 넘게 나쁨 · 차이가 우연 범위(표준오차 2배)를 넘을 때만 되돌림.
+    차이가 우연 범위면 '판단 보류'로 두고 60건까지 더 지켜본 뒤 유지로 확정 (멀쩡한 변경을 운 때문에 되돌리지 않게)"""
+    import math
     from . import store
     from . import autotrade as at
     d = _rlog()
@@ -635,17 +647,23 @@ def rule_check(log=print) -> str:
     for it in d["items"]:
         if it.get("checked"):
             continue
-        after = [t for t in ts if t["exits"][-1]["t"] >= it["t"]]
-        before = [t for t in ts if t["exits"][-1]["t"] < it["t"]][-20:]
-        if len(after) < 8:
+        mts = [t for t in ts if not it.get("market") or tl._tm(t) == it["market"]]
+        after = [t for t in mts if t["exits"][-1]["t"] >= it["t"]]
+        before = [t for t in mts if t["exits"][-1]["t"] < it["t"]][-40:]
+        if len(after) < RULE_MIN_AFTER:
+            it["result"] = f"효과 확인 중 (바뀐 뒤 {len(after)}/{RULE_MIN_AFTER}건)"
             continue
-        it["checked"] = True
-        if len(before) < 8:
+        if len(before) < RULE_MIN_BEFORE:
+            it["checked"] = True
             it["result"] = "비교할 이전 거래가 적어서 유지"
             continue
-        ba, aa = st.fmean(t["pnl_pct"] for t in before), st.fmean(t["pnl_pct"] for t in after)
-        ev = f"바뀌기 전 {len(before)}건 평균 {ba:+.2f}% → 바뀐 뒤 {len(after)}건 {aa:+.2f}%"
-        if aa < ba - 0.5 and aa < 0:
+        a_ = [t["pnl_pct"] for t in after]; b_ = [t["pnl_pct"] for t in before]
+        ba, aa = st.fmean(b_), st.fmean(a_)
+        se = math.sqrt(st.pvariance(a_) / len(a_) + st.pvariance(b_) / len(b_))
+        diff = aa - ba
+        ev = f"바뀌기 전 {len(before)}건 평균 {ba:+.2f}% → 바뀐 뒤 {len(after)}건 {aa:+.2f}% (차이 {diff:+.2f}%p · 우연 범위 ±{2 * se:.2f}%p)"
+        if aa < 0 and diff < -0.5 and diff < -2 * se:
+            it["checked"] = True
             cur = at.config()
             back = {k: v for k, v in it["before"].items() if cur.get(k) == it["after"].get(k)}   # 그 뒤 다른 값으로 또 바뀐 건 안 건드림
             if back and at.save_config(back, _by_auto=True, _revert=True).get("ok"):
@@ -653,8 +671,11 @@ def rule_check(log=print) -> str:
                 msgs.append(f"↩️ 자동 규칙 변경 되돌림: {', '.join(f'{k} {it['after'][k]}→{v}' for k, v in back.items())} — {ev}")
             else:
                 it["result"] = f"나빠졌지만 이미 다른 값으로 바뀜 ({ev})"
-        else:
+        elif len(after) >= RULE_FINAL_AFTER or diff >= 0:
+            it["checked"] = True
             it["result"] = f"유지 ({ev})"
+        else:
+            it["result"] = f"판단 보류 — 차이가 아직 우연 범위 ({ev}) · {RULE_FINAL_AFTER}건까지 지켜봄"
     store.save(RULE_LOG, d)
     for m in msgs:
         log(m)

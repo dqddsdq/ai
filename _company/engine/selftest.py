@@ -506,6 +506,36 @@ def 반복_교훈_3번이면_규칙_반영_제안_독립_표본():
 
 
 @case
+def 자동_되돌림은_우연_범위면_보류_확실히_나쁠때만():
+    from . import extras, store
+    from . import autotrade as at
+    from . import tradelearn as tl
+    with tempfile.TemporaryDirectory() as d:
+        o = (extras.RULE_LOG, tl._load, at.save_config, at.config)
+        saved = []
+        extras.RULE_LOG = Path(d) / "rule.json"
+        def trades(rets, t0):
+            return [{"closed": True, "exits": [{"t": f"{t0}{i:03d}"}], "pnl_pct": r, "features": {"mkt": "US"}} for i, r in enumerate(rets)]
+        at.save_config = lambda new, _by_auto=False, _revert=False: (saved.append(new), {"ok": True})[1]
+        at.config = lambda: {"stop_loss_pct": 3.5}
+        try:
+            def run(before, after):
+                store.save(extras.RULE_LOG, {"items": [{"t": "2026-11-02", "ts": 0, "day": "2026-11-02", "market": "US",
+                                                        "before": {"stop_loss_pct": 3}, "after": {"stop_loss_pct": 3.5}, "checked": False}]})
+                tl._load = lambda: {"trades": trades(before, "2026-11-01 ") + trades(after, "2026-11-03 ")}
+                saved.clear(); extras.rule_check(lambda *a: None)
+                return store.load(extras.RULE_LOG)["items"][0]
+            it = run([0.2, -0.1] * 15, [0.5, -1.3] * 4)          # 8건뿐 → 아직 판단 안 함
+            assert not it["checked"] and not saved, it
+            it = run([0.5, -0.4, 1.2, -0.9] * 8, [0.3, -0.6, 0.9, -1.4] * 5)   # 조금 나쁘지만 우연 범위 → 보류
+            assert not it["checked"] and not saved and "보류" in it["result"], it
+            it = run([0.4, 0.2, 0.6, 0.1] * 8, [-1.2, -0.8, -1.5, -1.0] * 5)  # 확실히 나쁨 → 되돌림
+            assert it["checked"] and saved == [{"stop_loss_pct": 3}], (it, saved)
+        finally:
+            extras.RULE_LOG, tl._load, at.save_config, at.config = o
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)

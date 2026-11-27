@@ -1614,7 +1614,7 @@ async function renderTrade(fillForm = true) {
   $("#arena").innerHTML = (ar.board || []).length ? arenaHtml(ar, +c.arena_min_trades || 20) : "<span class='muted'>장 열리면 시작해요</span>";
   $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
   if ($("#stopslip")) $("#stopslip").textContent = (d.stop_slip || {}).text || "🔻 손절 슬리피지: 아직 손절 기록 없음";
-  $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 8건 뒤 나빠지면 그 변경만 되돌림)</span></div>` + d.rules.map(x =>
+  $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 같은 시장 20건↑ 쌓이고 우연 범위를 넘게 나빠졌을 때만 되돌림)</span></div>` + d.rules.map(x =>
     `<div>${esc(x.t.slice(5, 16))} ${x.revert ? "↩️ " : ""}${esc(Object.entries(x.after).map(([k, v]) => `${k} ${x.before[k]}→${v}`).join(", "))} <span class="muted">${esc(x.result || (x.checked ? "" : "효과 확인 중"))}</span></div>`).join("") : "";
   const pf = d.preflight || {};
   $("#trade-pre").innerHTML = (pf.day ? `🩺 실데이터 점검 ${esc(pf.day)} ${esc(pf.at || "")}: ${pf.closed ? "휴장일 — 오늘 매매 안 함" : pf.ok ? "✅ 통과" : "❌ 문제 있음 (오늘 새로 안 삼)"} <details style="display:inline"><summary style="display:inline;cursor:pointer" class="muted">자세히</summary>${(pf.checks || []).map(x => `<div class="muted">${x.ok ? "✅" : (x.critical ? "❌" : "⚠️")} ${esc(x.name)} — ${esc(x.detail)}</div>`).join("")}</details>` : `<span class="muted">🩺 실데이터 점검: 장 열릴 때 자동</span>`)
