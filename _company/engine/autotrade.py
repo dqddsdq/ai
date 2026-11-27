@@ -36,7 +36,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import backtest as bt
-from . import arena, extras, news, picker, shadow, store, toss
+from . import arena, edge, extras, news, picker, shadow, store, toss
 from . import tradelearn as tl
 from .agents import COMPANY_DIR, SHARED_DIR
 
@@ -44,7 +44,7 @@ CONFIG = SHARED_DIR / "autotrade.json"
 STATE = COMPANY_DIR / "_cache" / "autotrade_state.json"
 KST = timezone(timedelta(hours=9))
 DEFAULTS = {
-    "v": 7,                        # 설정 형식 버전 (예전 기본값 자동 갱신용)
+    "v": 8,                        # 설정 형식 버전 (예전 기본값 자동 갱신용)
     "mode": "off",
     "markets": ["US", "KR"],       # 동시에 돌릴 시장 (국장 09:00~15:30 · 미장 프리장 포함 저녁~새벽, 시장마다 기록·한도·정지 따로)
     "market": "US",                # (내부용) 지금 처리 중인 시장 — 설정 화면에서는 markets 를 씀
@@ -110,6 +110,7 @@ DEFAULTS = {
     "mode_down_days": 3,           # 실전에서 이 날수 연속 손실이면 가상으로
     "mode_down_month_pct": 8.0,    # 또는 이번 달 이 % 이상 손실이면 가상으로
     "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
+    "swing_auto_off": True,        # 📉 1호 스윙(가상)이 30일·30건↑ 평균 마이너스면 자동으로 쉬게
     "arena_on": True,              # 🏟️ AI 리그: 성격 다른 AI 들이 가상으로만 매매 → 매주 꼴찌 탈락·1등 변형 투입
     "arena_size": 10, "arena_ai_per_day": 0, "arena_min_trades": 20,   #    참가자 수 · 하루 AI 판단 횟수 · 탈락 판정 최소 거래
     "arena_promote": True,         #    🏆 1등 전략을 2호 급등주 AI 판단에 참고로 붙임
@@ -123,7 +124,7 @@ DEFAULTS = {
     "daily_digest": True,          # 📋 장 마감 뒤 제안 현황(대기·적용·바꾼 뒤 성적)을 텔레그램으로 하루 한 번
     "notes_council": True,         # 📒 주말 공부 끝에 AI 셋이 회의해서 공유 노트 정리 (다수 동의한 것만 핵심 노트 · 원본 보관)
     "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
-    "shadow_count": 60,            #   1000개는 운 막는 문턱(promote_edge)이 너무 높아 교체가 0번이었음 ·   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
+    "shadow_count": 30,            #   1000개는 운 막는 문턱(promote_edge)이 너무 높아 교체가 0번이었음 ·   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
     "auto_promote": True,          #   확실히 나은 조합을 실전 규칙으로 자동 교체 (매일 복기 뒤)
     "promote_min_trades": 15,      #   교체하려면 그 조합 거래가 최소 이만큼 (20 보다 작아도 20건 적용 · shadow.PROMOTE_N)
     "promote_margin_pct": 1.0,     #   (예전 기준·지금은 안 씀) 교체는 앞 70% 선정 → 뒤 30% 검증 방식
@@ -340,7 +341,10 @@ def config() -> dict:
     if int(c.get("v", 1)) < 7:   # 🏟️ 가상 표본 제한 풀기 (AI 리그 판단 횟수 무제한)
         if c.get("arena_ai_per_day") in (40, 60, None):
             out["arena_ai_per_day"] = 0
-    out["v"] = 7
+    if int(c.get("v", 1)) < 8:   # 🧪 그림자 조합 60 → 30 (비교 대상이 많으면 우연히 좋아 보이는 조합이 섞여서)
+        if c.get("shadow_count") in (60, None):
+            out["shadow_count"] = 30
+    out["v"] = 8
     return out
 
 
@@ -488,7 +492,7 @@ def event(kind: str, text: str, **extra) -> None:
         notify.send(f"{flag} [{kind}] {text}")
 
 
-NOTIFY_KINDS = {"AI 리그", "노트 정리","교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
+NOTIFY_KINDS = {"판단 점검", "AI 리그", "노트 정리","교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
                 "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교", "검증 요약", "월 수익"}   # 🔔 텔레그램으로 보낼 기록 종류
 
 MONTH_ALERT_PCT = 20.0   # 🎉 이번 달 실현 수익률이 이걸 처음 넘으면 알림 (시장별 월 1회, 알림만)
@@ -1792,6 +1796,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             except Exception as e:
                 results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
         results += _arena_step(c, market, cands, quotes, minutes, s["day"], dry, exits_only, hot)
+        _edge_step(market, quotes, minutes, s["day"], dry)
         return {"ok": True, "mode": mode, "results": results + ["지금 살 종목이 없어요"]}
     try:
         quotes.update(toss.prices([x for x in symbols if x not in quotes]) if [x for x in symbols if x not in quotes] else {})
@@ -1927,6 +1932,13 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 proof_note = f"🛡️ 검증 전이라 가상으로 (비슷한 거래 {est0.get('n', 0)}건 · 기대 {est0.get('ev', 0):+.2f}% — 실전은 {c['live_proof_n']}건↑·플러스부터)"
             else:
                 proof_note = ""
+            if buy_live and not arena_pick and style == "surge":   # 🚧 지는 구간은 실전 대신 가상 (가상으로 계속 배워서 좋아지면 풀림)
+                try:
+                    blk_ = edge.bucket_block(market, (cands.get(sym) or {}).get("features") or {}, minutes)
+                except Exception:
+                    blk_ = ""
+                if blk_:
+                    buy_live, proof_note = False, blk_
             if buy_live and style == "swing" and not c.get("swing_live", False):
                 buy_live, proof_note = False, "📉 스윙은 지금 가상으로만 (설정 '스윙 실전'을 켜면 실전)"
             elif buy_live and style == "surge" and c.get("live_quality", True):   # 🎯 강한 신호만 실전
@@ -2097,8 +2109,16 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     ok, mult, why, chart_id = dec
                     tl.flag_watch(wday, sym, ai="찬성" if ok else "반대", why=why)
                     if not ok:
-                        event("AI 판단", f"{sym} 안 삼 — {why}", symbol=sym, chart=chart_id)
-                        results.append(f"{sym}: 🤖 AI 판단으로 안 삼 — {why}"); continue
+                        try:
+                            edge.veto_add(market, sym, price, c, s["day"], "AI 판단")   # 🤖 막은 종목도 채점
+                        except Exception:
+                            pass
+                        if edge.veto_mode(market) == "shrink":   # 막은 종목이 더 잘 됐던 기록 → 반대는 금액 줄이기로
+                            ok, mult = True, 0.5
+                            size_note += f" · 🤖 AI 반대({why[:40]})지만 그동안 막은 종목이 더 잘 돼서 금액 50%로"
+                        else:
+                            event("AI 판단", f"{sym} 안 삼 — {why}", symbol=sym, chart=chart_id)
+                            results.append(f"{sym}: 🤖 AI 판단으로 안 삼 — {why}"); continue
                     qty2 = int(budget * mult // (buy_px * f))
                     qty = max(1, qty2) if qty2 < 1 and full_budget >= buy_px * f else qty2
                     if qty < 1:
@@ -2108,8 +2128,16 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 ok, why, chart_id = _ai_chart_ok(sym, reason, price)
                 tl.flag_watch(wday, sym, ai="찬성" if ok else "반대", why=why)
                 if not ok:
-                    event("AI 차트 반대", f"{sym} 매수 보류 — {why}", symbol=sym, chart=chart_id)
-                    results.append(f"{sym}: 📊 AI 가 차트 보고 반대 — {why}"); continue
+                    try:
+                        edge.veto_add(market, sym, price, c, s["day"], "AI 차트")
+                    except Exception:
+                        pass
+                    if edge.veto_mode(market) == "shrink":
+                        qty = max(1, qty // 2)
+                        size_note += f" · 📊 AI 차트 반대({why[:40]})지만 그동안 막은 종목이 더 잘 돼서 수량 50%로"
+                    else:
+                        event("AI 차트 반대", f"{sym} 매수 보류 — {why}", symbol=sym, chart=chart_id)
+                        results.append(f"{sym}: 📊 AI 가 차트 보고 반대 — {why}"); continue
             if c["ai_check"]:
                 ok, why2 = _ai_ok(sym, side, reason, price)
                 if not ok:
@@ -2237,6 +2265,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         except Exception as e:
             results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
     results += _arena_step(c, market, cands, quotes, minutes, s["day"], dry, exits_only, hot)
+    _edge_step(market, quotes, minutes, s["day"], dry)
     try:
         extras.gate_count(market, s["day"], results)   # 🚧 안 산 이유 하루 요약용
     except Exception:
@@ -2387,7 +2416,7 @@ def overview() -> dict:
             "learn": tl.overview(s["day"], "live" if c["mode"] == "live" else "paper", c["market"]),
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
             "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {},
-            "scorecard": _scorecard_safe(c, s), "gates": extras.gate_text(c["market"], s["day"]), "arena": _arena_ov(c["market"]), "rules": extras.rule_history(8),
+            "scorecard": _scorecard_safe(c, s), "gates": extras.gate_text(c["market"], s["day"]), "edge": _edge_text(c["market"]), "arena": _arena_ov(c["market"]), "rules": extras.rule_history(8),
             "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "notes_core": tl.core(c["market"]),"halted_lane": s.get("halted_lane") or {},
             "stop_slip": _stop_slip_safe()}
 
@@ -2430,6 +2459,20 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
         lane_auto(c["market"])
     except Exception as e:
         event("오류", f"AI 자동 조정 실패: {type(e).__name__}: {e}")
+    try:   # 🎯 판단 질 점검: AI 반대 검증 · 지는 구간 차단 · 승률 추정 보정
+        for m_ in edge.review(c["market"]):
+            event("판단 점검", m_)
+    except Exception as e:
+        event("오류", f"판단 점검 실패: {type(e).__name__}: {e}")
+    try:   # 📉 1호 스윙: 가상으로 30일·30건↑ 평균 마이너스면 쉬게 (2호·AI 리그에 집중)
+        c_s = config()
+        if c_s.get("swing_auto_off", True) and lane_mode(c_s, "swing") == "paper":
+            ls_ = lane_stats(c["market"], "swing", 30)
+            if ls_.get("n", 0) >= 30 and float(ls_.get("avg", 0)) < 0:
+                if save_config({"lane_swing_mode": "off"}, _by_auto=True).get("ok"):
+                    event("판단 점검", f"📉 1호 스윙(가상) 최근 30일 {ls_['n']}건 평균 {ls_['avg']:+.2f}% → 쉬게 했어요 (새로 안 삼 · 보유는 계속 관리 · 화면에서 다시 켤 수 있어요)")
+    except Exception as e:
+        event("오류", f"스윙 점검 실패: {type(e).__name__}: {e}")
     try:   # 🏟️ AI 리그 실전 자격 AI 성적이 떨어졌으면 바로 내림
         rm_ = arena.recheck(config(), c["market"])
         if rm_:
@@ -2865,7 +2908,7 @@ LABELS = {"live_quality": "실전은 강한 신호만", "live_quality_change": "
           "time_stop_up_pct": "시간 손절 최소 상승(%)", "stop_slip_pct": "손절 매도 지정가 여유(%)", "stop_resell_sec": "매도 재주문(초)",
           "surge_min_change_regular": "정규장 급등 최소 상승률(%)", "surge_buy_cutoff_min": "급등주 매수 마감(분)", "open_weak_skip": "초반 약세장 건너뛰기", "open_weak_min": "초반 기준(분)", "open_weak_idx_pct": "초반 지수 -%면 안 삼","regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
           "tod_filter": "지는 시간대 피하기", "max_per_sector": "같은 업종 최대 보유", "backup_on": "매일 백업", "weekly_report": "주간 성적표",
-          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "arena_on": "AI 리그", "arena_size": "AI 리그 참가자 수", "arena_ai_per_day": "AI 리그 하루 AI 판단 횟수 (0=제한 없음)", "arena_min_trades": "AI 리그 실전 자격 최소 거래", "arena_promote": "AI 리그 1등 전략 참고", "arena_live": "AI 리그 상위 AI 실전 매수", "arena_live_n": "AI 리그 실전 자격 인원", "arena_live_pct": "AI 리그 실전 예산 몫(%)", "arena_ctrl_margin": "AI 리그 대조군보다 나아야 할 폭(%p)", "arena_half_life_days": "AI 리그 성적 반감 일수", "arena_voice": "리그 AI 의견 바로 채팅으로", "arena_voice_every": "의견 물어볼 거래 간격(건)", "arena_voice_per_day": "하루 최대 의견 수", "notes_council": "노트 정리 회의", "daily_digest": "제안 현황 하루 요약","no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "arena_on": "AI 리그", "swing_auto_off": "스윙 성적 나쁘면 자동으로 쉬기", "arena_size": "AI 리그 참가자 수", "arena_ai_per_day": "AI 리그 하루 AI 판단 횟수 (0=제한 없음)", "arena_min_trades": "AI 리그 실전 자격 최소 거래", "arena_promote": "AI 리그 1등 전략 참고", "arena_live": "AI 리그 상위 AI 실전 매수", "arena_live_n": "AI 리그 실전 자격 인원", "arena_live_pct": "AI 리그 실전 예산 몫(%)", "arena_ctrl_margin": "AI 리그 대조군보다 나아야 할 폭(%p)", "arena_half_life_days": "AI 리그 성적 반감 일수", "arena_voice": "리그 AI 의견 바로 채팅으로", "arena_voice_every": "의견 물어볼 거래 간격(건)", "arena_voice_per_day": "하루 최대 의견 수", "notes_council": "노트 정리 회의", "daily_digest": "제안 현황 하루 요약","no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -2923,6 +2966,9 @@ def _engine_one() -> str:
         gt = extras.gate_text(c["market"], s["day"])
         if gt:
             lines.append(gt)
+        et_ = _edge_text(c["market"])
+        if et_:
+            lines.append("🎯 판단 질 점검: " + et_)
         at_ = arena.text(c["market"])
         if at_:
             lines.append(at_)
@@ -3299,6 +3345,27 @@ def _arena_ov(market: str) -> dict:
         return arena.overview(market, config())
     except Exception:
         return {}
+
+
+def _edge_text(market: str) -> str:
+    try:
+        return edge.text(market)
+    except Exception:
+        return ""
+
+
+def _edge_step(market: str, quotes: dict, minutes, day: str, dry: bool) -> None:
+    """🤖 AI 가 막은 종목 채점 (시세만 읽음 · 실패해도 매매 영향 없음)"""
+    if dry:
+        return
+    try:
+        need = [x for x in edge.veto_syms(market) if x not in quotes]
+        q = dict(quotes)
+        if need:
+            q.update(toss.prices(need[:60]))
+        edge.veto_tick(market, q, minutes, day)
+    except Exception:
+        pass
 
 
 def _arena_step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, dry: bool, exits_only: bool, hot: dict | None = None) -> list[str]:

@@ -134,6 +134,8 @@ def setup():
     from engine import arena as _arena
     _arena.ai_json = lambda prompt: None   # 리그 AI 는 시험에서 안 부름
     _arena._file = lambda m: tmp / f"arena_{m}.json"
+    from engine import edge as _edge
+    _edge._file = lambda m: tmp / f"edge_{m}.json"
     return at, picker, tmp, store
 
 
@@ -712,6 +714,18 @@ def 생존전_AI_는_거래가_쌓이거나_연속_손실일_때만_하루_1번_
     assert d["alive"][1]["id"] in due and "연속 손실" in due[d["alive"][1]["id"]], due
     assert d["alive"][0]["id"] not in due, "새 거래 없는데 또 물어봄"
     assert arena.voice_due({**c, "arena_voice": False}, d, "D3") == {}, "꺼도 물어봄"
+
+
+@case
+def 지는_구간이면_실전_대신_가상으로(at, picker, tmp):
+    fresh(at, picker, tmp)
+    from engine import edge, store as st_
+    keys = ["상승률 ~10%", "상승률 10~20%", "상승률 20~30%", "상승률 30%+", "거래량 ~3배", "거래량 3~5배", "거래량 5~10배", "거래량 10배+",
+            "시간 프리장", "시간 장 초반 30분", "시간 30~120분", "시간 120분 뒤"]
+    d = edge.load("US"); d["blocked"] = {k: {"n": 25, "avg": -1.0} for k in keys}; st_.save(edge._file("US"), d)
+    r = at.run_once()
+    assert posted("BUY") == [], ("지는 구간인데 실전 주문이 나감", posted("BUY"))
+    assert at.state()["paper"]["positions"], ("가상으로도 안 삼", r["results"][:8])
 
 
 def main() -> int:

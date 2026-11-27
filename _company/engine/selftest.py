@@ -536,6 +536,38 @@ def 자동_되돌림은_우연_범위면_보류_확실히_나쁠때만():
 
 
 @case
+def 판단_질_점검_AI반대검증_지는구간_승률보정():
+    import re as _re
+    from . import edge
+    from . import tradelearn as tl
+    src = Path(edge.__file__).read_text(encoding="utf-8")
+    assert not _re.search(r"place_limit_order|cancel_order|toss\.", src), "판단 점검이 주문·토스를 직접 부름"
+    with tempfile.TemporaryDirectory() as d:
+        o = (edge._file, tl._load)
+        edge._file = lambda m: Path(d) / f"edge_{m}.json"
+        try:
+            c = {"take_profit_pct": 5, "stop_loss_pct": 3, "time_stop_min": 15, "time_stop_up_pct": 0.5}
+            edge.veto_add("US", "A", 10.0, c, "D"); edge.veto_add("US", "A", 10.0, c, "D")
+            assert edge.veto_syms("US") == ["A"], "같은 종목·같은 날은 한 번만"
+            edge.veto_tick("US", {"A": {"price": 10.6}}, 60, "D")
+            dd = edge.load("US"); assert dd["veto_done"][0]["why"] == "익절" and not dd["veto_open"], dd
+            # 막은 종목이 계속 좋으면 → shrink
+            dd["veto_done"] = [{"sym": f"S{i}", "day": "D", "kind": "AI", "at": "", "why": "익절", "ret": 1.0} for i in range(24)]
+            from . import store; store.save(edge._file("US"), dd)
+            mk = lambda p, ch, r, i, ai="": {"closed": True, "day": "2099-01-01", "entry_time": f"2099-01-01 09:{i:02d}:00", "pnl_pct": r,
+                                             "mode": "paper", "features": {"mkt": "US", "style": "surge", "p": p, "change": ch, "ratio": 4, "minute": 40, "ai_decide": ai}}
+            ts = [mk(0.55, 25, -0.8, i, "산다") for i in range(24)] + [mk(0.55, 12, 0.5 if i % 2 else -0.2, i) for i in range(24)]
+            tl._load = lambda: {"trades": ts}
+            msgs = edge.review("US")
+            assert edge.veto_mode("US") == "shrink", msgs
+            assert edge.bucket_block("US", {"change": 26, "ratio": 4, "minute": 40}), "20~30% 구간 계속 손실인데 차단 안 됨"
+            assert not edge.bucket_block("US", {"change": 12, "ratio": 2, "minute": 10}), "멀쩡한 구간을 차단"
+            assert abs(edge.calib_p("US", 0.55) - 0.55) > 0.05, "추정 55%인데 실제 25% — 보정 안 됨"
+        finally:
+            edge._file, tl._load = o
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)

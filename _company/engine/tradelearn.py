@@ -435,8 +435,18 @@ def size_ratio(est: dict, cfg: dict) -> tuple[float, str]:
         return 0.0, f"비슷한 거래 {est['n']}건 기대 수익 {est['ev']:+.2f}% → 건너뜀"
     if cfg.get("min_win_prob") and est["p"] < cfg["min_win_prob"] / 100:
         return 0.0, f"추정 승률 {est['p'] * 100:.0f}% < 기준 {cfg['min_win_prob']}% → 건너뜀"
-    r = lo + (1 - lo) * min(1.0, max(0.0, (est["p"] - 0.35) / 0.30))
-    return round(r, 2), f"추정 승률 {est['p'] * 100:.0f}% ({est['basis']}) · 기대 {est['ev']:+.2f}% → 금액 {r * 100:.0f}%"
+    p = est["p"]
+    cal_note = ""
+    try:   # 🎲 '승률 p' 라던 거래들이 실제로 얼마나 이겼는지로 보정 (edge.calib_review)
+        from . import edge
+        p2 = edge.calib_p(cfg.get("market"), p)
+        if abs(p2 - p) >= 0.01:
+            cal_note = f" → 실제 기록으로 보정 {p2 * 100:.0f}%"
+            p = p2
+    except Exception:
+        pass
+    r = lo + (1 - lo) * min(1.0, max(0.0, (p - 0.35) / 0.30))
+    return round(r, 2), f"추정 승률 {est['p'] * 100:.0f}%{cal_note} ({est['basis']}) · 기대 {est['ev']:+.2f}% → 금액 {r * 100:.0f}%"
 
 
 def _bucket(ts: list[dict], key, edges: list[float], unit: str) -> dict:

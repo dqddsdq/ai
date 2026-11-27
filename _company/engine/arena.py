@@ -447,7 +447,9 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
         d["calls"] = {day: calls}
         todo = [s for s, cd in cands.items() if s not in seen and quotes.get(s)
                 and (minutes is None or minutes <= 360) and f"{market}:{s}" not in _pending]
-        limit = int(c.get("arena_ai_per_day", 0) or 0)   # 0 = 제한 없음 (가상)
+        limit = int(c.get("arena_ai_per_day", 0) or 0)   # 0 = 자동: 리그 시작 뒤 21일은 제한 없음(빨리 배우기) → 그 뒤 하루 300번 (토큰)
+        if not limit and _league_days(d) > 21:
+            limit = 300
         start = []
         for s in todo:
             if limit and calls >= limit:
@@ -470,6 +472,15 @@ def step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, pri
 
 
 _notes_cache: dict[str, tuple[float, str]] = {}
+
+
+def _league_days(d: dict) -> float:
+    """리그 시작(가장 먼저 들어온 참가자) 뒤 지난 날 수"""
+    try:
+        b = min(a.get("born", "") for a in d.get("alive") or [] if a.get("born"))
+        return (datetime.now(KST) - datetime.strptime(b, "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)).days
+    except (ValueError, TypeError):
+        return 0
 
 
 def _notes(market: str) -> str:
