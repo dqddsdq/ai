@@ -1,0 +1,4 @@
+{
+  "_설명": "fast_model = 짧은 판단(복기 요약·AI 검토)에 쓰는 빠른 모델. 자동매매 팀의 답변 모델은 _agents/trader/team.json 의 member_model.",
+  "fast_model": "claudecode:haiku"
+}
