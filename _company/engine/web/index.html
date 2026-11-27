@@ -260,12 +260,35 @@ button { cursor: pointer; }
 .tt-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #view-trade .card[data-tt].tt-off { display: none; }
 #view-trade .trade-grid { gap: 10px 14px; }
-.ar { display: grid; gap: 6px; max-height: 560px; overflow: auto; }
+.ar { display: grid; gap: 4px; }
 .ar-head { font-size: 13px; }
-.ar-row { display: grid; grid-template-columns: 28px 1fr; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.ar-cols, .ar-row > summary { display: grid; grid-template-columns: 22px minmax(110px, 1.4fr) minmax(96px, 1.1fr) repeat(4, minmax(58px, .8fr)); gap: 8px; align-items: center; }
+.ar-cols { font-size: 11.5px; color: var(--faint); padding: 4px 12px 0; }
+.ar-cols span:nth-child(n+4) { text-align: right; }
+.ar-row { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.ar-row > summary { list-style: none; cursor: pointer; padding: 8px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ar-row > summary::-webkit-details-marker { display: none; }
+.ar-row > summary:hover { background: var(--code-bg); border-radius: 10px; }
+.ar-row.idle > summary { color: var(--muted); }
 .ar-row.ctrl { border-style: dashed; background: var(--code-bg); }
-.ar-rank { font-weight: 600; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
-.ar-main { min-width: 0; display: grid; gap: 3px; }
+.ar-rank { font-weight: 600; color: var(--muted); text-align: center; }
+.ar-name { display: flex; gap: 6px; align-items: center; min-width: 0; white-space: nowrap; }
+.ar-name b { overflow: hidden; text-overflow: ellipsis; }
+.ar-trades { display: flex; gap: 6px; align-items: center; }
+.ar-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--code-bg); overflow: hidden; min-width: 30px; }
+.ar-bar i { display: block; height: 100%; background: var(--muted); border-radius: 3px; }
+.ar-bar i.full { background: var(--ok); }
+.ar-n { font-size: 11.5px; color: var(--muted); }
+.ar-c { text-align: right; }
+.ar-up { color: var(--ok); font-weight: 600; }
+.ar-down { color: #d1453b; font-weight: 600; }
+.ar-na { color: var(--faint); }
+.ar-main { min-width: 0; display: grid; gap: 3px; padding: 0 12px 10px 42px; }
+@media (max-width: 560px) {
+  .ar-cols, .ar-row > summary { grid-template-columns: 16px minmax(0, 1fr) 62px 54px 38px; gap: 6px; padding-left: 8px; padding-right: 8px; }
+  .ar-cols span:nth-child(n+6), .ar-row > summary > :nth-child(n+6), .ar-name .ar-pill:not(.live):not(.base) { display: none; }
+  .ar-main { padding-left: 12px; }
+}
 .ar-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .ar-pill { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--code-bg); color: var(--muted); }
 .ar-pill.live { background: var(--live-soft); color: var(--live); font-weight: 600; }
@@ -1466,23 +1489,33 @@ const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day
 const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_voice", "notes_council", "daily_digest", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 // 🏟️ AI 리그 표: 순위 · 실전/가상 · 대조군 대비 · 비중 · 상황별
-function arenaHtml(ar) {
+function arenaHtml(ar, mt = 20) {
   const pct = v => `${v >= 0 ? "+" : ""}${(+v).toFixed(2)}%`;
   const ctrl = ar.board.find(r => r.ctrl), rows = ar.board.filter(r => !r.ctrl), ch = ar.champion;
   const sits = r => Object.entries(r.sits || {}).sort((a, b) => b[1].n - a[1].n).slice(0, 4)
     .map(([k, v]) => `<span class="ar-sit${v.n >= 8 ? (v.avg > 0 ? " up" : " down") : ""}" title="${v.n >= 8 ? "표본 충분" : "표본 부족 (8건부터 판단에 씀)"}">${esc(k)} ${v.n}건 ${pct(v.avg)}</span>`).join("");
-  const row = (r, i) => `<div class="ar-row${r.ctrl ? " ctrl" : ""}">
-      <div class="ar-rank">${r.ctrl ? "🎲" : i + 1}</div>
-      <div class="ar-main">
-        <div class="ar-top"><b>${esc(r.name)}</b>
-          ${r.ctrl ? `<span class="ar-pill base">기준선</span>` : r.live ? `<span class="ar-pill live">💰 실전 ${r.live}등 · 비중 ${r.weight}%</span>` : `<span class="ar-pill">📘 가상 공부</span>`}
-          ${r.edge == null ? "" : `<span class="ar-edge ${r.edge > 0 ? "up" : "down"}">대조군 대비 ${r.edge > 0 ? "+" : ""}${(+r.edge).toFixed(2)}%p</span>`}</div>
-        <div class="ar-nums">${r.n}건 · 최근 평균 <b>${pct(r.wavg ?? r.avg ?? 0)}</b> · 승률 ${r.win}% · 보유 ${r.held}</div>
-        <div class="ar-sub">익절 ${r.tp}% · 손절 ${r.sl}% · 최대 ${r.hold}분 — ${esc(r.persona)}</div>
+  // 한 줄 = AI 하나 (누르면 성격·채점·구간 펼침) — 거래 0건은 숫자 대신 '—'
+  const sg = (v, unit = "%") => v == null ? `<span class="ar-na">—</span>` : `<span class="${v > 0 ? "ar-up" : v < 0 ? "ar-down" : ""}">${v > 0 ? "+" : ""}${(+v).toFixed(2)}${unit}</span>`;
+  const row = (r, i) => {
+    const has = r.n > 0, sk = (r.card || {}).skill;
+    const st = r.ctrl ? `<span class="ar-pill base">기준선</span>` : r.live ? `<span class="ar-pill live">💰 실전 ${r.live}등</span>`
+      : `<span class="ar-pill">${r.n >= mt ? "자격 심사" : "가상"}</span>`;
+    const bar = r.ctrl ? `${r.n}건` : `<span class="ar-bar" title="실전 자격까지 ${Math.max(0, mt - r.n)}건 남음"><i style="width:${Math.min(100, r.n / mt * 100)}%"${r.n >= mt ? ' class="full"' : ""}></i></span><span class="ar-n">${r.n}/${mt}</span>`;
+    return `<details class="ar-row${r.ctrl ? " ctrl" : ""}${has ? "" : " idle"}"><summary>
+      <span class="ar-rank">${r.ctrl ? "🎲" : i + 1}</span>
+      <span class="ar-name"><b>${esc(r.name)}</b>${st}</span>
+      <span class="ar-trades">${bar}</span>
+      <span class="ar-c" title="최근 거래일수록 크게 친 평균 수익">${has ? sg(r.wavg ?? r.avg) : sg(null)}</span>
+      <span class="ar-c">${has ? `${r.win}%` : sg(null)}</span>
+      <span class="ar-c" title="산 것 평균 − 안 산 것 평균 (판단을 잘하는지)">${sg(sk, "%p")}</span>
+      <span class="ar-c" title="무작위 대조군보다 얼마나 나은지">${r.ctrl ? "기준" : sg(has ? r.edge : null, "%p")}</span>
+    </summary><div class="ar-main">
+        <div class="ar-sub">익절 ${r.tp}% · 손절 ${r.sl}% · 최대 ${r.hold}분 · 보유 ${r.held} — ${esc(r.persona)}</div>
         ${cardHtml(r.card)}
         ${Object.keys(r.sits || {}).length ? `<div class="ar-sits">${sits(r)}</div>` : ""}
         ${(r.blocks || []).length ? `<div class="ar-sits">${r.blocks.map(k => `<span class="ar-sit down" title="이 구간에서 '산다' 결과가 계속 마이너스라 이 AI 에겐 안 물어봐요 (가끔은 물어봐서 다시 배움)">🚫 ${esc(k)}</span>`).join("")}</div>` : ""}
-      </div></div>`;
+      </div></details>`;
+  };
   const cardHtml = c => {   // 🧮 모든 판단 채점: 산 것 vs 안 산 것
     if (!c || (!c.yes_n && !c.no_n)) return "";
     const f = (n, a) => n ? `${n}건 ${pct(a)}` : "없음";
@@ -1493,6 +1526,7 @@ function arenaHtml(ar) {
   return (ch ? `<div class="ar-head">🏆 1등 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${pct(ch.avg)} · 승률 ${ch.win}%</div>` : "")
     + `<div class="ar-head muted">🧭 지금 상황: <b>${esc(ar.situation || "장 밖")}</b> · 🎲 대조군은 후보의 ${ar.ctrl_p ?? 35}% 를 무작위로 삼</div>`
     + `<div class="ar-head muted">🧮 채점 끝난 후보 ${ar.graded ?? 0}개 · 지켜보는 중 ${ar.probes ?? 0}개${sv.asks ? ` · 🚫 거름망으로 오늘 ${sv.asks}번 안 물어봄${sv.calls ? ` (AI 호출 ${sv.calls}번 아낌)` : ""}` : ""}</div>`
+    + `<div class="ar-cols"><span>#</span><span>AI</span><span title="실전 자격은 ${mt}건부터">거래 / 자격</span><span>최근 평균</span><span>승률</span><span>판단력</span><span>대조군 대비</span></div>`
     + rows.map(row).join("") + (ctrl ? row(ctrl) : "");
 }
 $("#notes-council").onclick = async () => {   // 📒 노트 정리 회의 지금
@@ -1577,7 +1611,7 @@ async function renderTrade(fillForm = true) {
   $("#trade-weekend").onclick = async () => { const r = await api("/api/autotrade/weekend", { market: tradeMk() }); alert(r.message); };
   $("#scorecard").textContent = (d.scorecard || {}).text || "아직 기록 없음";
   const ar = d.arena || {}, ch = ar.champion;
-  $("#arena").innerHTML = (ar.board || []).length ? arenaHtml(ar) : "<span class='muted'>장 열리면 시작해요</span>";
+  $("#arena").innerHTML = (ar.board || []).length ? arenaHtml(ar, +c.arena_min_trades || 20) : "<span class='muted'>장 열리면 시작해요</span>";
   $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
   if ($("#stopslip")) $("#stopslip").textContent = (d.stop_slip || {}).text || "🔻 손절 슬리피지: 아직 손절 기록 없음";
   $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 8건 뒤 나빠지면 그 변경만 되돌림)</span></div>` + d.rules.map(x =>
