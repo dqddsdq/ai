@@ -64,6 +64,8 @@ CTRL_P_DEFAULT = 0.35   # 참가자들이 '산다'고 한 비율을 아직 모�
 HALF_LIFE_DAYS = 14     # 기본: 14일 지난 거래는 절반 무게
 SIT_MIN = 8             # 상황별 판단에 쓸 최소 거래 수
 CTRL_MARGIN = 0.3       # 기본: 대조군보다 평균 +0.3%p 이상이어야 실력으로 인정
+CTRL_MIN_N = 20         # 대조군 끝난 거래(독립 표본)가 이만큼 미만이면 비교 기준이 불안정
+CTRL_SHORT_EXTRA = 0.5  # 그동안은 실전 자격에 대조군 대비 여유 폭을 이만큼(%p) 더 요구 (기준이 약해지진 않음)
 SESSIONS = ("프리장", "장 초반", "전반", "후반")
 MOODS = ("하락장", "보합", "상승장")
 
@@ -670,7 +672,15 @@ def _indep(ts: list) -> list:
     return [{**{k: v for k, v in x.items() if k != "_r"}, "ret": sum(x["_r"]) / len(x["_r"])} for x in g.values()]
 
 
-def _qualified(a: dict, min_n: int, ctrl_avg: float = 0.0, margin: float = CTRL_MARGIN, half_life: float = HALF_LIFE_DAYS) -> bool:
+def _ctrl_n(d: dict) -> int:
+    """대조군 독립 표본 수 (급등 후보 제외)"""
+    return len(_indep([t for t in d["ctrl"]["trades"] if not t.get("hot")])) if d.get("ctrl") else 0
+
+
+def _qualified(a: dict, min_n: int, ctrl_avg: float = 0.0, margin: float = CTRL_MARGIN, half_life: float = HALF_LIFE_DAYS,
+               ctrl_n: int | None = None) -> bool:
+    if ctrl_n is not None and ctrl_n < CTRL_MIN_N:   # 대조군 표본이 적으면 비교 기준이 불안정 → 여유 폭을 더 요구
+        margin += CTRL_SHORT_EXTRA
     ts = _indep([t for t in a["trades"] if not t.get("hot")])[-max(min_n, 30):]   # 🚀 30%↑ 급등 후보 가상 거래는 실전 자격에서 뺌 (실전은 그 구간을 안 삼)
     if len(ts) < min_n:
         return False
@@ -704,7 +714,8 @@ def recheck(c: dict, market: str) -> str:
         d = load(market)
         by = {a["id"]: a for a in d["alive"]}
         ca = _ctrl_avg(d, c)
-        drop = [i for i in d.get("live") or [] if i not in by or not _qualified(by[i], min_n, ca, margin, hl)]
+        cn = _ctrl_n(d)
+        drop = [i for i in d.get("live") or [] if i not in by or not _qualified(by[i], min_n, ca, margin, hl, cn)]
         d["live"] = [i for i in d.get("live") or [] if i not in drop]
         d["weights"] = _weights([by[i] for i in d["live"]], ca, hl)
         _save(market, d)
@@ -777,7 +788,8 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
         d = load(market, int(c.get("arena_size", 10)))
         ca = _ctrl_avg(d, c)
         alive = sorted(d["alive"], key=lambda a: -_edge(a, ca, hl))
-        q = [a for a in alive if _qualified(a, min_n, ca, margin, hl)][:n_live]
+        cn = _ctrl_n(d)
+        q = [a for a in alive if _qualified(a, min_n, ca, margin, hl, cn)][:n_live]
         old = set(d.get("live") or [])
         d["live"] = [a["id"] for a in q]
         d["weights"] = _weights(q, ca, hl)
@@ -796,7 +808,8 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
         msg.append("💰 실전 자격: " + ", ".join(f"{i + 1}등 {a['name']} (비중 {d['weights'].get(a['id'], 0) * 100:.0f}%)" for i, a in enumerate(q))
                    + (f" (새로: {', '.join(new)})" if new else ""))
     else:
-        msg.append(f"💰 실전 자격 아직 없음 (거래 {min_n}건↑ · 평균 플러스 · 앞뒤 절반 모두 플러스 · 🎲 대조군보다 +{margin:g}%p↑ 인 AI 가 나오면)")
+        msg.append(f"💰 실전 자격 아직 없음 (거래 {min_n}건↑ · 평균 플러스 · 앞뒤 절반 모두 플러스 · 🎲 대조군보다 +{margin:g}%p↑ 인 AI 가 나오면)"
+                   + (f" · 🎲 대조군 표본 {cn}/{CTRL_MIN_N}건이라 +{margin + CTRL_SHORT_EXTRA:g}%p↑ 요구" if cn < CTRL_MIN_N else ""))
     if gone:
         msg.append("⬇️ 가상으로: " + ", ".join(gone))
     if add_lesson and best:

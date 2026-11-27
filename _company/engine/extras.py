@@ -585,6 +585,7 @@ def promote_edge(n_variants: int) -> float:
 RULE_LOG = COMPANY_DIR / "_cache" / "rule_log.json"
 RULE_EXEMPT = {"mode", "lane_swing_mode", "lane_surge_mode", "lane_share_surge", "sim_slip_pct", "usd_krw"}   # 안전·배분·체결 보정은 제한 없음
 RULE_WINDOW_SEC = 180   # 같은 자동 조정 한 번에 여러 값을 바꾸는 건 한 번으로 침
+RULE_WAIT_MAX_DAYS = 14   # 앞 변경 효과 확인(20건)을 기다리는 최대 일수 (거래가 너무 적어 영영 막히지 않게)
 
 
 def _rlog() -> dict:
@@ -603,6 +604,15 @@ def rule_gate(keys) -> tuple[bool, str]:
     today = [x for x in _rlog()["items"] if x.get("day") == day and not x.get("revert")]
     if today and time.time() - float(today[0].get("ts", 0)) > RULE_WINDOW_SEC:
         return False, "오늘 이미 규칙을 한 번 바꿨어요 (하루 1번 — 뭐 때문에 성적이 바뀌었는지 알 수 있게) → 내일 다시"
+    # 앞 변경이 아직 효과 확인 중(바뀐 뒤 20건 미달)이면 대기 — 변경이 겹치면 어느 변경 성적인지 모름
+    now = time.time()
+    for x in _rlog()["items"]:
+        if x.get("checked") or x.get("revert") or str(x.get("result", "")).startswith("판단 보류"):
+            continue
+        age = now - float(x.get("ts", 0))
+        if RULE_WINDOW_SEC < age < RULE_WAIT_MAX_DAYS * 86400:   # 같은 한 번의 조정은 허용 · 너무 오래 걸리면 대기 풀림
+            return False, (f"앞 규칙 변경({x.get('t', '')[:16]})이 아직 효과 확인 중이에요 ({x.get('result') or f'바뀐 뒤 0/{RULE_MIN_AFTER}건'})"
+                           f" → {RULE_MIN_AFTER}건 쌓인 뒤 다시")
     return True, ""
 
 
