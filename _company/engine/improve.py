@@ -278,6 +278,7 @@ def run(job_id: str, on_text=None, on_activity=None, model: str | None = None) -
             proc.kill()
     err_file.seek(0)
     err = err_file.read()[-400:]
+    err_file.close()   # 윈도우: 안 닫으면 개선할 때마다 임시 파일 핸들이 남음
     if proc.returncode or is_error:
         _update(job_id, status="failed", summary=(final or err or "개발 AI 오류")[:1000])
         raise pv.ProviderError(f"개발 AI 오류: {(final or err)[:300]}")

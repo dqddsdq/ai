@@ -57,8 +57,26 @@ def _font(size: int):
         return ImageFont.load_default()
 
 
+_cc: dict = {}
+_CC_TTL = {"1m": 20, "1d": 600}   # 같은 바퀴·연달아 부르는 확인들(추격·반등·그림자·리그)이 같은 봉을 다시 받지 않게
+
+
 def candles(sym: str, interval: str = "1d", count: int = 120) -> list[dict]:
-    """오래된 것 → 최신. 1분봉은 200개씩 나눠 받음."""
+    """오래된 것 → 최신. 1분봉은 200개씩 나눠 받음. 짧게 보관 (1분봉 20초 · 일봉 10분) — 결과는 복사본"""
+    import time as _t
+    key = (sym, interval, count)
+    hit = _cc.get(key)
+    ttl = _CC_TTL.get(interval, 20)
+    if hit and _t.time() - hit[0] < ttl:
+        return [dict(x) for x in hit[1]]
+    res = _candles(sym, interval, count)
+    _cc[key] = (_t.time(), res)
+    if len(_cc) > 600:
+        _cc.clear()
+    return [dict(x) for x in res]
+
+
+def _candles(sym: str, interval: str, count: int) -> list[dict]:
     out, before = [], None
     while len(out) < count:
         r = toss._get("/api/v1/candles", symbol=toss.symbol(sym), interval=interval, count=min(200, count - len(out)), before=before) or {}

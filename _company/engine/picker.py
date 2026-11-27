@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import time
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 
@@ -147,6 +148,37 @@ def universe(market: str, log=print) -> dict[str, dict]:
 
 # ── 급등주 ──
 PROGRESS = {"done": 0, "total": 0, "what": ""}   # 화면에 보여줄 준비 진행률
+
+
+_c1m_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _c1m(sym: str) -> dict:
+    """초반 돌파 확인용 1분봉 70개 — 20초 보관 (1분봉이라 바퀴마다 다시 받을 필요 없음)"""
+    hit = _c1m_cache.get(sym)
+    if hit and time.time() - hit[0] < 20:
+        return hit[1]
+    r = toss._get("/api/v1/candles", symbol=sym, interval="1m", count=70) or {}
+    _c1m_cache[sym] = (time.time(), r)
+    if len(_c1m_cache) > 500:
+        _c1m_cache.clear()
+    return r
+
+
+_warn_cache: dict[str, tuple[float, object]] = {}
+WARN_TTL = 600   # 투자 경고 지정은 하루 중 거의 안 바뀜 → 10분 보관 (바퀴마다 같은 종목 다시 조회하지 않게)
+
+
+def warned(sym: str):
+    """토스 투자 경고(관리·투자주의 등) 여부 — 10분 보관 · 조회 실패는 보관 안 함(TossError 그대로)"""
+    hit = _warn_cache.get(sym)
+    if hit and time.time() - hit[0] < WARN_TTL:
+        return hit[1]
+    r = toss._get(f"/api/v1/stocks/{sym}/warnings")
+    _warn_cache[sym] = (time.time(), r)
+    if len(_warn_cache) > 3000:
+        _warn_cache.clear()
+    return r
 
 
 def _base_file(market: str):
@@ -317,7 +349,7 @@ def surge_scan(cfg: dict, log=print, exclude: set[str] | None = None) -> dict:
         if len(out) >= cfg.get("pick_count", 3):
             break
         try:
-            if toss._get(f"/api/v1/stocks/{c['symbol']}/warnings"):
+            if warned(c['symbol']):
                 continue
         except toss.TossError:
             pass
@@ -531,7 +563,7 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
         if len(picks) >= cfg.get("pick_count", 3) * 2:
             break
         try:
-            if toss._get(f"/api/v1/stocks/{c['symbol']}/warnings"):
+            if warned(c['symbol']):
                 continue
         except toss.TossError:
             pass
@@ -542,7 +574,7 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
         if len(pbs) >= PB_MAX:
             break
         try:
-            if toss._get(f"/api/v1/stocks/{x['symbol']}/warnings"):
+            if warned(x['symbol']):
                 continue
         except toss.TossError:
             pass
@@ -629,7 +661,7 @@ def early_breakout_scan(cfg: dict, log=print, exclude: set[str] | None = None) -
     def check(sym: str):
         try:
             # 1분봉 최근 70개(약 70분) 받기
-            r = toss._get("/api/v1/candles", symbol=sym, interval="1m", count=70) or {}
+            r = _c1m(sym)
             candles_1m = sorted(r.get("candles") or [], key=lambda c: c["timestamp"])
             if len(candles_1m) < 60:
                 return None
@@ -704,7 +736,7 @@ def early_breakout_scan(cfg: dict, log=print, exclude: set[str] | None = None) -
         if len(picks) >= cfg.get("pick_count", 3):
             break
         try:
-            if toss._get(f"/api/v1/stocks/{c['symbol']}/warnings"):
+            if warned(c['symbol']):
                 continue
         except toss.TossError:
             pass

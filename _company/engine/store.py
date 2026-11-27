@@ -138,7 +138,14 @@ def save(path: Path, data) -> None:
             if seq < e.get("written", 0):   # 더 새 내용이 이미 써졌음
                 return
             try:
-                write_text(path, json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+                txt = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+                h = hash(txt)
+                if h == e.get("h") and not e.get("dirty") and path.exists():   # ⚡ 내용이 그대로면 디스크에 다시 안 씀
+                    with _lock:
+                        e["written"] = seq
+                    return
+                write_text(path, txt)
+                e["h"] = h
                 mt = path.stat().st_mtime_ns
             except OSError as err:
                 with _lock:

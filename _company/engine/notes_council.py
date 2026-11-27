@@ -126,7 +126,7 @@ def run(c: dict, market: str, ai_fn=None, log=print) -> dict:
     ev = evidence(market)
     prev = tl.core(market).get("items") or []
     base = (f"시장: {'미장' if market == 'US' else '국장'}\n[지금까지 쌓인 교훈 원본]\n{lesson_block}\n\n[거래 기록 요약 — 근거는 여기 숫자만]\n{ev}\n"
-            + (f"\n[지난번 합의한 핵심 노트]\n" + "\n".join(f"- {x['text']}" for x in prev) + "\n" if prev else ""))
+            + ("\n[지난번 합의한 핵심 노트]\n" + "\n".join(f"- {x['text']}" for x in prev) + "\n" if prev else ""))
     turns: list[dict] = []
 
     def say(role: str, text: str, data=None):
