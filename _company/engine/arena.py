@@ -93,6 +93,14 @@ def _ret(buy: float, sell: float, m: str) -> float:
     return ((sell * (1 - SLIP / 100)) / (buy * (1 + SLIP / 100)) - 1) * 100 - FEE.get(m, 0.2)
 
 
+def _indep(ts: list) -> list:
+    """독립 표본: 같은 종목·같은 날 여러 번은 1건(평균)으로 — 다시 판단해서 생긴 중복이 성적을 부풀리지 않게"""
+    g: dict = {}
+    for t in ts:
+        g.setdefault((t.get("sym"), t.get("day")), []).append(t["ret"])
+    return [{"sym": k[0], "day": k[1], "ret": sum(v) / len(v)} for k, v in g.items()]
+
+
 def _avg(ts: list) -> float:
     return st.mean(t["ret"] for t in ts) if ts else 0.0
 
@@ -278,8 +286,8 @@ def _qualified(a: dict, min_n: int) -> bool:
     """💰 실전 자격 (질 관리): 산 거래 min_n 건↑ ·
     ① 앞 70% · 뒤 30%(처음 보는 기간) 모두 평균 플러스 ② 제일 크게 번 종목 하나를 빼도 플러스 (대박 하나로 1등 방지)
     ③ '안 산 판단' 채점까지 합친 가중 점수도 플러스"""
-    ts = a["trades"][-max(min_n, 50):]
-    if len(a["trades"]) < min_n or not ts:
+    ts = _indep(a["trades"])[-max(min_n, 50):]
+    if len(ts) < min_n:
         return False
     k = max(1, int(len(ts) * 0.7))
     if not (_avg(ts[:k]) > 0 and _avg(ts[k:]) > 0):
@@ -311,11 +319,12 @@ def recheck(c: dict, market: str) -> str:
 # ── 성적 ──
 def score(a: dict, n: int = 50) -> dict:
     """성적: 산 거래(최근 n건) 평균·승률 + '안 산 판단' 정확도 + 가중 점수 q (산 거래 1.0 · 안 산 판단 0.3)"""
-    ts, sk = a["trades"][-n:], (a.get("skips") or [])[-n * 2:]
+    ind = _indep(a["trades"])
+    ts, sk = ind[-n:], _indep(a.get("skips") or [])[-n * 2:]
     wsum = W_BUY * len(ts) + W_SKIP * len(sk)
     q = (W_BUY * sum(t["ret"] for t in ts) - W_SKIP * sum(t["ret"] for t in sk)) / wsum if wsum else 0.0
-    return {"n": len(a["trades"]), "avg": round(_avg(ts), 2), "win": round(sum(t["ret"] > 0 for t in ts) / len(ts) * 100) if ts else 0,
-            "skips": len(a.get("skips") or []), "skip_ok": round(sum(t["ret"] <= 0 for t in sk) / len(sk) * 100) if sk else 0, "q": round(q, 3)}
+    return {"n": len(ind), "raw": len(a["trades"]), "avg": round(_avg(ts), 2), "win": round(sum(t["ret"] > 0 for t in ts) / len(ts) * 100) if ts else 0,
+            "skips": len(_indep(a.get("skips") or [])), "skip_ok": round(sum(t["ret"] <= 0 for t in sk) / len(sk) * 100) if sk else 0, "q": round(q, 3)}
 
 
 def board(market: str) -> list[dict]:
@@ -402,3 +411,42 @@ def ai_json(prompt: str) -> dict | None:
         return json.loads(m.group(0)) if m else None
     except json.JSONDecodeError:
         return None
+
+
+# ── 💬 채팅에서 생존전 AI 에게 직접 묻기 ──
+ASK_WORDS = ("생존전", "각 AI", "각AI", "AI들", "ai들", "AI 들", "참가자", "1등", "꼴찌")
+
+
+def ask_needed(text: str, market: str) -> list[str]:
+    """질문에 생존전·참가자 이름이 나오면 물어볼 참가자 이름들 (전체면 전원)"""
+    d = load(market)
+    names = [a["name"] for a in d["alive"]]
+    hit = [n for n in names if n in text]
+    if hit:
+        return hit
+    return names if any(w in text for w in ASK_WORDS) else []
+
+
+def ask(market: str, question: str, names: list[str], ai_fn=None) -> str:
+    """참가자들이 각자 자기 성격·성적·최근 거래를 근거로 한두 줄씩 답 (AI 1번). 채팅 문맥에 붙일 글"""
+    d = load(market)
+    live = d.get("live") or []
+    rows = []
+    for a in d["alive"]:
+        if a["name"] not in names:
+            continue
+        sc = score(a)
+        recent = ", ".join(f"{t['sym']} {t['ret']:+.1f}%({t.get('why', '')})" for t in a["trades"][-5:]) or "아직 없음"
+        rows.append(f"- {a['name']} {'💰실전 자격' if a['id'] in live else '📘가상 공부'} · 성격: {a['persona']} · 익절 {a['tp']}% 손절 {a['sl']}% 최대 {a['hold']}분 · "
+                    f"독립 거래 {sc['n']}건 평균 {sc['avg']:+.2f}% 승률 {sc['win']}% · 안 산 판단 {sc['skips']}건 정확도 {sc['skip_ok']}% · 최근: {recent}")
+    if not rows:
+        return ""
+    prompt = ("AI 생존전 참가자들에게 사장님이 물었어요. 각 참가자가 자기 성격과 아래 기록만 근거로 1~2줄로 답해요 "
+              "(기록에 없는 숫자는 지어내지 말고, 모르면 모른다고).\n"
+              f"질문: {question[:500]}\n참가자 기록:\n" + "\n".join(rows) + f"\n공유 노트: {_notes(market)[:600]}\n"
+              '형식: {"참가자 이름": "답", ...}')
+    r = (ai_fn or ai_json)(prompt)
+    head = f"[🏟️ 생존전 AI 들의 직접 답변 — {'미장' if market == 'US' else '국장'} · 사장님께 그대로 전해 주세요]"
+    if not isinstance(r, dict) or not r:
+        return head + "\n(답을 못 받았어요 — 기록만 전해요)\n" + "\n".join(rows)
+    return head + "\n" + "\n".join(f"- {k}: {str(v)[:300]}" for k, v in r.items()) + "\n[참고 기록]\n" + "\n".join(rows)

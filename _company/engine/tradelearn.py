@@ -36,6 +36,9 @@ def _load() -> dict:
     d = store.load(FILE)   # 메모리 보관 · 깨지면 백업에서 복구
     for k, v in (("trades", []), ("watch", {}), ("reviews", []), ("proposals", []), ("guard", {})):
         d.setdefault(k, v)
+    for t in d["trades"]:   # 예전에 '기타'로 분류된 청산 사유를 다시 분류
+        if t.get("closed") and t.get("exit_kind") == "기타" and t.get("exits"):
+            t["exit_kind"] = _kind(t["exits"][-1].get("reason", ""))
     return d
 
 
@@ -214,7 +217,9 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
 
 
 def _kind(reason: str) -> str:
-    for key, name in (("AI 판단", "AI 판단"), ("손절", "손절"), ("본전", "본전 정리"), ("익절", "익절"), ("고점 대비", "수익 지키기"), ("마감", "마감 정리")):
+    for key, name in (("AI 판단", "AI 판단"), ("안전장치", "AI 익절 안전장치"), ("시간 손절", "시간 손절"), ("손절", "손절"), ("본전", "본전 정리"),
+                      ("나눠", "나눠 익절"), ("익절", "익절"), ("고점", "수익 지키기"), ("마감", "마감 정리"), ("20일선", "20일선 이탈"),
+                      ("보유 일수", "최대 보유 일수"), ("공시", "공시 악재"), ("급락", "급락 대응"), ("정지", "정지 정리")):
         if key in reason:
             return name
     return "기타"
@@ -743,11 +748,44 @@ def hot_goal_check(market: str) -> str:
 LESSONS = COMPANY_DIR / "_cache" / "lessons.json"
 
 
+REPEAT_TO_RULE = 3   # 같은 교훈이 이만큼 반복되면 → 규칙 반영 개선 제안으로
+
+
+def _similar(a: str, b: str) -> bool:
+    import difflib
+    import re as _re
+    na, nb = (_re.sub(r"[\s\[\]()·,.'\"]+", "", x).lower() for x in (a, b))
+    return bool(na and nb) and (na == nb or difflib.SequenceMatcher(None, na, nb).ratio() >= 0.75)
+
+
 def add_lesson(market: str, text: str, by: str = "") -> None:
+    """공유 노트에 교훈 추가 · 비슷한 교훈이 이미 있으면 새로 안 쌓고 반복 횟수만 올림 →
+    REPEAT_TO_RULE 번 반복되면 '규칙에 반영' 개선 제안을 자동으로 올림 (한 번만)"""
+    text = text.strip()
     with _lock:
         d = store.load(LESSONS, lambda: {"items": []})
-        d["items"] = (d["items"] + [{"t": _now(), "market": market, "text": text[:300], "by": by}])[-200:]
-        store.save(LESSONS, d)
+        old = next((x for x in reversed(d["items"]) if x.get("market") == market and _similar(x.get("text", ""), text)), None)
+        if old:
+            old["count"] = int(old.get("count", 1)) + 1
+            old["last"] = _now()
+            propose = old["count"] >= REPEAT_TO_RULE and not old.get("proposed")
+            if propose:
+                old["proposed"] = _now()
+            store.save(LESSONS, d)
+        else:
+            d["items"] = (d["items"] + [{"t": _now(), "market": market, "text": text[:300], "by": by, "count": 1}])[-200:]
+            store.save(LESSONS, d)
+            propose = False
+    if old:
+        if propose:
+            try:
+                from . import improve
+                improve.create(f"반복되는 교훈을 매매 규칙(코드나 설정)에 반영: {old['text'][:200]}",
+                               f"공유 노트에 같은 교훈이 {old['count']}번 반복됐는데 규칙은 그대로예요 ({'미장' if market == 'US' else '국장'} · {by or old.get('by', '')}). "
+                               "근거 숫자를 학습 기록에서 확인하고, 맞으면 규칙에 반영 · 틀리면 교훈을 고쳐 주세요", team="자동매매 팀")
+            except Exception:
+                pass
+        return
     try:   # 자동매매 팀 기억에도 한 줄 (채팅 AI 가 항상 보게)
         from .agents import Agent
         Agent("trader").remember(f"📒 교훈({'미장' if market == 'US' else '국장'}): {text[:200]}")
@@ -758,11 +796,12 @@ def add_lesson(market: str, text: str, by: str = "") -> None:
 def lessons(market: str | None = None, n: int = 10) -> list[dict]:
     with _lock:
         items = store.load(LESSONS, lambda: {"items": []}).get("items", [])
+    items = sorted(items, key=lambda x: x.get("last") or x.get("t", ""))   # 반복된 교훈은 최근 것으로
     return [x for x in items if not market or x.get("market") == market][-n:][::-1]
 
 
 def lessons_text(market: str | None, n: int = 6) -> str:
-    return " / ".join(x["text"] for x in lessons(market, n)[::-1])
+    return " / ".join(x["text"] + (f" ({x['count']}번 반복)" if int(x.get("count", 1)) > 1 else "") for x in lessons(market, n)[::-1])
 
 
 def last_review_text(mode: str, market: str | None = None) -> str:

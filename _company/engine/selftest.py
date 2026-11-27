@@ -469,7 +469,7 @@ def AI_생존전_가상_공부와_상위_실전_자격():
             assert dd["live"] == [ids[0]], ("성적 플러스인 0번만 실전 자격", dd.get("live"), msg)   # 1번(마이너스)·2번(거래 없음)은 가상
             assert "성적 발표" in msg and arena.champion_text("US")
             assert arena.live_vote("US", "D", "S0") == ("yes", {"id": ids[0], "name": dd["alive"][0]["name"], "rank": 1})
-            dd["alive"][0]["trades"] += [{"sym": "Z", "day": "D", "ret": -9.0, "why": "t", "mins": 1, "t": ""} for _ in range(6)]
+            dd["alive"][0]["trades"] += [{"sym": f"Z{j}", "day": "D", "ret": -9.0, "why": "t", "mins": 1, "t": ""} for j in range(6)]
             arena._save("US", dd)
             assert arena.recheck(c, "US") and arena.load("US")["live"] == [], "성적 떨어지면 바로 자격 내림"
             sk = arena.load("US")["alive"][2]
@@ -482,6 +482,23 @@ def AI_생존전_가상_공부와_상위_실전_자격():
             assert arena._seen_ok(seen, "S9", _t.time()) and not arena._seen_ok(seen, "S8", _t.time()), "60분 뒤 다시 판단"
         finally:
             arena._file = orig
+
+
+@case
+def 반복_교훈은_합치고_3번이면_규칙_반영_제안():
+    from . import agents, improve
+    from . import tradelearn as tl
+    with tempfile.TemporaryDirectory() as d:
+        o_l, o_c, o_r = tl.LESSONS, improve.create, agents.Agent.remember
+        made = []
+        tl.LESSONS = Path(d) / "l.json"; improve.create = lambda r, w="", team="": made.append(r); agents.Agent.remember = lambda self, n: None
+        try:
+            for t in ("거래량 10배↑ 종목은 승률 낮음", "거래량 10배 이상 종목은 승률 낮음.", "[거래량 10배↑] 종목은 승률 낮음", "다른 교훈"):
+                tl.add_lesson("US", t, "시험")
+            assert len(tl.lessons("US", 10)) == 2 and len(made) == 1, (tl.lessons("US", 10), made)
+            assert tl._kind("스윙 매도: 20일선 이탈") == "20일선 이탈" and tl._kind("⏱ 시간 손절") == "시간 손절"
+        finally:
+            tl.LESSONS, improve.create, agents.Agent.remember = o_l, o_c, o_r
 
 
 @case

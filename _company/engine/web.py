@@ -557,6 +557,17 @@ class Handler(BaseHTTPRequestHandler):
             extra += "\n\n" + market
             images = images + [str(UPLOAD_DIR / c["id"]) for c in self._charts]   # AI 가 차트를 그림으로 직접 보게
         extra += "\n\n" + at.engine_context() + "\n\n" + at.TRADE_GUIDE   # 🤖 엔진 전체 상태 + [적용] 카드용 행동 태그
+        try:   # 💬 생존전 AI 에게 직접 묻기: 질문에 생존전·참가자 이름이 있으면 그 AI 들의 답을 받아 붙임
+            from . import arena
+            for m_ in at.markets():
+                who = arena.ask_needed(text, m_)
+                if who:
+                    self._live.update(status="생존전 AI 들에게 묻는 중")
+                    ans = arena.ask(m_, text, who)
+                    if ans:
+                        extra += "\n\n" + ans
+        except Exception:
+            pass
         if toss.enabled() and toss.ACCOUNT_WORDS.search(text):   # "내 잔고" 질문이면 계좌 조회 (조회 전용)
             try:
                 extra += "\n\n" + toss.portfolio_for_prompt()
