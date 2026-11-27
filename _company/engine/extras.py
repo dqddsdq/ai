@@ -76,6 +76,19 @@ def regime(market: str, c: dict) -> tuple[float, str]:
     return 1.0, ""
 
 
+def crash_day(market: str, c: dict) -> str:
+    """지수가 -regime_stop_pct(기본 3)% 이하면 이유, 아니면 '' — 스윙 신규 매수 막기·손절 확인 촘촘히"""
+    if not c.get("regime_on", True):
+        return ""
+    try:
+        ch = index_change(market)
+    except Exception:
+        return ""
+    if ch is None or ch > -float(c.get("regime_stop_pct", 3)):
+        return ""
+    return f"📉 {INDEX_NAME[market]} 오늘 {ch:+.1f}% — 시장이 크게 빠지는 날이라 스윙 새로 안 삼"
+
+
 # ── 2. 시간대별 성적 (계속 지는 시간대는 피하기) ──
 def tod_bucket(minutes) -> str:
     if minutes is None:
@@ -154,6 +167,72 @@ def spread_pct(sym: str) -> float | None:
             return None
         return round((ask / bid - 1) * 100, 3)
     return _cached(("spr", sym), 60, fn)
+
+
+_QTY_KEYS = ("quantity", "qty", "volume", "size", "amount", "q", "remainQuantity", "orderQuantity")
+_TOT_KEYS = {"bid": ("totalBidQuantity", "totalBidQty", "bidTotalQuantity", "totalBuyQuantity"),
+             "ask": ("totalAskQuantity", "totalAskQty", "askTotalQuantity", "totalSellQuantity")}
+_SIDE_KEYS = {"bid": ("bids", "bidOrders", "buy", "buyOrders"), "ask": ("asks", "askOrders", "sell", "sellOrders")}
+
+
+def _book_sum(ob: dict, side: str) -> tuple[float | None, int]:
+    """한쪽 잔량 합계 (총합 칸이 있으면 그 값, 없으면 단계별 잔량 합) · (합계, 단계 수)"""
+    for k in _TOT_KEYS[side]:
+        try:
+            if ob.get(k) is not None and float(ob[k]) > 0:
+                return float(ob[k]), 0
+        except (TypeError, ValueError):
+            pass
+    for k in _SIDE_KEYS[side]:
+        lv = ob.get(k)
+        if not isinstance(lv, list) or not lv:
+            continue
+        tot, n = 0.0, 0
+        for x in lv:
+            if not isinstance(x, dict):
+                continue
+            for qk in _QTY_KEYS:
+                try:
+                    if x.get(qk) is not None:
+                        tot += float(x[qk]); n += 1
+                        break
+                except (TypeError, ValueError):
+                    pass
+        if n:
+            return tot, n
+    return None, 0
+
+
+def book_depth(sym: str) -> dict | None:
+    """📚 매수·매도 잔량 합 (그림자 검증 전용 · 조회는 spread_pct 와 같은 toss 조회 함수 · 20초 보관).
+    형식을 모르거나 실패하면 None · 받을 수 있는지는 book_probe() 에 기록"""
+    def fn():
+        try:
+            ob = toss._get("/api/v1/orderbook", symbol=sym) or {}
+        except Exception as e:
+            _mem[("ob_probe",)] = (time.time(), {"ok": False, "t": _now(), "sym": sym, "why": f"조회 실패: {type(e).__name__}: {str(e)[:80]}"})
+            return None
+        if isinstance(ob, list) and ob and isinstance(ob[0], dict):   # 목록으로 오면 첫 항목
+            ob = ob[0]
+        if not isinstance(ob, dict):
+            _mem[("ob_probe",)] = (time.time(), {"ok": False, "t": _now(), "sym": sym, "why": f"모르는 형식 ({type(ob).__name__})"})
+            return None
+        bid, nb = _book_sum(ob, "bid")
+        ask, na = _book_sum(ob, "ask")
+        keys = sorted(ob)[:15]
+        if not bid or not ask:
+            _mem[("ob_probe",)] = (time.time(), {"ok": False, "t": _now(), "sym": sym, "why": "잔량 칸을 못 찾음", "keys": keys})
+            return None
+        r = {"bid": bid, "ask": ask, "ratio": round(bid / ask, 3), "levels": max(nb, na)}
+        _mem[("ob_probe",)] = (time.time(), {"ok": True, "t": _now(), "sym": sym, "why": "잔량 받음", "keys": keys, **r})
+        return r
+    return _cached(("ob", sym), 20, fn)
+
+
+def book_probe() -> dict:
+    """호가 잔량 받을 수 있는지 마지막 확인 결과 (아직 안 해 봤으면 ok=None)"""
+    hit = _mem.get(("ob_probe",))
+    return dict(hit[1]) if hit else {"ok": None, "why": "아직 확인 전 (장중 보유 종목이 생기면 확인)"}
 
 
 def slip_cfg(cfg: dict, sym: str | None = None, spread: float | None = None) -> dict:
@@ -367,6 +446,65 @@ def scorecard_text(market: str, sc: dict) -> str:
     return "\n".join(L)
 
 
+# ── 8-1. 구간별 엣지: 그림자·백테스트를 급등폭·시간대로 나눠 봄 (보고 전용 · 주문·설정 안 바꿈) ──
+CHG_BANDS = (("0~8%", -1e9, 8), ("8~20%", 8, 20), ("20~30%", 20, 30), ("30~50%", 30, 50), ("50%+", 50, 1e9))
+EDGE_MIN_N = 20   # 구간 표본 최소 건수
+
+
+def _edge_cells(rows: list) -> dict:
+    """rows: [(시각, 상승률|None, 분|None, 수익률)] → 구간별 건수·평균·앞/뒤 절반 평균"""
+    groups: dict = {}
+    for t, chg, mn, r in rows:
+        if chg is not None:
+            band = next((k for k, lo, hi in CHG_BANDS if lo <= float(chg) < hi), "")
+            groups.setdefault(f"급등 {band}", []).append((t, r))
+        if mn is not None:
+            groups.setdefault(f"시간 {tod_bucket(mn)}", []).append((t, r))
+    out = {}
+    for g, xs in groups.items():
+        rs = [r for _, r in sorted(xs, key=lambda x: str(x[0]))]   # 오래된 것부터 → 앞 절반 / 뒤 절반
+        h = len(rs) // 2
+        out[g] = {"n": len(rs), "avg": round(st.fmean(rs), 2),
+                  "front": round(st.fmean(rs[:h]), 2) if h else 0.0, "back": round(st.fmean(rs[h:]), 2)}
+    return out
+
+
+def edge_report(market: str) -> dict:
+    """출처별(그림자 '현재'·급등 검증 조합·백테스트 현재 규칙) 구간 성적 + 통과 구간 (20건↑·앞뒤 모두 플러스)"""
+    src: dict = {}
+    try:
+        from . import shadow
+        with shadow._lock:
+            d = shadow._load(market)
+            vs = [v for v in d["variants"] if shadow._is_base(v)] + list(d.get("hot") or [])
+            for v in vs:
+                rows = [(t.get("t", ""), (t.get("features") or {}).get("change"), t.get("minute"), shadow._ret(t))
+                        for t in v.get("trades", []) if t.get("final") and t.get("style") != "swing"]
+                src["그림자 '현재'" if shadow._is_base(v) else f"그림자 {v.get('name', '')}"] = _edge_cells(rows)
+    except Exception:
+        pass
+    try:
+        from . import backtest as bt
+        rows = [(x.get("t", ""), x.get("chg"), x.get("min"), float(x["ret"])) for x in (bt.load(market).get("base_samples") or [])]
+        src["백테스트(현재 규칙)"] = _edge_cells(rows)
+    except Exception:
+        pass
+    ok = [(s, g, x) for s, cells in src.items() for g, x in cells.items()
+          if x["n"] >= EDGE_MIN_N and x["front"] > 0 and x["back"] > 0]
+    return {"sources": src, "pass": ok, "checked": sum(len(c) for c in src.values()),
+            "enough": sum(1 for c in src.values() for x in c.values() if x["n"] >= EDGE_MIN_N)}
+
+
+def edge_text(market: str) -> str:
+    r = edge_report(market)
+    L = [f"🎯 구간별 엣지 (표본 {EDGE_MIN_N}건↑ · 앞·뒤 기간 모두 플러스만 · 참고용, 설정 자동 변경 없음)"]
+    for s, g, x in sorted(r["pass"], key=lambda z: -z[2]["avg"]):
+        L.append(f"  {s} · {g}: {x['n']}건 평균 {x['avg']:+.2f}% (앞 {x['front']:+.2f}% / 뒤 {x['back']:+.2f}%)")
+    if not r["pass"]:
+        L.append(f"  통과한 구간 없음 (살펴본 구간 {r['checked']}개 · {EDGE_MIN_N}건 넘은 구간 {r['enough']}개)")
+    return "\n".join(L)
+
+
 # ── 9. 장 마감 뒤: 내일 계획 · 주간 성적표 · 연말 세금 알림 ──
 def after_review(market: str, mode: str, fx: float, s: dict, c: dict) -> list[str]:
     from . import notify
@@ -385,6 +523,10 @@ def after_review(market: str, mode: str, fx: float, s: dict, c: dict) -> list[st
     if c.get("weekly_report", True) and local.weekday() == (5 if market == "US" else 4):   # 국장 금요일 · 미장 토요일 아침(한국)
         sc = scorecard(market, mode, fx, float((s.get("month") or {}).get("start") or 0), s.get("orders", []))
         m = "📊 주간 성적표\n" + scorecard_text(market, sc)
+        try:   # 🎯 구간별 엣지 (실패해도 성적표는 그대로)
+            m += "\n" + edge_text(market)
+        except Exception as e:
+            m += f"\n🎯 구간별 엣지 계산 실패: {type(e).__name__}"
         notify.send(m); msgs.append(m)
     if market == "US" and local.month == 12 and local.day >= 10 and mode == "live":
         key = f"tax_notice_{local.year}"
@@ -414,7 +556,7 @@ def improve_effect(log=print, restart=None) -> str:
     after = [t for t in ts if t["exits"][-1]["t"] >= t0]
     if len(after) < 10 or len(before) < 10:
         return ""
-    ba, aa = st.mean(t["pnl_pct"] for t in before), st.mean(t["pnl_pct"] for t in after)
+    ba, aa = st.fmean(t["pnl_pct"] for t in before), st.fmean(t["pnl_pct"] for t in after)
     ev = f"바뀌기 전 {len(before)}건 평균 {ba:+.2f}% → 바뀐 뒤 {len(after)}건 평균 {aa:+.2f}%"
     if aa < ba - 0.5 and aa < 0:
         r = im.rollback(job["id"])
@@ -501,7 +643,7 @@ def rule_check(log=print) -> str:
         if len(before) < 8:
             it["result"] = "비교할 이전 거래가 적어서 유지"
             continue
-        ba, aa = st.mean(t["pnl_pct"] for t in before), st.mean(t["pnl_pct"] for t in after)
+        ba, aa = st.fmean(t["pnl_pct"] for t in before), st.fmean(t["pnl_pct"] for t in after)
         ev = f"바뀌기 전 {len(before)}건 평균 {ba:+.2f}% → 바뀐 뒤 {len(after)}건 {aa:+.2f}%"
         if aa < ba - 0.5 and aa < 0:
             cur = at.config()

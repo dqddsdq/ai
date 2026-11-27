@@ -56,7 +56,7 @@ def load(path: Path, default=dict) -> dict:
         except FileNotFoundError:
             mt = None
         e = _cache.get(key)
-        if e and e["mt"] == mt and e["data"] is not None:
+        if e and e["data"] is not None and (e["mt"] == mt or e.get("writing")):   # 지금 쓰는 중이면 메모리 것이 최신
             return e["data"]
         data, fixed = None, False
         if mt is not None:
@@ -67,10 +67,10 @@ def load(path: Path, default=dict) -> dict:
                 fixed = data is not None
         if data is None:
             data = default()
-        _cache[key] = {"data": data, "mt": mt, "bak": e["bak"] if e else 0}
-        if fixed:   # 복구한 내용으로 파일도 바로 고쳐 둠
-            save(path, data)
-        return data
+        _cache[key] = {**(e or {}), "data": data, "mt": mt, "bak": e["bak"] if e else 0}
+    if fixed:   # 복구한 내용으로 파일도 바로 고쳐 둠 (잠금 밖에서 — save 는 파일별 잠금을 씀)
+        save(path, data)
+    return data
 
 
 _errors: list[str] = []
@@ -117,51 +117,72 @@ def write_text(path: Path, text: str) -> None:
     raise last
 
 
+_path_locks: dict[str, threading.Lock] = {}
+
+
 def save(path: Path, data) -> None:
     """임시 파일에 쓰고 바꿔치기 + 가끔 백업. 디스크에 못 써도 예외를 안 냄(메모리엔 반영, 다음 저장 때 다시 시도)
-    → 자동매매가 저장 실패로 멈추지 않게"""
+    → 자동매매가 저장 실패로 멈추지 않게
+    ⚡ 큰 파일(그림자 매매 30MB+)을 쓰는 동안에도 다른 기록 읽기·쓰기는 안 기다림:
+       전체 잠금은 메모리 반영할 때만 잠깐, 디스크 쓰기는 파일별 잠금으로 (같은 파일은 부른 순서대로, 늦게 온 옛 내용은 건너뜀)"""
     path = Path(path)
     key = str(path)
     with _lock:
         e = _cache.setdefault(key, {"data": data, "mt": None, "bak": 0})
         e["data"] = data
-        try:
-            write_text(path, json.dumps(data, ensure_ascii=False))
-        except OSError as err:
-            now = time.time()
-            if now - _err_at.get(key, 0) > 300:   # 같은 파일 알림은 5분에 한 번
-                _err_at[key] = now
-                _errors.append(f"{path.name} 저장 실패 ({type(err).__name__}) — 다른 프로그램(백신·OneDrive 등)이 잡고 있는 것 같아요. 다음 저장 때 다시 시도해요")
-            e["dirty"] = True   # 메모리에만 있음 → flush() 때 다시 씀
-            return
-        e["dirty"] = False
-        e["mt"] = path.stat().st_mtime_ns
-        now = time.time()
-        if now - e["bak"] >= BAK_EVERY:
-            e["bak"] = now
+        e["seq"] = seq = e.get("seq", 0) + 1
+        e["writing"] = e.get("writing", 0) + 1   # 쓰는 중엔 load() 가 디스크를 다시 읽지 않고 메모리 것을 줌
+        plock = _path_locks.setdefault(key, threading.Lock())
+    try:
+        with plock:
+            if seq < e.get("written", 0):   # 더 새 내용이 이미 써졌음
+                return
             try:
-                shutil.copyfile(path, path.with_suffix(path.suffix + ".bak"))
-                bdir = _backup_dir(path)
-                bdir.mkdir(exist_ok=True)
-                daily = bdir / f"{path.stem}_{datetime.now():%Y%m%d}{path.suffix}"
-                if not daily.exists():
-                    shutil.copyfile(path, daily)
-                    olds = sorted(bdir.glob(f"{path.stem}_*{path.suffix}"))
-                    for old in olds[:-14]:
-                        old.unlink(missing_ok=True)
-            except OSError:
-                pass
+                write_text(path, json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+                mt = path.stat().st_mtime_ns
+            except OSError as err:
+                with _lock:
+                    now = time.time()
+                    if now - _err_at.get(key, 0) > 300:   # 같은 파일 알림은 5분에 한 번
+                        _err_at[key] = now
+                        _errors.append(f"{path.name} 저장 실패 ({type(err).__name__}) — 다른 프로그램(백신·OneDrive 등)이 잡고 있는 것 같아요. 다음 저장 때 다시 시도해요")
+                    e["dirty"] = True   # 메모리에만 있음 → flush() 때 다시 씀
+                return
+            with _lock:
+                e["written"] = seq
+                e["dirty"] = False
+                e["mt"] = mt
+                now = time.time()
+                do_bak = now - e["bak"] >= BAK_EVERY
+                if do_bak:
+                    e["bak"] = now
+            if do_bak:   # 백업 복사도 전체 잠금 밖에서 (이 파일 쓰기만 잠깐 기다림)
+                try:
+                    shutil.copyfile(path, path.with_suffix(path.suffix + ".bak"))
+                    bdir = _backup_dir(path)
+                    bdir.mkdir(exist_ok=True)
+                    daily = bdir / f"{path.stem}_{datetime.now():%Y%m%d}{path.suffix}"
+                    if not daily.exists():
+                        shutil.copyfile(path, daily)
+                        olds = sorted(bdir.glob(f"{path.stem}_*{path.suffix}"))
+                        for old in olds[:-14]:
+                            old.unlink(missing_ok=True)
+                except OSError:
+                    pass
+    finally:
+        with _lock:
+            e["writing"] -= 1
 
 
 def flush() -> list[str]:
     """앱 다시 켜기 전: 저장 실패로 메모리에만 남은 기록을 디스크에 다시 씀. 그래도 못 쓴 파일 이름 반환"""
+    with _lock:   # 고를 때만 잠그고, 쓰기는 잠금 밖에서 (save 가 파일별 잠금을 씀 → 안에서 부르면 서로 기다리다 멈춤)
+        todo = [(key, e["data"]) for key, e in _cache.items() if e.get("dirty") and e.get("data") is not None]
     left = []
-    with _lock:
-        for key, e in list(_cache.items()):
-            if e.get("dirty") and e.get("data") is not None:
-                save(Path(key), e["data"])
-                if _cache[key].get("dirty"):
-                    left.append(Path(key).name)
+    for key, data in todo:
+        save(Path(key), data)
+        if _cache[key].get("dirty"):
+            left.append(Path(key).name)
     return left
 
 

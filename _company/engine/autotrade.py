@@ -110,13 +110,20 @@ DEFAULTS = {
     "mode_down_days": 3,           # 실전에서 이 날수 연속 손실이면 가상으로
     "mode_down_month_pct": 8.0,    # 또는 이번 달 이 % 이상 손실이면 가상으로
     "mode_up_trades": 10,          # 가상에서 이 건수 이상·승률 50%↑·평균 + 면 실전 복귀
-    "arena_on": True,              # 🏟️ AI 생존전: 성격 다른 AI 들이 가상으로만 매매 → 매주 꼴찌 탈락·1등 변형 투입
+    "arena_on": True,              # 🏟️ AI 리그: 성격 다른 AI 들이 가상으로만 매매 → 매주 꼴찌 탈락·1등 변형 투입
     "arena_size": 10, "arena_ai_per_day": 0, "arena_min_trades": 20,   #    참가자 수 · 하루 AI 판단 횟수 · 탈락 판정 최소 거래
     "arena_promote": True,         #    🏆 1등 전략을 2호 급등주 AI 판단에 참고로 붙임
     "arena_live": True,            #    💰 상위 arena_live_n 명(검증 통과)이 '산다'고 하면 실전 매수 (실전 모드일 때만 · 채팅으로 켜기 불가)
-    "arena_live_n": 2, "arena_live_pct": 30,   #    실전 자격 인원 · 실전 예산 중 생존전 몫(%)
+    "arena_live_n": 2, "arena_live_pct": 30,   #    실전 자격 인원 · 실전 예산 중 AI 리그 몫(%)
+    "arena_ctrl_margin": 0.3,      #    🎲 무작위 대조군보다 최근 평균이 이만큼(%p) 이상 나아야 실전 자격
+    "arena_half_life_days": 14,    #    ⏳ 성적 계산 때 이 일수가 지난 거래는 절반 무게 (최근 성적을 더 크게)
+    "arena_voice": True,           #    🗣️ 리그 AI 가 의견이 생기면 바로 채팅으로 (적용은 사장님이)
+    "arena_voice_every": 5,        #       지난번 뒤로 거래가 이만큼 더 쌓이면 물어봄 (3연속 손실이면 바로)
+    "arena_voice_per_day": 8,      #       하루 전체 최대 의견 수 (AI 한 명은 하루 1번)
+    "daily_digest": True,          # 📋 장 마감 뒤 제안 현황(대기·적용·바꾼 뒤 성적)을 텔레그램으로 하루 한 번
+    "notes_council": True,         # 📒 주말 공부 끝에 AI 셋이 회의해서 공유 노트 정리 (다수 동의한 것만 핵심 노트 · 원본 보관)
     "shadow_on": True,             # 🧪 그림자 가상 매매: 규칙 조합 여러 개를 실전과 동시에 가상으로
-    "shadow_count": 1000,          #   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
+    "shadow_count": 60,            #   1000개는 운 막는 문턱(promote_edge)이 너무 높아 교체가 0번이었음 ·   동시에 돌릴 일반 조합 수 (한 바퀴 시간 제한 안에서 돌아가며 처리)
     "auto_promote": True,          #   확실히 나은 조합을 실전 규칙으로 자동 교체 (매일 복기 뒤)
     "promote_min_trades": 15,      #   교체하려면 그 조합 거래가 최소 이만큼 (20 보다 작아도 20건 적용 · shadow.PROMOTE_N)
     "promote_margin_pct": 1.0,     #   (예전 기준·지금은 안 씀) 교체는 앞 70% 선정 → 뒤 30% 검증 방식
@@ -163,6 +170,9 @@ DEFAULTS = {
     "stop_resell_sec": 30,         #    매도 주문이 이 초 동안 안 팔리면 취소하고 다시 냄
     "surge_min_change_regular": 12,   # 📈 정규장 급등주는 상승률 이 % 이상만 (프리장은 급등 최소 상승률 그대로)
     "surge_buy_cutoff_min": 180,   # 🕒 정규장 시작 이 분 뒤부터는 급등주 새로 안 삼 (0 = 안 씀)
+    "open_weak_skip": True,        # 🌅 정규장 초반 + 지수 하락이면 급등주 안 삼
+    "open_weak_min": 30,           #    초반 기준(분) (0 = 안 씀)
+    "open_weak_idx_pct": 0.5,      #    지수 오늘 -이 % 이하일 때
     "news_on": True,               # 📰 사기 전에 공시 확인 (국장 DART · 미장 SEC) — 악재(증자·CB·감자·상장폐지 등)면 안 삼
     "news_unknown_ratio": 1.0,     #    공시가 하나도 없는 '이유 모르는 급등'이면 금액 × 이 값 (1 = 안 줄임 · 그림자 매매로 0.5·0.25 비교 후 자동 교체)
     "focus_max_pct": 50,           # 🎯 확신할 때만 몰아넣기: 조건 맞으면 한 종목에 예산의 최대 이 %까지 (0 = 안 씀, 늘 똑같이 나눔)
@@ -184,7 +194,7 @@ NUMS = {"shadow_count": (2, 1000), "promote_min_trades": (3, 200), "promote_marg
         "stop_loss_pct": (0.5, 50), "take_profit_pct": (0.5, 500), "trail_pct": (0.5, 50), "trail_wide_after_pct": (1, 200), "trail_wide_pct": (0.5, 50), "surge_min_change_pct": (1, 100),
         "surge_max_change_pct": (2, 500), "surge_volume_ratio": (1, 50), "pre_volume_ratio": (0.01, 5), "min_trading_value_krw": (0, 1e13), "us_min_price": (0.1, 100),
         "limit_slip_pct": (0, 3), "min_size_ratio": (0.05, 1), "min_win_prob": (0, 90), "partial_tp_pct": (0, 100), "partial_tp_ratio": (0.1, 0.9), "exit_check_sec": (5, 300), "rsi_max_buy": (30, 90), "swing_stop_pct": (1, 30), "swing_trail_pct": (1, 50), "swing_trail_vol_mult": (0.2, 2), "swing_max_days": (1, 120), "interval_min": (1, 120), "paper_cash_krw": (10000, 1e10), "usd_krw": (500, 3000), "fee_us_pct": (0, 2), "fee_kr_pct": (0, 2), "tax_kr_pct": (0, 2), "sim_slip_pct": (0, 2), "focus_max_pct": (0, 100), "focus_min_samples": (5, 500), "focus_min_ev_pct": (0, 20), "news_unknown_ratio": (0.1, 1), "live_proof_n": (3, 200), "live_quality_change": (0, 100), "live_quality_ratio": (0, 100), "time_stop_min": (0, 240), "time_stop_up_pct": (0, 10), "stop_slip_pct": (0.3, 5),
-        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "arena_size": (2, 12), "arena_ai_per_day": (0, 5000), "arena_min_trades": (5, 200), "arena_live_n": (0, 5), "arena_live_pct": (5, 100), "regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
+        "stop_resell_sec": (10, 300), "surge_min_change_regular": (0, 100), "surge_buy_cutoff_min": (0, 390), "open_weak_min": (0, 120), "open_weak_idx_pct": (0, 10),"arena_size": (2, 12), "arena_ai_per_day": (0, 5000), "arena_min_trades": (5, 200), "arena_live_n": (0, 5), "arena_live_pct": (5, 100), "arena_ctrl_margin": (0, 5), "arena_half_life_days": (3, 90), "arena_voice_every": (2, 100), "arena_voice_per_day": (0, 50),"regime_half_pct": (0.3, 10), "regime_stop_pct": (0.5, 20), "max_per_sector": (0, 100), "lane_share_surge": (0, 100), "lane_share_min": (0, 50), "lane_share_max": (50, 100), "lane_live_trades": (5, 200), "lane_live_days": (3, 60), "no_rebuy_swing_days": (0, 30), "explore_per_day": (0, 300), "ai_tp_guard_peak": (1, 50), "ai_tp_guard_floor": (0, 10), "ai_tp_min_trades": (3, 200), "ai_tp_margin_pct": (0, 20),
         "chase_near_high_pct": (0.1, 10), "chase_min_pullback_pct": (0, 5), "chase_run5_max_pct": (0.5, 20),
         "rebound_pullback_pct": (0.3, 10), "rebound_pullback_max_pct": (2, 30), "rebound_up_bars": (1, 3)}
 CHOICES = {"lane_swing_mode": ("live", "paper", "off"), "lane_surge_mode": ("live", "paper", "off"), "ai_take_profit": ("off", "test", "on"), "mode": ("off", "paper", "live"), "strategy": ("auto", "surge", "trend"), "budget_mode": ("all_cash", "fixed")}
@@ -324,10 +334,10 @@ def config() -> dict:
     if int(c.get("v", 1)) < 5:   # 손절 확인 10초 → 5초 (손절이 늦게 체결되던 문제)
         if c.get("exit_check_sec") in (10, 10.0, None):
             out["exit_check_sec"] = 5
-    if int(c.get("v", 1)) < 6:   # 🏟️ 생존전 참가자 5 → 10
+    if int(c.get("v", 1)) < 6:   # 🏟️ AI 리그 참가자 5 → 10
         if c.get("arena_size") in (5, None):
             out["arena_size"] = 10
-    if int(c.get("v", 1)) < 7:   # 🏟️ 가상 표본 제한 풀기 (생존전 판단 횟수 무제한)
+    if int(c.get("v", 1)) < 7:   # 🏟️ 가상 표본 제한 풀기 (AI 리그 판단 횟수 무제한)
         if c.get("arena_ai_per_day") in (40, 60, None):
             out["arena_ai_per_day"] = 0
     out["v"] = 7
@@ -478,8 +488,31 @@ def event(kind: str, text: str, **extra) -> None:
         notify.send(f"{flag} [{kind}] {text}")
 
 
-NOTIFY_KINDS = {"생존전", "교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
-                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교"}   # 🔔 텔레그램으로 보낼 기록 종류
+NOTIFY_KINDS = {"AI 리그", "노트 정리","교차 복기", "익절 비교", "공시 악재", "실전 주문", "체결", "주문 거절", "정지", "긴급 정지", "정지 해제", "규칙 교체", "자동 조정", "복기", "실데이터",
+                "휴장", "오류", "복구", "AI 판단", "백테스트", "확대 조건", "반등 비교", "검증 요약", "월 수익"}   # 🔔 텔레그램으로 보낼 기록 종류
+
+MONTH_ALERT_PCT = 20.0   # 🎉 이번 달 실현 수익률이 이걸 처음 넘으면 알림 (시장별 월 1회, 알림만)
+
+
+def _month_alert() -> None:
+    """이번 달 실현 수익률(시작 예산 대비) +20% 첫 돌파 알림 — 모드·설정은 안 바꿈"""
+    try:
+        m = cur_market(); key = datetime.now(KST).strftime("%Y-%m")
+        with _lock:
+            s = state(); mo = s.get("month") or {}
+            start = float(mo.get("start") or 0)
+            if mo.get("key") != key or start <= 0 or mo.get("alert20"):
+                return
+            realized = float(mo.get("realized", 0))
+            pct = realized / start * 100
+            if pct <= MONTH_ALERT_PCT:
+                return
+            mo["alert20"] = datetime.now(KST).strftime("%Y-%m-%d %H:%M"); _save(s)   # 이번 달 한 번만
+        st_ = tl.month_closed_stats(m, key)
+        event("월 수익", f"이번 달 실현 수익률 {pct:+.1f}% (시작 예산 {start:,.0f}원 대비 {realized:+,.0f}원) — +{MONTH_ALERT_PCT:g}% 첫 돌파 · "
+              f"끝난 거래 {st_['n']}건 · 승률 {st_['win_rate']}% ({st_['wins']}승) · 알림만, 모드는 그대로예요")
+    except Exception as e:
+        _log_fn(f"🤖 [오류] 월 수익 알림: {type(e).__name__}: {e}")
 
 
 def _mkt(sym: str) -> str:
@@ -559,6 +592,19 @@ def swing_feats(sym: str, price: float, fx: float, day: str | None = None) -> di
             "volat": round((sum(x * x for x in rets) / max(len(rets), 1)) ** 0.5 * math.sqrt(252) * 100, 1),
             "chg1d": round((price / pc[-1] - 1) * 100, 1) if pc[-1] else None,
             "vratio": round(today_vol / v20, 2) if today_vol and v20 else None}
+
+
+def vol_trend(sym: str) -> dict:
+    """진입 시점 거래량 추세 (기록용): 1분봉 최근 5분 평균 ÷ 그 전 10분 평균 → 증가/감소/보합"""
+    from . import chart
+    cs = chart.candles(sym, "1m", 16)[:-1]   # 마지막(진행 중) 봉은 뺌
+    if len(cs) < 15:
+        return {}
+    a, b = sum(x["v"] for x in cs[-5:]) / 5, sum(x["v"] for x in cs[-15:-5]) / 10
+    if not b:
+        return {}
+    r = a / b
+    return {"vtrend": "증가" if r >= 1.2 else "감소" if r <= 0.8 else "보합", "vtrend_r": round(r, 2)}
 
 
 def explore_value_ok(sym: str, price: float, fx: float, c: dict) -> tuple[bool, str]:
@@ -1002,22 +1048,38 @@ WHY_KEYS = (("rb_pullback", "고점 후 눌림 {:.2f}%"), ("rb_from_low", "바�
             ("rb_ma5_gap", "MA5 대비 {:+.2f}%"), ("rb_up_bars", "연속 상승 {:.0f}봉"),
             ("change", "오늘 {:+.1f}%"), ("ratio", "거래량 {:.1f}배"), ("vol_ratio", "거래량 {:.1f}배"), ("pre", "프리장 거래량 {:.2f}"),
             ("score", "점수 {:.2f}"), ("from_high", "고점 대비 {:+.2f}%"), ("range_pos", "범위 위치 {:.0f}%"),
-            ("pullback5", "5분 되돌림 {:.2f}%"), ("run5", "5분 상승 {:+.2f}%"))
+            ("pullback5", "5분 되돌림 {:.2f}%"), ("run5", "5분 상승 {:+.2f}%"), ("vtrend_r", "거래량 추세 {:.2f}배"))
 
 
 def why_buy_text(feat: dict, est: dict | None, price: float, reason: str, ai_why: str = "") -> str:
     """📝 매수 근거를 수치로 (학습·복기용 · 절대 공란 아님)"""
-    parts = []
+    def _num(*ks):
+        for k in ks:
+            v = feat.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return float(v)
+        return None
+    # 핵심 5개는 맨 앞에 고정 (없으면 '?'로 표시 · 300자 자르기에도 남게)
+    chg, vr, r5, fh = _num("change"), _num("ratio", "vol_ratio"), _num("run5"), _num("from_high")
+    ev = est.get("ev") if est else feat.get("ev")
+    core = [f"급등 {chg:+.1f}%" if chg is not None else "급등 ?",
+            f"거래량 {vr:.1f}배" if vr is not None else "거래량 ?",
+            f"5분 추세 {r5:+.2f}%" if r5 is not None else "5분 추세 ?",
+            f"고점 대비 {fh:+.2f}%" if fh is not None else "고점 대비 ?",
+            f"기대값 {float(ev):+.2f}%" if isinstance(ev, (int, float)) else "기대값 ?"]
+    parts = ["[" + " · ".join(core) + "]"]
     for k, fmt in WHY_KEYS:
+        if k in ("change", "ratio", "vol_ratio", "run5", "from_high"):
+            continue   # 위에 이미 넣음
         v = feat.get(k)
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             parts.append(fmt.format(v))
-    known = {k for k, _ in WHY_KEYS} | {"p", "ev"}
+    if est:
+        parts.append(f"추정 승률 {float(est.get('p') or 0) * 100:.0f}% ({est.get('n', 0)}건)")
+    known = {k for k, _ in WHY_KEYS} | {"p", "ev", "fx"}
     for k, v in feat.items():   # 스윙 조건 등 나머지 수치
         if k not in known and isinstance(v, (int, float)) and not isinstance(v, bool):
             parts.append(f"{k} {v:g}")
-    if est:
-        parts.append(f"추정 승률 {float(est.get('p') or 0) * 100:.0f}% · 기대 {float(est.get('ev') or 0):+.2f}% ({est.get('n', 0)}건)")
     parts.append(f"현재가 {price:g}")
     txt = " · ".join(parts) + f" | 규칙: {reason[:60]}"
     return (txt + (f" | AI: {ai_why[:80]}" if ai_why else ""))[:300]
@@ -1178,10 +1240,11 @@ def _sell_kind(reason: str) -> str:
     r = reason or ""
     for key, label in (("AI 판단", "🤖 AI 판단"), ("안전장치", "AI 익절 안전장치"), ("손절", "손절"), ("나눠 팔기", "나눠 익절"),
                        ("익절", "익절"), ("고점", "고점 대비 하락"), ("본전", "본전 정리"), ("마감", "마감 정리"),
-                       ("20일선", "20일선 이탈"), ("보유 일수", "최대 보유 일수"), ("공시", "공시 악재")):
+                       ("장 끝", "마감 정리"), ("20일선", "20일선 이탈"), ("일 보유", "시간 초과"), ("보유 일수", "시간 초과"),
+                       ("공시", "공시 악재")):
         if key in r:
             return label
-    return r.split(":")[0][:30] or "기타"
+    return r.split(":")[0][:30] or "사유 기록 없음"
 
 
 def _fill_text(rec: dict, delta: float, fill_px: float, bp: dict, fx: float, gain: float, today: float) -> str:
@@ -1214,7 +1277,7 @@ def _reconcile(fx: float) -> None:
         ex = r.get("execution") or {}
         filled = float(ex.get("filledQuantity") or 0)
         fill_px = float(ex.get("averageFilledPrice") or o["price"])
-        msg = ""
+        msg = stop_msg = ""
         with _lock:
             s = state()
             rec = next((x for x in s["orders"] if x.get("order_id") == o["order_id"]), None)
@@ -1244,6 +1307,10 @@ def _reconcile(fx: float) -> None:
                     s["month"]["realized"] = float(s["month"].get("realized", 0)) + gain
                     left = bp["qty"] - delta
                     tl.on_sell(rec["symbol"], delta, fill_px, rec.get("reason", ""), "live", left <= 1e-9, {**config(), "_fx_now": fx})
+                    try:   # 🧯 손절 체결가 기록 (오류 나도 체결 처리는 그대로)
+                        stop_msg = _stop_fill(s, rec.get("client_order_id", ""), delta, fill_px)
+                    except Exception:
+                        stop_msg = ""
                     if left > 1e-9:
                         s["bot_pos"][rec["symbol"]] = {"qty": left, "avg": bp["avg"]}
                         if rec.get("partial"):
@@ -1265,6 +1332,10 @@ def _reconcile(fx: float) -> None:
             _save(s)
         if delta > 0:
             event("체결", msg or f"{o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {delta:g}주 @ {fill_px:g}", symbol=o["symbol"])
+            if stop_msg:
+                event("손절 기록", stop_msg, symbol=o["symbol"])
+            if o["side"] != "BUY":
+                _month_alert()   # 🎉 이번 달 +20% 첫 돌파 알림
             if o["side"] != "BUY":   # 🚀 급등 전략 확대 조건 도달 보고 (보고만, 비중은 안 바꿈)
                 try:
                     gm = tl.hot_goal_check(_mkt(o["symbol"]))
@@ -1283,6 +1354,177 @@ def _rebound_report(sym: str) -> None:
             event("반등 비교", rm)
     except Exception as e:
         _log_fn(f"🤖 [오류] 반등 진입 집계: {type(e).__name__}: {e}")
+
+
+# ── 🧯 손절 기록: 기준가·발동 시각·체결가 · 1%p 넘게 벌어지면 원인 · 손절 뒤 가격 추적 (기록만, 매매엔 영향 없음) ──
+_last_seen: dict = {}   # 종목 → (직전 확인 가격, 시각(초), 장 날짜) · 메모리만
+STOP_SLIP_PP = 0.3   # 손절선보다 이 %p 넘게 깊게 체결되면 '슬리피지'로 따로 표시
+STOP_TRACK = ((30, "30분"), (120, "2시간"), (1440, "1일"), (4320, "3일"), (7200, "5일"))   # 손절 뒤 확인 시점(분)
+
+
+def _stop_open(s: dict, sym: str, held: dict, price: float, reason: str, style: str, minutes, prev, c: dict,
+               coid: str, fill: float | None, qty: float) -> None:
+    """손절 발동 기록 (같은 종목 미체결 재주문이면 처음 발동 기록에 이어 붙임)"""
+    log = s.setdefault("stop_log", [])
+    now = time.time()
+    old = next((r for r in reversed(log) if r.get("symbol") == sym and not r.get("fill_px") and now - float(r.get("ts", 0)) < 86400), None)
+    if old:
+        old.setdefault("ids", []).append(coid); old["retries"] = int(old.get("retries", 0)) + 1
+        rec = old
+    else:
+        m_ = re.search(r"기준 -(\d+(?:\.\d+)?)%", reason or "")
+        stop_pct = float(m_.group(1)) if m_ else float(c["swing_stop_pct"] if style == "swing" else c["stop_loss_pct"])
+        avg = float(held.get("avg") or 0)
+        if avg <= 0:
+            return
+        rec = {"symbol": sym, "style": style, "avg": avg, "stop_pct": stop_pct, "line": round(avg * (1 - stop_pct / 100), 4),
+               "t": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"), "ts": now, "day": s.get("day"), "minutes": minutes,
+               "trigger_px": float(price), "trigger_pnl": round((price / avg - 1) * 100, 2), "ids": [coid], "retries": 0,
+               "prev_px": prev[0] if prev else None, "prev_ago_sec": round(now - prev[1]) if prev else None,
+               "prev_same_day": bool(prev and prev[2] == s.get("day")), "track": {},
+               "time_stop": "시간 손절" in (reason or ""), "live": fill is None}   # 슬리피지 집계용 (시간 손절 제외 · 실전/가상)
+        log.append(rec)
+    s["stop_log"] = log[-100:]
+    if fill:
+        _stop_fill(s, coid, qty, float(fill))
+
+
+def _stop_cause(r: dict) -> str:
+    """기준과 체결가 차이의 원인 (갭 · 확인 지연 · 호가 공백)"""
+    out = []
+    trig_dev = r["trigger_pnl"] + r["stop_pct"]   # 발동 순간 이미 기준 아래로 간 정도 (%p)
+    slip = (r["fill_px"] / r["trigger_px"] - 1) * 100 if r.get("trigger_px") else 0.0
+    if trig_dev <= -0.5:
+        if not r.get("prev_same_day"):
+            out.append(f"갭(오늘 첫 확인에서 이미 기준보다 {trig_dev:+.1f}%p)")
+        elif r.get("prev_px") is not None and r["prev_px"] <= r["line"]:
+            out.append(f"확인 지연(직전 확인 {r.get('prev_ago_sec')}초 전에도 이미 기준 아래였는데 주문이 늦음)")
+        else:
+            out.append(f"확인 지연(직전 확인 {r.get('prev_ago_sec')}초 사이 급락, 발동 때 기준보다 {trig_dev:+.1f}%p)")
+    if int(r.get("retries", 0)) > 0:
+        out.append(f"확인 지연(미체결로 {r['retries']}번 다시 주문)")
+    if float(r.get("delay_sec") or 0) >= 30:   # 발동→체결까지 오래 걸림
+        out.append(f"체결 지연(발동 뒤 {r['delay_sec']:.0f}초 만에 체결)")
+    if slip <= -0.5:
+        out.append(f"호가 공백(발동가 대비 체결 {slip:+.1f}%)")
+    return " · ".join(out) or "작은 차이 누적"
+
+
+def _stop_fill(s: dict, coid: str, qty: float, fill_px: float) -> str:
+    """손절 체결가 반영 → 처음 체결일 때만 알림 문구 돌려줌"""
+    r = next((x for x in reversed(s.get("stop_log") or []) if coid in (x.get("ids") or [])), None)
+    if not r or qty <= 0:
+        return ""
+    first = not r.get("fill_px")
+    q0 = float(r.get("fill_qty", 0))
+    r["fill_px"] = round((float(r.get("fill_px") or 0) * q0 + fill_px * qty) / (q0 + qty), 4)   # 나눠 체결되면 평균
+    r["fill_qty"] = q0 + qty
+    r["fill_ts"] = r.get("fill_ts") or time.time()
+    r["fill_t"] = r.get("fill_t") or datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+    r["fill_pnl"] = round((r["fill_px"] / r["avg"] - 1) * 100, 2)
+    r["gap_pp"] = round(r["fill_pnl"] + r["stop_pct"], 2)   # 기준 대비 차이 (%p, 음수 = 기준보다 더 잃음)
+    # ⏱️ 지연·미끄러짐 나눠 기록: 발동 때 이미 밀린 몫(확인 지연·갭) + 발동가→체결가 몫(호가·체결 지연)
+    r["delay_sec"] = round(float(r["fill_ts"]) - float(r.get("ts") or r["fill_ts"]), 1)
+    r["trig_dev_pp"] = round(r["trigger_pnl"] + r["stop_pct"], 2)
+    r["fill_slip_pct"] = round((r["fill_px"] / r["trigger_px"] - 1) * 100, 2) if r.get("trigger_px") else 0.0
+    r["cause"] = _stop_cause(r) if r["gap_pp"] <= -1 else ""
+    # 🔻 손절 슬리피지: 체결이 손절선보다 깊으면 따로 표시 (기록만)
+    r["slip"] = (not r.get("time_stop")) and r["gap_pp"] <= -STOP_SLIP_PP
+    try:   # 🧯 거래 기록(tradelearn)에도 붙임 (오류 나도 체결 처리는 그대로)
+        tl.note_stop(r["symbol"], "live" if r.get("live", True) else "paper",
+                     {k: r.get(k) for k in ("stop_pct", "line", "t", "trigger_px", "trigger_pnl", "prev_ago_sec", "retries",
+                                            "fill_t", "fill_px", "fill_pnl", "gap_pp", "delay_sec", "trig_dev_pp",
+                                            "fill_slip_pct", "cause", "slip", "time_stop")})
+    except Exception:
+        pass
+    if not first:
+        return ""
+    r["low_px"] = r["high_px"] = r["fill_px"]
+    return (f"🧯 손절 기록 {r['symbol']}: 기준 -{r['stop_pct']:g}%(기준가 {r['line']:g}) · 발동 {r['t'][5:]} @ {r['trigger_px']:g}"
+            f"({r['trigger_pnl']:+.1f}%) · 체결 @ {r['fill_px']:g}({r['fill_pnl']:+.1f}%) · 기준 대비 {r['gap_pp']:+.1f}%p"
+            f"\n지연·미끄러짐: 발동까지 {r['trig_dev_pp']:+.1f}%p · 발동→체결 {r['delay_sec']:.0f}초 {r['fill_slip_pct']:+.1f}%"
+            + (" · 🔻 슬리피지" if r["slip"] else "")
+            + (f"\n원인: {r['cause']}" if r["cause"] else ""))
+
+
+def stop_slip_view(n: int = 20) -> dict:
+    """🔻 손절 슬리피지 모아 보기 (손절선보다 깊게 체결된 손절만 · 화면·채팅용)"""
+    rows = [r for r in (state().get("stop_log") or []) if r.get("fill_px") and not r.get("time_stop") and "gap_pp" in r]
+    if not rows:
+        return {"text": "", "rows": []}
+    sl = [r for r in rows if float(r["gap_pp"]) <= -STOP_SLIP_PP]   # 예전 기록도 같은 기준으로 다시 셈
+    if not sl:
+        return {"text": f"🔻 손절 슬리피지: 최근 손절 {len(rows)}건 모두 손절선 근처에서 체결", "rows": []}
+    avg = sum(float(r["gap_pp"]) for r in sl) / len(sl)
+    worst = min(sl, key=lambda r: float(r["gap_pp"]))
+    head = (f"🔻 손절 슬리피지: 손절 {len(rows)}건 중 {len(sl)}건이 손절선보다 깊게 체결 · 평균 {avg:+.2f}%p · "
+            f"최악 {worst['symbol']} {worst['gap_pp']:+.1f}%p")
+    out = [{"t": r.get("fill_t", "")[5:16], "symbol": r["symbol"], "live": r.get("live", True), "stop_pct": r["stop_pct"],
+            "fill_pnl": r["fill_pnl"], "gap_pp": r["gap_pp"], "cause": r.get("cause") or ""} for r in sl[-n:]][::-1]
+    lines = [head] + [f"- {x['t']} {x['symbol']}{'' if x['live'] else '(가상)'} 기준 -{x['stop_pct']:g}% → 체결 {x['fill_pnl']:+.1f}% "
+                      f"({x['gap_pp']:+.1f}%p)" + (f" · {x['cause']}" if x["cause"] else "") for x in out[:5]]
+    return {"text": "\n".join(lines), "rows": out, "n": len(sl), "total": len(rows), "avg_pp": round(avg, 2)}
+
+
+def _stop_track(quotes: dict, minutes) -> list[str]:
+    """손절 뒤 30분·2시간·1일·3일·5일 가격 변화 기록 (장중에만 갱신)"""
+    if minutes is None:
+        return []
+    with _lock:
+        s = state()
+        todo = [r for r in s.get("stop_log") or [] if r.get("fill_px") and not r.get("track_done")]
+    if not todo:
+        return []
+    need = [r["symbol"] for r in todo if r["symbol"] not in quotes]
+    px = {k: v["price"] for k, v in quotes.items()}
+    if need:
+        try:
+            px.update({k: v["price"] for k, v in toss.prices(list(dict.fromkeys(need))).items()})
+        except toss.TossError:
+            pass
+    done_msgs = []
+    with _lock:
+        s = state()
+        now = time.time()
+        for r in s.get("stop_log") or []:
+            p = px.get(r.get("symbol"))
+            if not r.get("fill_px") or r.get("track_done") or not p:
+                continue
+            r["high_px"] = max(float(r.get("high_px") or p), p); r["low_px"] = min(float(r.get("low_px") or p), p)
+            el = (now - float(r.get("fill_ts") or now)) / 60
+            tr = r.setdefault("track", {})
+            for mins_, label in STOP_TRACK:
+                if el >= mins_ and label not in tr:   # 장 밖 시간이면 다음 장중 첫 가격으로 기록
+                    tr[label] = {"px": p, "pct": round((p / r["fill_px"] - 1) * 100, 2)}
+            if len(tr) >= len(STOP_TRACK):
+                r["track_done"] = True
+                up = (r["high_px"] / r["fill_px"] - 1) * 100
+                last = tr["5일"]["pct"]
+                r["verdict"] = ("손절 뒤 반등 — 손절이 일렀을 수 있음" if last >= r["stop_pct"] / 2 or up >= r["stop_pct"]
+                                else "손절 뒤 추가 하락 — 손절 적정" if last <= -2 else "횡보 — 판단 보류")
+                done_msgs.append(f"🧯 손절 뒤 추적 {r['symbol']} (손절 {r['fill_t'][5:16]} @ {r['fill_px']:g}): "
+                                 + " · ".join(f"{k} {v['pct']:+.1f}%" for k, v in tr.items())
+                                 + f" · 최고 {up:+.1f}% · 최저 {(r['low_px'] / r['fill_px'] - 1) * 100:+.1f}% → {r['verdict']}")
+        _save(s)
+    for m_ in done_msgs:
+        event("손절 추적", m_)
+    return done_msgs
+
+
+def stop_log_text(n: int = 5) -> str:
+    """최근 손절 기록 요약 (채팅 AI·복기용)"""
+    rows = [r for r in (state().get("stop_log") or []) if r.get("fill_px")][-n:]
+    if not rows:
+        return ""
+    out = ["🧯 최근 손절 기록 (기준 → 체결, 원인, 손절 뒤 변화):"]
+    for r in rows:
+        tr = " · ".join(f"{k} {v['pct']:+.1f}%" for k, v in (r.get("track") or {}).items())
+        out.append(f"- {r['fill_t'][5:16]} {r['symbol']} 기준 -{r['stop_pct']:g}% → 체결 {r['fill_pnl']:+.1f}% ({r['gap_pp']:+.1f}%p)"
+                   + (f" · 발동까지 {r['trig_dev_pp']:+.1f}%p · 발동→체결 {r['delay_sec']:.0f}초 {r['fill_slip_pct']:+.1f}%"
+                      if "delay_sec" in r else "")   # 예전 기록엔 없음
+                   + (f" · 원인: {r['cause']}" if r.get("cause") else "") + (f" · 뒤 {tr}" if tr else "")
+                   + (f" · {r['verdict']}" if r.get("verdict") else ""))
+    return "\n".join(out)
 
 
 def _bot_order_ids() -> set[str]:
@@ -1402,8 +1644,8 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     budget_paper = invested_paper + paper_cash * fx
     lane_caps: dict[str, dict] = {}
     halted_lane = dict(s.get("halted_lane") or {})
-    # 🏟️ 생존전 상위 AI 실전 몫 (실전 장부 예산의 arena_live_pct%)
-    if live and set(s.get("arena_live_pos") or {}) - live_syms:   # 팔린 종목은 생존전 실전 목록에서 정리
+    # 🏟️ AI 리그 상위 AI 실전 몫 (실전 장부 예산의 arena_live_pct%)
+    if live and set(s.get("arena_live_pos") or {}) - live_syms:   # 팔린 종목은 AI 리그 실전 목록에서 정리
         with _lock:
             s_c = state(); s_c["arena_live_pos"] = {k: v for k, v in (s_c.get("arena_live_pos") or {}).items() if k in live_syms}; _save(s_c)
         s["arena_live_pos"] = s_c["arena_live_pos"]
@@ -1505,6 +1747,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
         cd["features"].update(style=cd["style"], mkt=market)
         cd["est"] = tl.estimate(cd["features"], c)
         cd["reason"] += f" · 추정 승률 {cd['est']['p'] * 100:.0f}%({cd['est']['n']}건) · 기대 {cd['est']['ev']:+.2f}%"
+    same: dict = {}   # 같은 '건수·기대값'으로 묶인 후보 → 묶음 기준을 기록에 남김
+    for sym, cd in cands.items():
+        same.setdefault((cd["style"], cd["est"]["n"], cd["est"]["ev"]), []).append(sym)
+    for (sty, n_, ev_), syms in same.items():
+        if len(syms) >= 2:
+            gs = sorted({cands[x]["est"].get("group", "?") for x in syms})
+            results.append(f"🧮 {len(syms)}종목이 같은 추정({n_}건 · 기대 {ev_:+.2f}%): " + ", ".join(syms[:6]) + (" 외" if len(syms) > 6 else "")
+                           + " — 묶음 기준: " + " / ".join(gs[:3]) + " → 종목 고유값이 아니라 같은 조건 구간의 지난 거래로 계산됨")
     picked = sorted(cands, key=lambda k: (cands[k]["est"]["ev"], cands[k]["score"]), reverse=True)
     if c["news_on"] and not exits_only and news.enabled(market):   # 📰 상위 후보 공시 확인 (20분 보관) → 실전·그림자·AI 판단 공통
         for k in [k for k in picked if k not in pos][:8]:
@@ -1530,10 +1780,15 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
 
     symbols = list(dict.fromkeys(held_syms + picked))
     if not symbols:
+        if not exits_only:   # 🧯 보유 종목이 없어도 손절 뒤 추적은 계속
+            try:
+                results += _stop_track(quotes, minutes)
+            except Exception as e:
+                results.append(f"🧯 손절 추적 오류: {type(e).__name__}: {e}")
         if c["shadow_on"] and not dry:   # 실전에 살 게 없어도 그림자 조합들의 매도는 계속
             try:
                 shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
-                            lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
+                            lambda x: toss.daily(x, 60)[0], s["day"], hot=hot, pullback=_pb_today(s, market))
             except Exception as e:
                 results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
         results += _arena_step(c, market, cands, quotes, minutes, s["day"], dry, exits_only, hot)
@@ -1570,6 +1825,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             results.append(f"{sym}: 시세 없음"); continue
         price = q["price"]
         held = pos.get(sym, {"qty": 0.0, "avg": 0.0})
+        prev_seen = _last_seen.get(sym)   # 🧯 직전 확인 가격 (손절 원인 판단용)
+        if held["qty"] > 0:
+            _last_seen[sym] = (price, time.time(), s["day"])
         with _lock:
             s3 = state()
             if held["qty"] > 0:
@@ -1648,18 +1906,20 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 results.append(f"{sym}: {LANES[style]} 는 쉬는 중이라 안 삼"); continue
             if halted_lane.get(style):
                 results.append(f"{sym}: ⛔ {LANES[style]} 오늘 정지 중 — {halted_lane[style][:50]}"); continue
-            arena_pick = None   # 🏟️ 생존전 실전 자격 AI 가 '산다'고 했으면 실전으로
+            arena_pick = None   # 🏟️ AI 리그 실전 자격 AI 가 '산다'고 했으면 실전으로
             if style == "surge" and live and c.get("arena_on") and c.get("arena_live") and not held["qty"]:
                 try:
-                    vs_, who_ = arena.live_vote(market, s["day"], sym)
+                    vs_, who_ = arena.live_vote(market, s["day"], sym, c)
                     if vs_ == "unseen":
                         vs_ = "pending" if arena.kick(c, market, sym, cands[sym], price, s["day"]) else "no"
                 except Exception:
                     vs_, who_ = "no", None
                 if vs_ == "pending":
-                    results.append(f"{sym}: 🏟️ 생존전 AI 들이 판단 중 (끝나면 바로 다시 확인)"); continue
+                    results.append(f"{sym}: 🏟️ 리그 AI 들이 판단 중 (끝나면 바로 다시 확인)"); continue
                 if vs_ == "yes":
                     arena_pick = who_
+                elif who_ and who_.get("skipped"):   # 🧭 이 상황에선 대조군보다 못했던 AI 라 실전으로 안 감
+                    _note_skip(sym, f"🧭 {who_['sit']} 에선 {', '.join(who_['skipped'])} 성적이 무작위 대조군보다 못해서 실전 안 감")
             buy_live = lane_live(c, style)   # 🔒 가상 AI 는 가상 장부로만
             est0 = (cands.get(sym) or {}).get("est") or {}
             if buy_live and c.get("live_needs_proof", True) and not (est0.get("n", 0) >= c["live_proof_n"] and est0.get("ev", 0) > 0):
@@ -1681,8 +1941,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     buy_live = False
                     proof_note = (f"🎯 강한 신호가 아니라 가상으로 (프리장 또는 +{c['live_quality_change']:g}%↑ · 정규장 거래량 {c['live_quality_ratio']:g}배↑ · 이유 있는 급등만 실전 — "
                                   f"지금 {float(f0.get('change') or 0):+.1f}% · {float(f0.get('ratio') or 0):.1f}배)")
-            if arena_pick:   # 💰 검증 통과한 생존전 상위 AI 판단 → 실전 (현금·봇 장부·손실 한도·추격 확인은 그대로)
-                buy_live, proof_note = True, f"🏟️ 생존전 {arena_pick['rank']}등 '{arena_pick['name']}' 판단 → 실전"
+            if arena_pick:   # 💰 검증 통과한 AI 리그 상위 AI 판단 → 실전 (현금·봇 장부·손실 한도·추격 확인은 그대로)
+                buy_live, proof_note = True, (f"🏟️ AI 리그 {arena_pick['rank']}등 '{arena_pick['name']}' 판단"
+                                              + (f"(+{', '.join(arena_pick['with'])})" if arena_pick.get('with') else "") + " → 실전")
             if style == "surge" and minutes is not None and minutes >= 0:
                 chg0 = float(((cands.get(sym) or {}).get("features") or {}).get("change") or 0)
                 if chg0 < float(c.get("surge_min_change_regular", 0) or 0):
@@ -1703,6 +1964,20 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if gate_mult <= 0:
                 _note_skip(sym, gate_why)
                 results.append(f"{sym}: {gate_why}"); continue
+            if style == "surge" and c.get("open_weak_skip", True) and minutes is not None and 0 <= minutes < float(c.get("open_weak_min", 30) or 0):
+                try:   # 🌅 장 초반 + 지수 하락이면 급등주 건너뜀 (거래량 폭발 진입 손실 방지)
+                    ich = extras.index_change(market)
+                except Exception:
+                    ich = None
+                if ich is not None and ich <= -float(c.get("open_weak_idx_pct", 0.5)):
+                    ow_why = f"🌅 정규장 {minutes}분째(초반 {c.get('open_weak_min', 30):g}분) · 지수 {ich:+.1f}% — 초반 약세장이라 급등주 안 삼"
+                    _note_skip(sym, ow_why)
+                    results.append(f"{sym}: {ow_why}"); continue
+            if style == "swing":   # 📉 지수 급락일엔 스윙도 새로 안 삼
+                crash_why = extras.crash_day(market, c)
+                if crash_why:
+                    _note_skip(sym, crash_why)
+                    results.append(f"{sym}: {crash_why}"); continue
             try:   # 재진입 금지 기록이 없거나 깨져도 오류 없이 넘어감
                 nr_all = state().get("no_rebuy")
                 nr = str((nr_all if isinstance(nr_all, dict) else {}).get(sym) or "")
@@ -1724,11 +1999,14 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     f_note = f"📉 직전 5분 하락 중 (5분 상승 {run5_f:+.2f}%) → 안 삼"
                     _note_buy_skip(sym, f_note)
                     results.append(f"{sym}: {f_note}"); continue
+                if run5_f is not None:
+                    chase_m = {"run5": run5_f}   # 📝 직전 5분 추세를 why_buy 에 (고점 필터 값이 있으면 그걸로 덮임)
             if style == "surge" and c.get("chase_filter", True):   # 🧗 고점 추격 필터 (진입 직후 역행 방지)
                 try:
-                    ok_c, chase_m, chase_note = chase_check(sym, price, minutes, c)
+                    ok_c, ch_m, chase_note = chase_check(sym, price, minutes, c)
                 except Exception as e:
-                    ok_c, chase_m, chase_note = True, {}, f"고점 확인 오류({type(e).__name__})"
+                    ok_c, ch_m, chase_note = True, {}, f"고점 확인 오류({type(e).__name__})"
+                chase_m = {**chase_m, **(ch_m or {})}   # 5분 추세 값 유지
                 if not ok_c:
                     _note_skip(sym, f"🧗 {chase_note}")
                     results.append(f"{sym}: 🧗 {chase_note} → 안 삼"); continue
@@ -1772,6 +2050,9 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                 size_note = " · ".join(x for x in (size_note, f"📰 급등 이유 모름 → 금액 {c['news_unknown_ratio'] * 100:.0f}%") if x)
             if proof_note:
                 size_note = " · ".join(x for x in (size_note, proof_note) if x)
+            if arena_pick and float(arena_pick.get("size", 1)) < 1:   # 💰 비중 낮은 리그 AI 만 찬성 → 금액 줄임
+                budget *= float(arena_pick["size"])
+                size_note = " · ".join(x for x in (size_note, f"🏟️ AI 리그 비중 {float(arena_pick['size']) * 100:.0f}% 만큼만") if x)
             if gate_mult < 1:
                 budget *= gate_mult
                 size_note = " · ".join(x for x in (size_note, gate_why) if x)
@@ -1808,7 +2089,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             if qty < 1:
                 results.append(f"{sym}: 살 돈이 부족해요 (가능 {budget:,.0f}원, 1주 {buy_px * f:,.0f}원)"); continue
             chart_id, why = "", ""
-            if c["ai_decide"] and not arena_pick:   # 🤖 AI 판단 (생존전 실전 AI 가 이미 판단했으면 건너뜀): 차트·조건·기대 수익률 보고 살지·얼마나 (따로 생각 → 손절 확인은 안 멈춤)
+            if c["ai_decide"] and not arena_pick:   # 🤖 AI 판단 (AI 리그 실전 AI 가 이미 판단했으면 건너뜀): 차트·조건·기대 수익률 보고 살지·얼마나 (따로 생각 → 손절 확인은 안 멈춤)
                 dec = _ai_async(("buy", market, sym), _ai_decide_buy, sym, cands[sym], price, c)
                 if dec == "PENDING":
                     results.append(f"{sym}: 🤖 AI 가 판단 중 (끝나면 바로 다시 확인)"); continue
@@ -1843,6 +2124,10 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                             feat[k_] = v_
                 except Exception as e:
                     results.append(f"{sym}: 📚 스윙 진입 조건 기록 실패 — {type(e).__name__}: {e}")
+            try:   # 📈 진입 시점 거래량 추세 (기록용 · 매수엔 영향 없음)
+                feat.update(vol_trend(sym))
+            except Exception as e:
+                results.append(f"{sym}: 📈 거래량 추세 기록 실패 — {type(e).__name__}: {e}")
             if c["ai_decide"] and why:
                 feat["ai_decide"] = "산다"
             for k_, v_ in chase_m.items():   # 🧗 고점 위치·되돌림 수치도 학습 기록에
@@ -1853,7 +2138,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
             try:   # 📝 매수 근거를 수치로 반드시 기록
                 feat["why_buy"] = why_buy_text(feat, est, price, reason, why)
             except Exception:
-                feat["why_buy"] = f"현재가 {price:g} | 규칙: {reason[:60]}"
+                feat["why_buy"] = f"현재가 {price:g} | 규칙: {reason[:60]}" + (f" | 기대값 {float(est['ev']):+.2f}%" if est and isinstance(est.get("ev"), (int, float)) else "")
             nnote = news.note(nw)
             if c["prob_sizing"] and est["ev"] < 0 and not (style == "surge" and not buy_live):   # 2호 가상 탐색은 1호 실전 한도를 안 깎음
                 with _lock:
@@ -1900,6 +2185,27 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     s_f = state(); s_f.setdefault("ai_hold_at", {}).pop(sym, None); _save(s_f)
                 event("매도 오류", f"{sym} 매도 실패 — {type(e).__name__}: {e} (다음 바퀴에 다시 판단)", symbol=sym)
                 results.append(f"{sym}: 매도 오류 — {type(e).__name__}: {e} (다음 바퀴에 다시 판단)"); continue
+            if not part and _sell_kind(reason) == "손절":   # 🧯 손절 발동 기록 (오류 나도 매도엔 영향 없음)
+                try:
+                    stop_msg = ""
+                    with _lock:
+                        s_s = state()
+                        o_ = next((o for o in reversed(s_s["orders"]) if o.get("symbol") == sym and o.get("side") == "SELL"), None)
+                        if o_ and o_.get("status") != "rejected":
+                            _stop_open(s_s, sym, held, price, reason, style, minutes, prev_seen, c, o_.get("client_order_id", ""),
+                                       o_.get("fill") if not sell_live else None, qty)
+                            if not sell_live:
+                                r_ = next((r for r in reversed(s_s.get("stop_log") or []) if o_.get("client_order_id") in (r.get("ids") or [])), None)
+                                if r_ and r_.get("fill_px"):
+                                    stop_msg = (f"🧯 손절 기록 {sym}(가상): 기준 -{r_['stop_pct']:g}% · 발동 @ {r_['trigger_px']:g}({r_['trigger_pnl']:+.1f}%) · "
+                                                f"체결 @ {r_['fill_px']:g}({r_['fill_pnl']:+.1f}%) · 기준 대비 {r_['gap_pp']:+.1f}%p"
+                                                + (" · 🔻 슬리피지" if r_.get("slip") else "")
+                                                + (f"\n원인: {r_['cause']}" if r_.get("cause") else ""))
+                            _save(s_s)
+                    if stop_msg:
+                        event("손절 기록", stop_msg, symbol=sym)
+                except Exception as e:
+                    results.append(f"{sym}: 🧯 손절 기록 오류 — {type(e).__name__}: {e}")
             try:   # 재진입 금지·익절 비교 기록 (오류 나도 매도엔 영향 없음)
                 if not part and c.get("no_rebuy_after_loss", True) and held.get("avg") and \
                         (price / held["avg"] - 1) * 100 < tl.rt_cost(c, market):   # 수수료 빼고 손해로 파는 거면 재진입 금지
@@ -1914,6 +2220,11 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
                     _ghost_open(sym, tp_by_rule[0], tp_by_rule[1], price, tp_by_rule[2], tp_by_rule[3])
             except Exception as e:
                 results.append(f"{sym}: 매도 후 기록 오류 — {type(e).__name__}: {e}")
+    if not exits_only:   # 🧯 손절 뒤 가격 추적 (기록만)
+        try:
+            results += _stop_track(quotes, minutes)
+        except Exception as e:
+            results.append(f"🧯 손절 추적 오류: {type(e).__name__}: {e}")
     if c["ai_take_profit"] == "test" and c["ai_decide"] and not dry:
         try:
             results += _ghost_step(c, market, minutes)
@@ -1922,7 +2233,7 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     if c["shadow_on"] and not dry:   # 🧪 같은 후보·시세로 규칙 조합들을 가상으로
         try:
             shadow.step(c, market, cands, quotes, minutes, fx, exits_only, signal_surge, signal_swing, market_open,
-                        lambda x: toss.daily(x, 60)[0], s["day"], hot=hot)
+                        lambda x: toss.daily(x, 60)[0], s["day"], hot=hot, pullback=_pb_today(s, market))
         except Exception as e:
             results.append(f"🧪 그림자 매매 오류: {type(e).__name__}: {e}")
     results += _arena_step(c, market, cands, quotes, minutes, s["day"], dry, exits_only, hot)
@@ -1931,6 +2242,12 @@ def run_once(force: bool = False, exits_only: bool = False) -> dict:
     except Exception:
         pass
     return {"ok": True, "mode": mode, "results": results}
+
+
+def _pb_today(s: dict, market: str) -> list:
+    """🧪 오늘 스윙 검색이 같이 고른 눌림 반등 후보 (그림자 검증 전용 · 실전은 안 삼)"""
+    sw = s.get("swing") or {}
+    return (sw.get("pullback") or []) if sw.get("day") == picker.session_date(market) and sw.get("market", market) == market else []
 
 
 def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: bool, fx: float, partial: bool = False,
@@ -2004,6 +2321,7 @@ def _execute(sym: str, side: str, qty: int, price: float, reason: str, live: boo
     event("실전 주문" if live else "가상 주문", f"{label} — {reason}", symbol=sym, **({"chart": chart} if chart else {}))
     if not live and side != "BUY":   # 🔄 가상 매도 뒤 반등 진입 비교 보고
         _rebound_report(sym)
+        _month_alert()   # 🎉 이번 달 +20% 첫 돌파 알림
     return f"{sym}: {'✅ 주문 보냄' if live else '📝 가상 체결'} {label} — {reason}"
 
 
@@ -2070,7 +2388,15 @@ def overview() -> dict:
             "market": c["market"], "markets": c["markets"], "cands": s.get("cands", {}), "swing": s.get("swing") or {}, "style": s.get("style", {}),
             "brief": {m: _brief(m) for m in c["markets"]}, "lab": lab_overview(), "preflight": s.get("preflight") or {},
             "scorecard": _scorecard_safe(c, s), "gates": extras.gate_text(c["market"], s["day"]), "arena": _arena_ov(c["market"]), "rules": extras.rule_history(8),
-            "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "halted_lane": s.get("halted_lane") or {}}
+            "lanes": lanes_overview(c["market"]), "lessons": tl.lessons(c["market"], 10), "notes_core": tl.core(c["market"]),"halted_lane": s.get("halted_lane") or {},
+            "stop_slip": _stop_slip_safe()}
+
+
+def _stop_slip_safe() -> dict:
+    try:   # 🔻 손절 슬리피지 (오류 나도 화면은 그대로)
+        return stop_slip_view()
+    except Exception as e:
+        return {"text": f"🔻 손절 슬리피지 계산 오류: {type(e).__name__}", "rows": []}
 
 
 def _brief(m: str) -> dict:
@@ -2104,12 +2430,12 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
         lane_auto(c["market"])
     except Exception as e:
         event("오류", f"AI 자동 조정 실패: {type(e).__name__}: {e}")
-    try:   # 🏟️ 생존전 실전 자격 AI 성적이 떨어졌으면 바로 내림
+    try:   # 🏟️ AI 리그 실전 자격 AI 성적이 떨어졌으면 바로 내림
         rm_ = arena.recheck(config(), c["market"])
         if rm_:
-            event("생존전", rm_)
+            event("AI 리그", rm_)
     except Exception as e:
-        event("오류", f"생존전 자격 확인 실패: {type(e).__name__}: {e}")
+        event("오류", f"AI 리그 자격 확인 실패: {type(e).__name__}: {e}")
     c2 = config()
     try:
         if c2["shadow_on"] and c2["auto_promote"] and c2["mode"] != "off":
@@ -2143,6 +2469,12 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
             event("자동 조정", m2)
     except Exception as e:
         event("오류", f"규칙 변경 확인 실패: {type(e).__name__}: {e}")
+    try:   # 📋 제안 현황 하루 요약 (대기·적용·바꾼 뒤 성적 · 텔레그램만, 읽기 전용)
+        if c2.get("daily_digest", True):
+            from . import digest
+            digest.send(c2["market"])
+    except Exception as e:
+        event("오류", f"제안 현황 요약 실패: {type(e).__name__}: {e}")
     try:   # 🛠️ 매매 코드 자동 개선 효과 확인 → 나빠졌으면 되돌림
         if c2.get("improve_effect_check", True):
             msg = extras.improve_effect(_log_fn, _restart_fn[0])
@@ -2152,6 +2484,54 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
         event("오류", f"자동 개선 효과 확인 실패: {type(e).__name__}: {e}")
     if c2["backtest_on"] and toss.enabled():
         backtest_now(wait=True)
+    try:   # 🧾 그림자·백테스트·반등 비교 누적 요약 (하루 한 번 · 기록·텔레그램만)
+        _verify_daily(day)
+    except Exception as e:
+        event("오류", f"검증 요약 실패: {type(e).__name__}: {e}")
+
+
+def verify_text(market: str) -> str:
+    """그림자 매매·백테스트·반등 확인 진입 비교의 누적 건수·승률·평균 손익 (읽기만)"""
+    f = lambda x, n="n_all", w="win_all", a="avg_all": f"{x.get(n, 0)}건 · 승률 {x.get(w, 0)}% · 평균 {float(x.get(a, 0)):+.2f}%"  # noqa: E731
+    lines = [f"🧾 검증 누적 요약 ({'미장' if market == 'US' else '국장'} · 수수료 뺀 값)"]
+    try:
+        sh = shadow.totals(market)
+        a = sh["acct"]
+        lines.append(f"🧪 그림자 '현재' 규칙: {f(sh['base'])} · 최대 손실 {sh['base'].get('worst', 0):+.2f}%")
+        lines.append(f"🧪 그림자 조합 전체({sh['variants']}개): {f(sh['all'])}")
+        lines.append(f"📉 급락반등 진입(가상): {f(sh['flash_rebound'])}")
+        lines.append(f"💰 100만 원 가상 계좌({a['start'][:10]}~): {a['n']}건 · 확정 {a['realized_pct']:+.2f}% · 평가 포함 {a['total_pct']:+.2f}%")
+    except Exception as e:
+        lines.append(f"🧪 그림자: 집계 실패 ({type(e).__name__})")
+    b = bt.load(market)
+    if b.get("baseline"):
+        lines.append(f"📼 최근 백테스트({b.get('day', '')}) 현재 규칙: {f(b['baseline'], 'n', 'win', 'avg')}")
+    else:
+        lines.append("📼 백테스트: " + (b.get("note") or "기록 없음"))
+    rp = (b.get("replay") or {}).get("all") or {}
+    if rp:
+        lines.append(f"🔄 과거 복기 반등 확인 {f(rp.get('rebound') or {}, 'n', 'win', 'avg')} / 기존 {f(rp.get('plain') or {}, 'n', 'win', 'avg')}"
+                     f" · {(b.get('replay') or {}).get('verdict', '')}")
+    try:
+        rs = tl.rebound_stats(market)
+        r, p = rs["rebound"], rs["plain"]
+        lines.append(f"🔄 실제 2호 진입 비교: 반등 확인 {f(r, 'n', 'win_rate', 'avg')} ({r['n']}/{rs['goal_n']}건) / 기존 {f(p, 'n', 'win_rate', 'avg')}")
+    except Exception as e:
+        lines.append(f"🔄 반등 비교: 집계 실패 ({type(e).__name__})")
+    lines.append("※ 기록·보고만 해요 — 실전 전환은 사장님이 화면에서 직접 정해 주세요")
+    return "\n".join(lines)
+
+
+def _verify_daily(day: str) -> None:
+    """하루 한 번만: 요약을 상태에 저장(채팅 자료) + 기록·텔레그램"""
+    with _lock:
+        s = state()
+        if (s.get("verify_daily") or {}).get("day") == day:
+            return
+    text = verify_text(cur_market())
+    with _lock:
+        s = state(); s["verify_daily"] = {"day": day, "t": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "text": text}; _save(s)
+    event("검증 요약", text)
 
 
 def review_now(wait: bool = False) -> dict:
@@ -2268,6 +2648,11 @@ def hourly_text() -> str:
                 lines.append("  " + tl.rebound_text(m))
             except Exception:
                 pass
+            try:   # ⏱️ 1초 감시 초반 신호 결과 (가상)
+                from . import watch1s
+                lines.append("  " + watch1s.summary(m))
+            except Exception:
+                pass
             # 지난 1시간 오류·정지
             bad = [e for e in s["events"] if e.get("kind") in ("오류", "정지", "긴급 정지", "주문 거절")
                    and (_ago_sec(e.get("t", "")) if _ago_sec(e.get("t", "")) is not None else 1e9) <= 3600]
@@ -2307,7 +2692,8 @@ def start(log_fn=print) -> None:
     if _thread and _thread.is_alive():
         return
     _resume_note()   # 자동 재시작이었으면 이어받은 상태 기록
-    arena._wake = lambda m: _ai_wake[m].set() if m in _ai_wake else None   # 🏟️ 생존전 판단 끝나면 바로 한 바퀴
+    arena._wake = lambda m: _ai_wake[m].set() if m in _ai_wake else None   # 🏟️ AI 리그 판단 끝나면 바로 한 바퀴
+    from . import arena_voice   # noqa: F401 — 🗣️ 의견 생긴 AI → 바로 채팅으로 (arena._voice 연결)
     try:
         n_ = extras.purge_test_notes()
         if n_:
@@ -2347,7 +2733,13 @@ def start(log_fn=print) -> None:
             return
         # 들고 있는 종목은 자주(기본 10초) 매도 조건만 확인
         gap = c["interval_min"] * 60
-        if not (time.time() - timers["last"] >= gap - 5 or time.time() - timers["exit"] < c["exit_check_sec"]):
+        exit_sec = c["exit_check_sec"]
+        try:   # 📉 지수 급락일엔 손절 확인을 5초마다 (루프 최소 간격)
+            if extras.crash_day(m, c):
+                exit_sec = min(exit_sec, 5)
+        except Exception:
+            pass
+        if not (time.time() - timers["last"] >= gap - 5 or time.time() - timers["exit"] < exit_sec):
             with _lock:
                 s0 = state()
             if s0["bot_pos"] if c["mode"] == "live" else s0["paper"]["positions"]:
@@ -2405,6 +2797,11 @@ def start(log_fn=print) -> None:
 
     _thread = threading.Thread(target=loop, daemon=True, name="autotrade")
     _thread.start()
+    try:   # ⏱️ 2호 급등 후보 1초 감시 (가상 기록만, 주문 없음)
+        from . import watch1s
+        watch1s.start(log_fn)
+    except Exception as e:
+        log_fn(f"🤖 [오류] 1초 감시 시작: {type(e).__name__}: {e}")
 
 
 ASK_WORDS = re.compile(r"자동\s*매매|봇|자동으로\s*(산|판|사|팔)|알아서\s*(산|판)|오늘\s*(매매|거래|수익|손익)|이번\s*달\s*(수익|목표)")
@@ -2443,6 +2840,20 @@ def _summary_one() -> str:
     rv = tl.last_review_text("live" if c["mode"] == "live" else "paper", c["market"])
     if rv:
         lines.append(rv)
+    try:   # 🧯 손절 기록 (기준 대비 차이·원인·손절 뒤 변화)
+        sl = stop_log_text()
+        if sl:
+            lines.append(sl)
+        ss = stop_slip_view().get("text")   # 🔻 손절 슬리피지 따로
+        if ss:
+            lines.append(ss)
+    except Exception:
+        pass
+    vd = s.get("verify_daily") or {}
+    if vd.get("text"):   # 🧾 하루 한 번 검증 누적 요약 (실전 전환 판단 근거)
+        lines.append(f"[{vd.get('t', '')} 기준] " + vd["text"].replace("\n", " / "))
+    else:   # 아직 한 번도 안 돌았으면 숫자 지어내지 않게
+        lines.append("🧾 검증 누적 요약: 아직 없음 (평일 장 마감 복기 뒤 하루 한 번 만들어져요)")
     lines.append("</autotrade>")
     return "\n".join(lines)
 
@@ -2452,9 +2863,9 @@ def _summary_one() -> str:
 LABELS = {"live_quality": "실전은 강한 신호만", "live_quality_change": "강한 신호 최소 상승률(%)", "live_quality_ratio": "강한 신호 거래량 배수",
           "swing_live": "스윙 실전", "live_needs_proof": "검증된 조건만 실전", "live_proof_n": "실전 검증 최소 건수", "time_stop_min": "시간 손절(분)",
           "time_stop_up_pct": "시간 손절 최소 상승(%)", "stop_slip_pct": "손절 매도 지정가 여유(%)", "stop_resell_sec": "매도 재주문(초)",
-          "surge_min_change_regular": "정규장 급등 최소 상승률(%)", "surge_buy_cutoff_min": "급등주 매수 마감(분)", "regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
+          "surge_min_change_regular": "정규장 급등 최소 상승률(%)", "surge_buy_cutoff_min": "급등주 매수 마감(분)", "open_weak_skip": "초반 약세장 건너뛰기", "open_weak_min": "초반 기준(분)", "open_weak_idx_pct": "초반 지수 -%면 안 삼","regime_on": "시장 분위기 필터", "regime_half_pct": "지수 -%면 급등주 절반", "regime_stop_pct": "지수 -%면 급등주 안 삼",
           "tod_filter": "지는 시간대 피하기", "max_per_sector": "같은 업종 최대 보유", "backup_on": "매일 백업", "weekly_report": "주간 성적표",
-          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "arena_on": "AI 생존전", "arena_size": "생존전 참가자 수", "arena_ai_per_day": "생존전 하루 AI 판단 횟수 (0=제한 없음)", "arena_min_trades": "생존전 실전 자격 최소 거래", "arena_promote": "생존전 1등 전략 참고", "arena_live": "생존전 상위 AI 실전 매수", "arena_live_n": "생존전 실전 자격 인원", "arena_live_pct": "생존전 실전 예산 몫(%)", "no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
+          "tomorrow_plan": "내일 계획 알림", "weekend_study": "주말 공부", "improve_effect_check": "자동 개선 효과 확인", "lane_swing_mode": "1호 일반(스윙) AI 모드", "lane_surge_mode": "2호 급등주 AI 모드", "lane_share_surge": "2호 예산 몫(%)", "lane_auto_share": "예산 몫 자동 조정", "lane_auto_live": "2호 가상→실전 자동", "lane_cross_review": "두 AI 교차 복기", "arena_on": "AI 리그", "arena_size": "AI 리그 참가자 수", "arena_ai_per_day": "AI 리그 하루 AI 판단 횟수 (0=제한 없음)", "arena_min_trades": "AI 리그 실전 자격 최소 거래", "arena_promote": "AI 리그 1등 전략 참고", "arena_live": "AI 리그 상위 AI 실전 매수", "arena_live_n": "AI 리그 실전 자격 인원", "arena_live_pct": "AI 리그 실전 예산 몫(%)", "arena_ctrl_margin": "AI 리그 대조군보다 나아야 할 폭(%p)", "arena_half_life_days": "AI 리그 성적 반감 일수", "arena_voice": "리그 AI 의견 바로 채팅으로", "arena_voice_every": "의견 물어볼 거래 간격(건)", "arena_voice_per_day": "하루 최대 의견 수", "notes_council": "노트 정리 회의", "daily_digest": "제안 현황 하루 요약","no_rebuy_after_loss": "손해 본 종목 재진입 금지", "no_rebuy_swing_days": "스윙 재진입 금지 일수", "explore_per_day": "하루 탐색 매수 횟수", "ai_take_profit": "AI 익절 (off/test/on)", "ai_tp_guard_peak": "AI 익절 안전장치 최고 수익(%)", "ai_tp_guard_floor": "AI 익절 안전장치 바닥(%)", "news_unknown_ratio": "이유 모를 때 금액 배수", "focus_max_pct": "확신 집중 최대 비중(%)", "focus_min_samples": "확신 집중 최소 표본(건)", "focus_min_ev_pct": "확신 집중 최소 기대 수익(%)", "monthly_target_pct": "한 달 목표(%)", "pick_count": "동시 보유 종목 수", "max_total_krw": "총 투자 한도(원)",
           "max_order_krw": "한 번 주문 최대(원)", "max_position_krw": "종목당 최대(원)", "max_orders_per_day": "하루 매수 횟수",
           "max_daily_loss_pct": "하루 손실 한도(예산 %)", "max_daily_loss_krw": "하루 손실 한도(원)", "stop_loss_pct": "손절(%)",
           "take_profit_pct": "남은 물량 익절(%)", "partial_tp_pct": "나눠 팔기 수익률(%)", "partial_tp_ratio": "나눠 팔기 비율",
@@ -2558,11 +2969,12 @@ def _entry_text(f: dict) -> str:
     """일지의 '살 때 조건' 문구 (스윙/단타 따로, 값 없으면 '-')"""
     def v(k, fmt="{:g}"):
         return fmt.format(f[k]) if isinstance(f.get(k), (int, float)) else "-"
+    vt = f" · 거래량 추세 {f['vtrend']}({v('vtrend_r')}배)" if f.get("vtrend") else ""   # 📈 진입 시점 거래량 추세
     if f.get("style") == "swing":
         val = f"{f['value20'] / 1e8:,.0f}억원" if isinstance(f.get("value20"), (int, float)) else "-"
         return (f"살 때 [스윙] 20일 {v('r20', '{:+.1f}')}% · 60일 {v('r60', '{:+.1f}')}% · RSI {v('rsi', '{:.0f}')} · 거래대금 {val}/일"
-                f" · 변동성 {v('volat', '{:.0f}')}% · 당일 {v('chg1d', '{:+.1f}')}% · 거래량 {v('vratio')}배")
-    return f"살 때 {v('change')}% 거래량 {v('ratio')}배{' 프리장' if f.get('pre') else ''}"
+                f" · 변동성 {v('volat', '{:.0f}')}% · 당일 {v('chg1d', '{:+.1f}')}% · 거래량 {v('vratio')}배{vt}")
+    return f"살 때 {v('change')}% 거래량 {v('ratio')}배{' 프리장' if f.get('pre') else ''}{vt}"
 
 
 _ACT = re.compile(r"\[\[TRADE_(SET|MODE|STOP|EXCLUDE|INCLUDE):\s*([^\]|]*?)\s*(?:\|\s*([^\]]*?))?\s*\]\]")
@@ -2614,6 +3026,16 @@ def apply_action(a: dict) -> dict:
         r = save_config({"mode": a["value"]})
     elif t == "stop":
         r = emergency_stop()
+    elif t == "notes_undo":   # 📒 노트 정리 되돌리기
+        if a.get("market") not in ("US", "KR"):
+            return {"ok": False, "message": "시장이 이상해요"}
+        r = tl.undo_core(a["market"])
+    elif t == "arena":   # 🗣️ 리그 AI 자기 규칙 (가상 전용)
+        r = arena.set_rules(str(a.get("market") or ""), str(a.get("ai") or ""), a.get("changes") or {}, str(a.get("habit") or ""))
+    elif t == "arena_undo":   # 🏟️ AI 가 스스로 바꾼 규칙 되돌리기
+        if a.get("market") not in ("US", "KR"):
+            return {"ok": False, "message": "시장이 이상해요"}
+        r = arena.undo_rules(a["market"], str(a.get("ai") or ""), str(a.get("t") or ""))
     elif t in ("exclude", "include"):
         ex = [x for x in c["exclude"] if x != a.get("value")] + ([a["value"]] if t == "exclude" else [])
         r = save_config({"exclude": ex})
@@ -2874,20 +3296,20 @@ def unhalt() -> dict:
 # ── 🤖 거래마다 AI 판단 ──
 def _arena_ov(market: str) -> dict:
     try:
-        return arena.overview(market)
+        return arena.overview(market, config())
     except Exception:
         return {}
 
 
 def _arena_step(c: dict, market: str, cands: dict, quotes: dict, minutes, day: str, dry: bool, exits_only: bool, hot: dict | None = None) -> list[str]:
-    """🏟️ AI 생존전 한 바퀴 (가상 전용 · 실패해도 매매에 영향 없음)"""
+    """🏟️ AI 리그 한 바퀴 (가상 전용 · 실패해도 매매에 영향 없음)"""
     if not c.get("arena_on") or dry:
         return []
     try:
         return arena.step(c, market, {} if exits_only else cands, quotes, minutes, day,
                           price_fn=lambda xs: toss.prices(xs), ai_fn=arena.ai_json, extra={} if exits_only else (hot or {}))
     except Exception as e:
-        return [f"🏟️ 생존전 오류: {type(e).__name__}: {e}"]
+        return [f"🏟️ AI 리그 오류: {type(e).__name__}: {e}"]
 
 
 def _ai_budget_ok(c: dict) -> bool:
@@ -3037,7 +3459,8 @@ def _cross_review(day: str, market: str) -> str:
         f = t.get("features") or {}
         return {"sym": t["sym"], "pnl": t["pnl_pct"], "exit": t.get("exit_kind"), "mfe": t["mfe"], "mae": t["mae"],
                 "why_buy": (f.get("why_buy") or f.get("ai_decide") or ""), "change": f.get("change"), "ratio": f.get("ratio"),
-                "from_high": f.get("from_high"), "pullback5": f.get("pullback5"), "mode": t["mode"]}
+                "from_high": f.get("from_high"), "pullback5": f.get("pullback5"), "run5": f.get("run5"), "ev": f.get("ev"),
+                "mode": t["mode"]}
     by = {LANES[st]: [_row(t) for t in ts if tl._ts(t) == st] for st in LANES}
     c = config()
     prompt = ("두 자동매매 AI 의 오늘 거래예요. " + " / ".join(f"{LANES[st]}: {lane_mode(c, st)}" for st in LANES) + "\n"

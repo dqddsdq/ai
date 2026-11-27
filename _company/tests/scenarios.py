@@ -122,7 +122,7 @@ def setup():
     picker.us_symbols = lambda log=print: list(U)
     picker._base_file = lambda m: tmp / f"base_{m}.json"
     at.CONFIG, at.STATE = tmp / "c.json", tmp / "s.json"
-    tl.FILE, tl.LESSONS = tmp / "j.json", tmp / "l.json"
+    tl.FILE, tl.LESSONS, tl.CORE = tmp / "j.json", tmp / "l.json", tmp / "core.json"
     shadow._file = lambda m: tmp / f"sh_{m}.json"
     extras.RULE_LOG, extras.GATE_FILE = tmp / "rule.json", tmp / "gate.json"
     extras.index_change = lambda m: 0.0
@@ -132,7 +132,7 @@ def setup():
     from engine import agents
     agents.Agent.remember = lambda self, note: None   # 시험 교훈이 진짜 팀 기억에 안 들어가게
     from engine import arena as _arena
-    _arena.ai_json = lambda prompt: None   # 생존전 AI 는 시험에서 안 부름
+    _arena.ai_json = lambda prompt: None   # 리그 AI 는 시험에서 안 부름
     _arena._file = lambda m: tmp / f"arena_{m}.json"
     return at, picker, tmp, store
 
@@ -271,7 +271,7 @@ def 생존전_상위_AI_가_사면_실전으로(at, picker, tmp):
     fresh(at, picker, tmp, live_needs_proof=True, lane_surge_mode="paper", arena_size=3)
     _arena_setup(0, 0)
     r = at.run_once()
-    assert any("생존전 AI 들이 판단 중" in x for x in r["results"]), r["results"][:8]
+    assert any("리그 AI 들이 판단 중" in x for x in r["results"]), r["results"][:8]
     _arena_wait()
     at.run_once()
     buys = [s for s, _ in posted("BUY")]
@@ -295,9 +295,423 @@ def 생존전_실전_끄면_실전_주문_없음(at, picker, tmp):
     fresh(at, picker, tmp, live_needs_proof=True, lane_surge_mode="paper", arena_size=3, arena_live=False)
     _arena_setup(0, 0)
     at.run_once(); _arena_wait(); at.run_once()
-    assert posted("BUY") == [], ("생존전 실전을 껐는데 실전 주문이 나감", posted("BUY"))
+    assert posted("BUY") == [], ("AI 리그 실전을 껐는데 실전 주문이 나감", posted("BUY"))
     from engine import arena
     arena.ai_json = lambda prompt: None
+
+
+def _arena_fill(rets, ctrl_ret, sit="", age_days=0):
+    """참가자 i 에게 rets[i] 수익 거래 30건, 대조군에 ctrl_ret 거래 30건"""
+    from engine import arena
+    t = (datetime.now(arena.KST) - timedelta(days=age_days)).strftime("%Y-%m-%d %H:%M:%S")
+    tr = lambda r: [{"sym": f"X{j}", "day": "D", "ret": r, "why": "t", "mins": 5, "t": t, "sit": sit} for j in range(30)]   # 서로 다른 종목 (독립 표본)
+    d = arena.load("US", len(rets))
+    for a, r in zip(d["alive"], rets):
+        a["trades"] = tr(r)
+    d["ctrl"]["trades"] = tr(ctrl_ret)
+    arena._save("US", d)
+    return d
+
+
+@case
+def 무작위_대조군보다_못하면_실전_자격_없음(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    _arena_fill([0.5, 0.6], ctrl_ret=0.8)   # 둘 다 플러스지만 동전 던지기보다 못함
+    arena.evolve({**at.config(), "arena_on": True}, "US")
+    assert arena.load("US").get("live") == [], ("대조군보다 못한 AI 가 실전 자격을 받음", arena.load("US").get("live"))
+
+
+@case
+def 대조군을_넘은_만큼_비중을_나누고_약한_AI_만_찬성하면_금액_줄임(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    d = _arena_fill([2.0, 0.6], ctrl_ret=0.2)
+    strong, weak = d["alive"][0]["id"], d["alive"][1]["id"]
+    arena.evolve({**at.config(), "arena_on": True}, "US")
+    d = arena.load("US")
+    assert d["live"] == [strong, weak], d["live"]
+    assert d["weights"][strong] > d["weights"][weak], d["weights"]
+    d.setdefault("votes", {})["D1"] = {"ZZZ": [weak]}; arena._save("US", d)
+    vs, who = arena.live_vote("US", "D1", "ZZZ")
+    assert vs == "yes" and who["size"] < 1, ("약한 AI 만 찬성했는데 금액을 안 줄임", vs, who)
+    d["votes"]["D1"]["ZZZ"] = [strong, weak]; arena._save("US", d)
+    assert arena.live_vote("US", "D1", "ZZZ")[1]["size"] == 1.0
+
+
+@case
+def 지금_상황에서_대조군보다_못했던_AI_판단은_실전_안_감(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    d = _arena_fill([-1.0, 0.0], ctrl_ret=0.5, sit="장 초반·하락장")
+    d["alive"][0]["trades"] += [{"sym": "Y", "day": "D", "ret": 3.0, "why": "t", "mins": 5, "t": "", "sit": "전반·상승장"} for _ in range(40)]
+    d["live"] = [d["alive"][0]["id"]]; d.setdefault("votes", {})["D1"] = {"ZZZ": [d["alive"][0]["id"]]}
+    arena._save("US", d)
+    old = arena._situation_now
+    try:
+        arena._situation_now = lambda c, m: "장 초반·하락장"
+        vs, who = arena.live_vote("US", "D1", "ZZZ")
+        assert vs == "no" and who and who["skipped"], ("약했던 상황인데 실전으로 감", vs, who)
+        arena._situation_now = lambda c, m: "전반·상승장"
+        assert arena.live_vote("US", "D1", "ZZZ")[0] == "yes", "잘했던 상황인데 막힘"
+    finally:
+        arena._situation_now = old
+
+
+@case
+def 오래된_성적은_덜_침(at, picker, tmp):
+    from engine import arena
+    old = [{"ret": 5.0, "t": (datetime.now(arena.KST) - timedelta(days=60)).strftime("%Y-%m-%d %H:%M:%S")}] * 10
+    new = [{"ret": -1.0, "t": datetime.now(arena.KST).strftime("%Y-%m-%d %H:%M:%S")}] * 10
+    w = arena._wavg(old + new, 14)
+    assert w < 0, ("두 달 전 좋은 성적이 최근 나쁜 성적을 덮음", w)
+
+
+@case
+def 생존전_AI_자기_규칙은_바로_바뀌고_되돌릴_수_있고_공통_설정은_적용해야_바뀜(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import agents as ag, arena, arena_voice, improve as im
+    d = _arena_fill([1.5, -0.8], ctrl_ret=0.2)
+    a0, a1 = d["alive"][0], d["alive"][1]
+    reply = {a0["id"]: {"opinion": "익절을 조금 늦추면 더 먹을 수 있어요", "self": {"tp": 6, "sl": 999}, "habit": "하락장 장 초반엔 안 삼",
+                        "engine": {"key": "stop_loss_pct", "value": 5, "why": "손절이 너무 빨라요"}, "code": "상황별 성적을 차트로 보여 주기"},
+             a1["id"]: {"opinion": "저는 실전 켜자고 할게요", "self": None, "habit": "", "engine": {"key": "arena_live", "value": True, "why": "x"}, "code": ""}}
+    old_sd, old_create, old_vf = ag.SESSIONS_DIR, im.create, arena_voice._file
+    ag.SESSIONS_DIR = tmp / "sessions"
+    im.create = lambda what, why, agent: {"id": "job1", "request": what}
+    arena_voice._file = lambda: tmp / "arena_voice.json"
+    try:
+        stop0 = at.config()["stop_loss_pct"]
+        # 의견은 모으지 않고 하나씩 바로: 첫 AI 만 물어봄 → 하나 옴
+        assert arena_voice.ask(at.config(), "US", {a0["id"]: "거래 5건 더 쌓임"}, ai_fn=lambda p: reply) == 1
+        cid = json.loads((tmp / "arena_voice.json").read_text(encoding="utf-8"))["conv"]["US"]
+        read = lambda: json.loads((ag.SESSIONS_DIR / cid / "conversation.json").read_text(encoding="utf-8"))
+        assert len(read()["messages"]) == 2, read()["messages"]   # 안내 1 + 의견 1
+        # 할 말 없는 AI 는 안 보냄
+        assert arena_voice.ask(at.config(), "US", {a1["id"]: "x"}, ai_fn=lambda p: {a1["id"]: {"opinion": ""}}) == 0
+        # 다음 AI 의견은 같은 대화에 이어 붙음
+        assert arena_voice.ask(at.config(), "US", {a1["id"]: "3번 연속 손실"}, ai_fn=lambda p: reply) == 1
+        conv = read()
+        assert conv["agent"] == "trader" and len(conv["messages"]) == 3, conv["messages"]
+        assert "왜 지금: 거래 5건 더 쌓임" in conv["messages"][1]["content"]
+        m0 = next(m for m in conv["messages"] if a0["name"] in m["content"])
+        kinds = sorted(x["type"] for x in m0.get("trade_actions", []))
+        assert kinds == ["arena_undo", "set"], kinds
+        assert m0.get("improvements") == ["job1"]
+        assert "✅ 스스로 바꿈" in m0["content"], m0["content"]
+        m1 = next(m for m in conv["messages"] if a1["name"] in m["content"])
+        assert not m1.get("trade_actions"), ("실전 켜기 제안이 카드로 나옴", m1)
+        # 그 AI 자기 규칙만 바로 바뀜 (범위 밖 손절 999 는 걸러짐) · 공통 설정은 [적용] 전까지 그대로
+        a0n = arena.load("US")["alive"][0]
+        assert a0n["tp"] == 6 and a0n["sl"] == a0["sl"] and a0n["habits"] == ["하락장 장 초반엔 안 삼"], a0n
+        assert arena.load("US")["alive"][1]["tp"] == a1["tp"], "다른 AI 규칙이 바뀜"
+        assert at.config()["stop_loss_pct"] == stop0
+        # [되돌리기] → 원래대로 · 두 번은 안 됨
+        undo = next(x for x in m0["trade_actions"] if x["type"] == "arena_undo")
+        assert at.apply_action(undo)["ok"]
+        a0u = arena.load("US")["alive"][0]
+        assert a0u["tp"] == a0["tp"] and not a0u.get("habits"), a0u
+        assert not at.apply_action(undo)["ok"], "되돌리기가 두 번 됨"
+        # 그 뒤에 또 바뀌었으면 예전 되돌리기는 안 함 · 범위 밖 값은 안 바뀜
+        r1 = arena.set_rules("US", a0["id"], {"tp": 7}); arena.set_rules("US", a0["id"], {"tp": 8})
+        assert not arena.undo_rules("US", a0["id"], r1["t"])["ok"] and arena.load("US")["alive"][0]["tp"] == 8
+        assert not arena.set_rules("US", a0["id"], {"hold": 99999})["ok"], "범위 밖 값이 적용됨"
+    finally:
+        ag.SESSIONS_DIR, im.create, arena_voice._file = old_sd, old_create, old_vf
+
+
+@case
+def 다들_하고_물으면_리그_AI_가_각자_자기_이름으로_답함(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import ai_ask
+    d = _arena_fill([1.5, -0.8], ctrl_ret=0.2)
+    a0, a1 = d["alive"][0]["name"], d["alive"][1]["name"]
+    who = ai_ask.match("다들 오늘 왜 손해 봤어?")
+    assert who and who["kind"] == "all", who
+    assert ai_ask.match("리그 전원 오늘 어땠어?")["kind"] == "all"
+    assert ai_ask.match("모두 팔아줘") is None and ai_ask.match("전원 꺼") is None, "매매 지시가 리그 질문으로 감"
+    assert ai_ask.match(f"{a0}, 왜 샀어?")["kind"] == "arena"   # 이름 부르면 그 AI 만
+    assert ai_ask.match(f"@{a0}")["name"] == a0, "이름만 불렀을 때 엔진 AI 가 대신 답함"
+    assert a0 in ai_ask.system_prompt(who) and a1 in ai_ask.system_prompt(who)
+    reply = f'답입니다 {{"{a0}": "저는 장 초반에 너무 빨리 샀어요", "{a1}": "", "없는AI": "x"}}'
+    assert ai_ask.split_answers(reply, "US") == [(a0, "저는 장 초반에 너무 빨리 샀어요")]   # 빈 답·모르는 이름은 뺌
+    assert ai_ask.split_answers("JSON 아님", "US") == []
+
+
+@case
+def 채팅_답변_중에_온_생존전_의견이_안_사라짐(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import agents as ag, arena_voice, web
+    d = _arena_fill([1.0, 1.0], ctrl_ret=0.0)
+    old_sd, old_vf = ag.SESSIONS_DIR, arena_voice._file
+    ag.SESSIONS_DIR = tmp / "sessions2"
+    arena_voice._file = lambda: tmp / "arena_voice2.json"
+    try:
+        ok = lambda p: {d["alive"][0]["id"]: {"opinion": "첫 의견"}}
+        assert arena_voice.ask(at.config(), "US", {d["alive"][0]["id"]: "x"}, ai_fn=ok) == 1
+        cid = json.loads((tmp / "arena_voice2.json").read_text(encoding="utf-8"))["conv"]["US"]
+        # 사장님이 그 대화에서 질문 → (채팅 처리와 같은 순서) 질문 저장
+        conv = web.load_conv(cid)
+        base = len(conv["messages"])
+        conv["messages"].append({"role": "user", "content": "왜?"})
+        base = web.save_conv_merged(conv, base)
+        # 답변 만드는 사이에 다른 AI 의견 도착
+        assert arena_voice.ask(at.config(), "US", {d["alive"][1]["id"]: "y"}, ai_fn=lambda p: {d["alive"][1]["id"]: {"opinion": "끼어든 의견"}}) == 1
+        # 답변 끝 → 저장 (예전엔 여기서 끼어든 의견을 덮어씀)
+        conv["messages"].append({"role": "assistant", "content": "답변"})
+        web.save_conv_merged(conv, base)
+        texts = [m["content"] for m in web.load_conv(cid)["messages"]]
+        assert any("끼어든 의견" in t for t in texts), ("답변 저장이 의견을 덮어씀", texts)
+        assert texts[-1] == "답변" and any(t == "왜?" for t in texts), texts
+    finally:
+        ag.SESSIONS_DIR, arena_voice._file = old_sd, old_vf
+
+
+@case
+def 제안_현황은_대기_적용_바꾼_뒤_성적을_모으고_하루_한_번만_보내고_노트는_안_건드림(at, picker, tmp):
+    fresh(at, picker, tmp)
+    from engine import agents as ag, digest, improve as im, notify, tradelearn as tl, web
+    old = (ag.SESSIONS_DIR, im.HISTORY, digest.SENT, notify.send)
+    sent = []
+    ag.SESSIONS_DIR, im.HISTORY, digest.SENT = tmp / "sessions4", tmp / "imp.json", tmp / "sent.json"
+    notify.send = lambda t: sent.append(t)
+    try:
+        conv = web.new_conv("시험 대화"); conv["id"] += "-dg"
+        conv["messages"].append({"role": "assistant", "content": "x", "trade_actions": [
+            {"id": "a1", "type": "set", "label": "손절(%): 4 → 5"}, {"id": "a2", "type": "set", "label": "끝난 카드", "status": "applied"}]})
+        web.save_conv(conv)
+        im.create("상황별 성적 차트", "시험", "trader")
+        n_lessons = len(tl.lessons("US", 80))
+        assert at.apply_action({"type": "set", "param": "stop_loss_pct", "value": "5", "label": "손절(%): 4 → 5"})["ok"]   # 사장님이 카드 적용
+        d = digest.collect("US")
+        assert [x["label"] for x in d["pending"]["cards"]] == ["손절(%): 4 → 5"], d["pending"]["cards"]
+        assert len(d["pending"]["code"]) == 1
+        assert any("사장님 적용" in x and "손절" in x for x in d["applied"]), d["applied"]
+        t = digest.text("US", d)
+        assert "대기 2개" in t and "손절(%): 4 → 5" in t, t
+        digest.send("US"); digest.send("US")
+        assert len(sent) == 1, "하루 두 번 보냄"
+        assert len(tl.lessons("US", 80)) == n_lessons, "요약이 공유 노트에 들어감"
+    finally:
+        ag.SESSIONS_DIR, im.HISTORY, digest.SENT, notify.send = old
+
+
+@case
+def 자동_개선은_멈춘_작업을_정리하고_성공만_세고_장중엔_시작_안_함(at, picker, tmp):
+    fresh(at, picker, tmp)
+    from datetime import datetime, timedelta
+    from engine import improve as im, gitsync
+    old_git = gitsync.enabled
+    gitsync.enabled = lambda: False   # 시험에서 GitHub 에 올리지 않게
+    old = (im.HISTORY, im.AUTO_FILE, im.VERIFY, im.run, im.apply, im.market_busy, im._notify)
+    im.HISTORY, im.AUTO_FILE, im.VERIFY = tmp / "imp2.json", tmp / "auto.json", tmp / "verify.json"
+    im._notify = lambda text, log: None
+    now = datetime.now()
+    iso = lambda dt: dt.isoformat(timespec="seconds")
+    try:
+        im._save([{"id": "old", "status": "working", "time": iso(now - timedelta(days=9)), "request": "옛 작업"},
+                  {"id": "live", "status": "working", "time": iso(now), "started": iso(now), "request": "지금 작업"}])
+        assert im.clear_stale() == ["old"]
+        assert im.get("old")["status"] == "failed" and im.get("live")["status"] == "working"
+        assert im.auto_once(print, lambda: None) == "다른 작업 중"   # 진짜 돌고 있는 건 안 건드림
+        im._update("live", status="applied")
+        # 검사 실패는 성공 횟수에 안 셈 → 한도에 안 걸림
+        im._save(im._load() + [{"id": f"p{i}", "status": "proposed", "time": iso(now), "request": f"제안 {i}"} for i in range(8)])
+        im.run = lambda jid: (im._update(jid, status="blocked"), {"ok": False, "checks": [{"name": "검사", "ok": False}]})[1]
+        im.market_busy = lambda now=None: []
+        for _ in range(im.AUTO_DAILY_MAX):
+            assert im.auto_once(print, lambda: None) == "검사 실패"
+        assert im._today_auto() == 0 and im._today_auto("auto_at") == im.AUTO_DAILY_MAX
+        im.run = lambda jid: (im._update(jid, status="ready"), {"ok": True, "files": [], "checks": []})[1]
+        im.apply = lambda jid: (im._update(jid, status="applied"), {"ok": True})[1]
+        assert im.auto_once(print, lambda: None) == "적용" and im._today_auto() == 1
+        im.market_busy = lambda now=None: ["KR"]
+        assert im.auto_once(print, lambda: None) == "장 중"
+        old_sm = picker.session_minutes   # 시험 환경은 장 시각을 바꿔 둬서 직접 흉내
+        picker.session_minutes = lambda m, now=None, extended=False: 60 if m == "KR" else None
+        try:
+            assert old[5]() == ["KR"]
+        finally:
+            picker.session_minutes = old_sm
+    finally:
+        im.HISTORY, im.AUTO_FILE, im.VERIFY, im.run, im.apply, im.market_busy, im._notify = old
+        gitsync.enabled = old_git
+
+
+@case
+def 큰_기록을_쓰는_동안에도_다른_기록은_안_기다리고_옛_내용이_새_내용을_안_덮음(at, picker, tmp):
+    from engine import store
+    big, small = tmp / "big.json", tmp / "small.json"
+    orig = store.write_text
+    gate, entered = threading.Event(), threading.Event()
+
+    def slow(path, text):
+        if path == big and '"v":1' in text:   # 첫 큰 저장만 멈춰 둠
+            entered.set(); gate.wait(5)
+        orig(path, text)
+    store.write_text = slow
+    try:
+        store.save(big, {"v": 0})
+        th = threading.Thread(target=store.save, args=(big, {"v": 1})); th.start()
+        assert entered.wait(5)
+        t0 = time.time()
+        store.save(small, {"x": 1})                      # 다른 파일은 안 기다림
+        assert time.time() - t0 < 1, "큰 파일 쓰는 동안 다른 기록 저장이 막힘"
+        assert store.load(big)["v"] == 1, "쓰는 중엔 메모리의 새 내용을 줘야 함"
+        th2 = threading.Thread(target=store.save, args=(big, {"v": 2})); th2.start()
+        time.sleep(0.2)
+        gate.set(); th.join(5); th2.join(5)
+        assert json.loads(big.read_text(encoding="utf-8"))["v"] == 2, "옛 내용이 새 내용을 덮음"
+        assert store.load(big)["v"] == 2
+    finally:
+        store.write_text = orig
+        gate.set()
+
+
+@case
+def 노트_정리_회의는_서로_의견을_주고받고_다수가_동의한_것만_핵심_노트로(at, picker, tmp):
+    fresh(at, picker, tmp)
+    from engine import agents as ag, notes_council as nc, tradelearn as tl, web
+    for i in range(8):
+        tl.add_lesson("US", f"교훈 {i}: 기대값 마이너스면 진입 보류", "시험")
+    calls = []
+
+    def fake(role, prompt):
+        calls.append(role)
+        if role == "editor" and "반대 의견" not in prompt:   # ① 초안
+            return {"notes": [{"id": "N1", "text": "기대값 마이너스면 진입 보류", "from": ["L1", "L2", "L3"], "evidence": "음수 기대 20건 평균 -2.1%"},
+                              {"id": "N2", "text": "느낌 좋으면 크게 산다", "from": ["L4"]},
+                              {"id": "N3", "text": "장 초반 30분은 금액 절반", "from": ["L5"]}], "drop": [{"from": ["L6"], "why": "중복"}], "comment": "초안"}
+        if role == "editor":   # ③ 반대 반영 — N3 를 구체적으로 고침
+            assert "느낌 좋으면" in prompt and "근거 없음" in prompt, "정리 담당이 반대 의견을 못 받음"
+            return {"notes": [{"id": "N1", "text": "기대값 마이너스면 진입 보류", "from": ["L1"]},
+                              {"id": "N2", "text": "느낌 좋으면 크게 산다", "from": ["L4"]},
+                              {"id": "N3", "text": "정규장 시작 30분은 금액 50%", "from": ["L5"]}], "comment": "N3 고침, N2 는 유지"}
+        revised = "정규장 시작 30분" in prompt
+        if role == "skeptic":
+            return {"votes": {"N1": {"ok": True, "why": "숫자 있음"}, "N2": {"ok": False, "why": "근거 없음"},
+                              "N3": {"ok": revised, "why": "구간 애매" if not revised else "좋음", "fix": "정규장 시작 30분으로"}}, "comment": "N2 반대"}
+        if role == "trader":
+            if not revised:
+                assert "🔍 검증 담당 의견" in prompt, "현장 담당이 검증 담당 말을 못 봄 (대화 아님)"
+            return {"votes": {"N1": {"ok": True}, "N2": {"ok": False, "why": "실행 불가"}, "N3": {"ok": revised}}, "comment": "동의"}
+
+    old_sd = ag.SESSIONS_DIR
+    ag.SESSIONS_DIR = tmp / "sessions3"
+    try:
+        r = nc.run_and_post(at.config(), "US", ai_fn=fake)
+        assert r["ok"], r
+        assert calls.count("editor") == 2 and calls.count("skeptic") == 2, calls   # 초안 → 투표 → 고침 → 다시 투표
+        texts = [n["text"] for n in r["agreed"]]
+        assert texts == ["기대값 마이너스면 진입 보류", "정규장 시작 30분은 금액 50%"], texts
+        assert [n["text"] for n in r["split"]] == ["느낌 좋으면 크게 산다"], "둘 다 반대한 건 핵심 노트에서 빠져야 함"
+        notes = tl.lessons_text("US", 6)
+        assert "정규장 시작 30분" in notes and "느낌 좋으면" not in notes, notes
+        assert len(tl.lessons("US", 80)) == 8, "원본 교훈이 지워짐"
+        conv = web.load_conv(r["conversation_id"])
+        assert len(conv["messages"]) >= 6, len(conv["messages"])   # 안내 + 초안 + 투표 2 + 고침 + 투표 2 + 결과
+        card = conv["messages"][-1]["trade_actions"][0]
+        assert card["type"] == "notes_undo"
+        assert at.apply_action(card)["ok"] and not tl.core("US"), "되돌리기가 안 됨"
+    finally:
+        ag.SESSIONS_DIR = old_sd
+    # 교훈이 적으면 회의 안 함
+    fresh(at, picker, tmp)
+    tl.add_lesson("US", "하나뿐", "시험")
+    assert not nc.run(at.config(), "US", ai_fn=fake)["ok"]
+
+
+@case
+def AI_리그는_안_산_판단까지_채점하고_계속_지는_구간은_안_물어봄(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    c = {**at.config(), "arena_on": True}
+    d = arena.load("US", 2)
+    a0, a1 = d["alive"][0]["id"], d["alive"][1]["id"]
+    d["alive"][0]["tp"] = d["alive"][1]["tp"] = 4.0
+    arena._save("US", d)
+    cd = {"style": "surge", "reason": "t", "features": {"change": 45, "ratio": 12, "pre": True}}
+    prompts = []
+    ai = lambda p: (prompts.append(p), {a0: True, a1: False})[1]
+    # ① 채점: a0 '산다' · a1 '안 산다' → 둘 다 '샀다면' 으로 계산 → +5% 가면 a1 은 놓친 기회
+    arena._decide(c, "US", "ZZ", cd, 100.0, "D1", ai)
+    assert len(arena.load("US")["probes"]) == 1
+    assert prompts[-1].count("🔰 기록 적음 (거래 0건)") == 2, "거래 적은 AI 에게 가상으로 사 보라는 표시가 없음"
+    arena.step(c, "US", {}, {"ZZ": {"price": 105.0}}, 30, "D1")
+    d = arena.load("US")
+    assert not d["probes"] and len(d["graded"]) == 1, (d.get("probes"), d.get("graded"))
+    g = d["graded"][0]
+    assert g["votes"][a0] is True and g["votes"][a1] is False and set(g["res"]) >= {a0, a1, "ctrl"}, g
+    idx = arena._grade_index(d)
+    assert arena.card(idx[a1])["missed"] == 1, "안 산 것 중 오른 걸 놓친 기회로 못 셈"
+    assert "상승 40%+" in g["keys"] and "프리장" in g["keys"], g["keys"]
+    # ② 거름망: a0 가 '상승 40%+' 에서 '산다' 12번 다 -2% → 그 구간 후보는 a0 에게 안 물어봄
+    bad = [{"sym": f"B{i}", "day": "D0", "t": "", "keys": ["상승 40%+"], "votes": {a0: True, a1: False}, "res": {a0: -2.0, a1: -2.0, "ctrl": -2.0}} for i in range(12)]
+    d["graded"] = bad + d["graded"]; arena._save("US", d)
+    old_ex = arena.EXPLORE; arena.EXPLORE = 0.0
+    try:
+        prompts.clear()
+        arena._decide(c, "US", "YY", cd, 100.0, "D1", ai)
+        assert prompts and a0 not in prompts[-1] and a1 in prompts[-1], "걸러진 AI 에게 또 물어봄"
+        assert "내 기록:" in prompts[-1], "판단할 때 자기 기록을 안 보여 줌"
+        assert arena.load("US")["votes"]["D1"]["YY"] == [], "걸러진 AI 가 산 걸로 됨"
+        # 둘 다 걸러지면 AI 를 아예 안 부름
+        d = arena.load("US")
+        for x in d["graded"][:12]:
+            x["votes"][a1] = True
+        arena._save("US", d)
+        prompts.clear()
+        arena._decide(c, "US", "XX", cd, 100.0, "D1", ai)
+        assert not prompts, "다 걸러졌는데 AI 를 부름"
+        assert arena.load("US")["saved"]["calls"] == 1
+        # ③ 거름망 풀기: 그 구간 후보가 최근 (내 규칙으로 샀다면) 플러스로 바뀌면 다시 물어봄
+        d = arena.load("US")
+        d["graded"] += [{"sym": f"G{i}", "day": "D1", "t": "", "keys": ["상승 40%+"], "votes": {a0: None, a1: None}, "res": {a0: 3.0, a1: 3.0, "ctrl": 3.0}} for i in range(15)]
+        arena._save("US", d)
+        prompts.clear()
+        arena._decide(c, "US", "WW", cd, 100.0, "D1", ai)
+        assert prompts and a0 in prompts[-1], "시장이 바뀌었는데 거름망이 안 풀림"
+        assert any(r.get("blocks") == [] for r in arena.board("US", c) if not r["ctrl"])
+    finally:
+        arena.EXPLORE = old_ex
+
+
+@case
+def 생존전_AI_id_는_안_겹치고_예전에_겹친_것도_고쳐짐(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=10)
+    from engine import arena, store
+    for _ in range(5):   # 같은 순간에 10명 만들어도 안 겹침
+        (tmp / "arena_US.json").unlink(missing_ok=True); store._cache.clear()
+        ids = [a["id"] for a in arena.load("US", 10)["alive"]]
+        assert len(set(ids)) == 10, ids
+    d = arena.load("US", 10)
+    d["alive"][8]["id"] = d["alive"][7]["id"]; d["alive"][8]["trades"] = [{"ret": 1.0}]
+    arena._save("US", d); store._cache.clear()
+    d2 = arena.load("US")
+    ids = [a["id"] for a in d2["alive"]]
+    assert len(set(ids)) == 10, ("겹친 id 가 안 고쳐짐", ids)
+    assert d2["alive"][8]["trades"] == [{"ret": 1.0}], "고치면서 거래 기록이 사라짐"
+    store._cache.clear()
+    assert [a["id"] for a in arena.load("US")["alive"]] == ids, "다시 읽으니 id 가 또 바뀜"
+
+
+@case
+def 생존전_AI_는_거래가_쌓이거나_연속_손실일_때만_하루_1번_물어봄(at, picker, tmp):
+    fresh(at, picker, tmp, arena_size=2)
+    from engine import arena
+    c = {**at.config(), "arena_on": True, "arena_voice": True, "arena_voice_every": 5}
+    d = arena.load("US", 2)
+    t = lambda r: {"sym": "X", "day": "D", "ret": r, "why": "t", "mins": 5, "t": ""}
+    d["alive"][0]["trades"] = [t(1.0)] * 6                  # 6건 쌓임 → 물어봄
+    d["alive"][1]["trades"] = [t(1.0), t(1.0), t(-1.0), t(-1.0)]   # 4건 → 아직
+    due = arena.voice_due(c, d, "D1")
+    assert list(due) == [d["alive"][0]["id"]], due
+    assert arena.voice_due(c, d, "D1") == {}, "같은 날 또 물어봄"
+    d["alive"][1]["trades"].append(t(-2.0))                 # 5건째 · 3연속 손실 → 바로
+    due = arena.voice_due(c, d, "D2")
+    assert d["alive"][1]["id"] in due and "연속 손실" in due[d["alive"][1]["id"]], due
+    assert d["alive"][0]["id"] not in due, "새 거래 없는데 또 물어봄"
+    assert arena.voice_due({**c, "arena_voice": False}, d, "D3") == {}, "꺼도 물어봄"
 
 
 def main() -> int:

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 import statistics as st
 import threading
 import uuid
@@ -216,13 +217,31 @@ def on_sell(sym: str, qty: float, px: float, reason: str, mode: str, closed_all:
         _save(d)
 
 
+def note_stop(sym: str, mode: str, info: dict) -> None:
+    """🧯 손절 체결 분석(지연·미끄러짐·원인)을 그 종목 최근 거래에 붙임 (기록만)"""
+    with _lock:
+        d = _load()
+        t = next((x for x in reversed(d["trades"]) if x["sym"] == sym and x["mode"] == mode and x.get("exits")), None)
+        if not t:
+            return
+        t["stop_info"] = dict(info)
+        _save(d)
+
+
+EXIT_KINDS = (("시간 손절", "시간 손절"), ("급락", "급락 대응"), ("나눠", "나눠 익절"), ("안전장치", "수익 지키기"), ("AI 판단", "AI 판단"), ("🤖 AI", "AI 판단"), ("손절", "손절"), ("본전", "본전 정리"),
+              ("고점 대비", "수익 지키기"), ("익절", "익절"), ("마감", "마감 정리"), ("장 끝", "마감 정리"),
+              ("일 보유", "시간 초과"), ("보유 일수", "시간 초과"), ("시간 초과", "시간 초과"),
+              ("20일선", "추세 이탈"), ("추세 이탈", "추세 이탈"), ("공시", "공시 악재"))
+
+
 def _kind(reason: str) -> str:
-    for key, name in (("AI 판단", "AI 판단"), ("안전장치", "AI 익절 안전장치"), ("시간 손절", "시간 손절"), ("손절", "손절"), ("본전", "본전 정리"),
-                      ("나눠", "나눠 익절"), ("익절", "익절"), ("고점", "수익 지키기"), ("마감", "마감 정리"), ("20일선", "20일선 이탈"),
-                      ("보유 일수", "최대 보유 일수"), ("공시", "공시 악재"), ("급락", "급락 대응"), ("정지", "정지 정리")):
-        if key in reason:
+    """청산 사유 분류 — '기타' 대신 규칙 이름이라도 남김 (복기용)"""
+    r = reason or ""
+    for key, name in EXIT_KINDS:   # 순서 중요: 안전장치·AI 를 익절·손절보다 먼저
+        if key in r:
             return name
-    return "기타"
+    head = re.sub(r"^\[[^\]]*\]\s*", "", r.splitlines()[0] if r.strip() else "").split(":")[0].split("(")[0].strip()[:20]
+    return head or "사유 기록 없음"
 
 
 def _update_guard(d: dict, t: dict, cfg: dict) -> None:
@@ -298,8 +317,8 @@ def _stats(ts: list[dict]) -> dict:
     pn = [t["pnl_pct"] for t in ts]
     wins = [p for p in pn if p > 0]
     loss = [p for p in pn if p <= 0]
-    return {"n": len(ts), "win_rate": round(len(wins) / len(ts) * 100), "avg": round(st.mean(pn), 2),
-            "avg_win": round(st.mean(wins), 2) if wins else 0, "avg_loss": round(st.mean(loss), 2) if loss else 0,
+    return {"n": len(ts), "win_rate": round(len(wins) / len(ts) * 100), "avg": round(st.fmean(pn), 2),
+            "avg_win": round(st.fmean(wins), 2) if wins else 0, "avg_loss": round(st.fmean(loss), 2) if loss else 0,
             "sum": round(sum(pn), 2), "mfe_med": round(st.median([t["mfe"] for t in ts]), 2),
             "mae_med": round(st.median([t["mae"] for t in ts]), 2)}
 
@@ -384,7 +403,27 @@ def estimate(features: dict, cfg: dict) -> dict:
     ev = p * avg_win + (1 - p) * avg_loss
     basis = (("같은 조건" if sample is exact else "비슷한 조건") + f" {n}건" + (f"(그림자 {n_sh}건×{SHADOW_W:g} 포함)" if n_sh else "")) \
         if n else f"기록 없음 → 기본 {base_p * 100:.0f}%"
-    return {"p": round(p, 3), "n": n, "ev": round(ev, 2), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "basis": basis}
+    lvl = "exact" if sample is exact and W(exact) >= 5 else "part" if sample is part else "exact_few"
+    return {"p": round(p, 3), "n": n, "ev": round(ev, 2), "avg_win": round(avg_win, 2), "avg_loss": round(avg_loss, 2), "basis": basis,
+            "group": group_desc(k, lvl, f0)}
+
+
+def group_desc(k: tuple, lvl: str, f: dict) -> str:
+    """묶음 기준을 사람이 읽게 (같은 기대값이 여러 종목에 찍힐 때 이유 설명용)"""
+    def rng(i, edges, unit):
+        if i < 0:
+            return "값 없음"
+        lo, hi = edges[i], edges[i + 1]
+        return f"{lo:g}{unit} 이상" if hi >= 1e9 else f"{lo:g}~{hi:g}{unit}" if lo > -1e9 else f"{hi:g}{unit} 미만"
+    if k[1] == "swing":
+        parts = [k[0], "스윙", "20일 " + rng(k[2], R20_EDGES, "%")] + (["RSI " + rng(k[3], RSI_EDGES, "")] if lvl != "part" else ["RSI 무시"])
+    else:
+        rk = PRE_RATIO_EDGES if k[2] else RATIO_EDGES
+        parts = [k[0], "단타", "프리장" if k[2] else "정규장"] + (["상승률 " + rng(k[3], CHANGE_EDGES, "%")] if lvl != "part" else ["상승률 무시"]) \
+            + ["거래량 " + rng(k[4], rk, "배")]
+    lv = {"exact": "같은 조건", "part": "넓힌 조건(같은 조건 5건 미만)", "exact_few": "같은 조건(5건 미만)"}[lvl]
+    miss = [x for x in (("r20", "rsi") if k[1] == "swing" else ("change", "ratio")) if f.get(x) is None]
+    return f"{lv}: " + " · ".join(parts) + (f" (특징값 없음: {', '.join(miss)})" if miss else "")
 
 
 def size_ratio(est: dict, cfg: dict) -> tuple[float, str]:
@@ -453,11 +492,11 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
            "by_ratio": _bucket(recent, "ratio", [0, 3, 5, 10, 1e9], "배"),
            "by_session": {k: v for k, v in (("프리장", _stats([t for t in recent if t.get("features", {}).get("pre")])),
                                             ("정규장", _stats([t for t in recent if not t.get("features", {}).get("pre")]))) if v["n"]},
-           "missed": {"n": len(missed), "avg_max_up": round(st.mean([m for _, m in missed]), 2) if missed else None,
+           "missed": {"n": len(missed), "avg_max_up": round(st.fmean([m for _, m in missed]), 2) if missed else None,
                       "top": sorted(missed, key=lambda x: -x[1])[:3]},
            "by_prob": _bucket(recent, "p", [0, 0.4, 0.5, 0.6, 1.01], ""),   # 추정 승률 구간별 실제 성적 (추정이 맞는지)
            "ai_chart": {"찬성해서 산 거래": _stats([t for t in recent if (t.get("features") or {}).get("ai_chart") == "찬성"]),
-                        "반대한 종목 그 뒤 최대 상승 평균": round(st.mean([(x["max"] / x["pick_px"] - 1) * 100 for x in w.values()
+                        "반대한 종목 그 뒤 최대 상승 평균": round(st.fmean([(x["max"] / x["pick_px"] - 1) * 100 for x in w.values()
                                                              if x.get("ai") == "반대" and x.get("pick_px")]), 2)
                         if any(x.get("ai") == "반대" for x in w.values()) else None},
            "best": max(today, key=lambda t: t["pnl_pct"], default=None), "worst": min(today, key=lambda t: t["pnl_pct"], default=None)}
@@ -492,10 +531,10 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
             # 3) 고점 대비 하락 매도: 최고점에서 너무 많이 돌려주면 → 더 빨리 팔기
             trail = [t for t in recent if t.get("exit_kind") == "수익 지키기"]
             if len(trail) >= 3:
-                give = st.mean(t["mfe"] - t["pnl_pct"] for t in trail)
+                give = st.fmean(t["mfe"] - t["pnl_pct"] for t in trail)
                 if give > cfg["trail_pct"] * 1.2 and cfg["trail_pct"] > 2:
                     proposals.append(_propose(d, cfg, "trail_pct", _r(cfg["trail_pct"] - 0.5), "최고점에서 수익을 많이 돌려주고 팔고 있어요",
-                                              f"'수익 지키기' 매도 {len(trail)}건 평균: 최고 +{st.mean(t['mfe'] for t in trail):.1f}% → 판 가격 {st.mean(t['pnl_pct'] for t in trail):+.1f}%"))
+                                              f"'수익 지키기' 매도 {len(trail)}건 평균: 최고 +{st.fmean(t['mfe'] for t in trail):.1f}% → 판 가격 {st.fmean(t['pnl_pct'] for t in trail):+.1f}%"))
             # 4) 프리장 성적
             pre = [t for t in recent if t.get("features", {}).get("pre")]
             if len(pre) >= 3:
@@ -512,21 +551,21 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
                 med = st.median(t["features"]["change"] for t in ch)
                 low = [t["pnl_pct"] for t in ch if t["features"]["change"] < med]
                 high = [t["pnl_pct"] for t in ch if t["features"]["change"] >= med]
-                if low and high and st.mean(low) < 0 < st.mean(high) and st.mean(high) - st.mean(low) > 2:
+                if low and high and st.fmean(low) < 0 < st.fmean(high) and st.fmean(high) - st.fmean(low) > 2:
                     proposals.append(_propose(d, cfg, "surge_min_change_pct", _r(max(cfg["surge_min_change_pct"] + 0.5, med)),
-                                              "덜 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 미만에서 산 거래 평균 {st.mean(low):+.2f}% vs 이상 {st.mean(high):+.2f}%"))
-                elif low and high and st.mean(high) < 0 < st.mean(low) and st.mean(low) - st.mean(high) > 2:
+                                              "덜 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 미만에서 산 거래 평균 {st.fmean(low):+.2f}% vs 이상 {st.fmean(high):+.2f}%"))
+                elif low and high and st.fmean(high) < 0 < st.fmean(low) and st.fmean(low) - st.fmean(high) > 2:
                     proposals.append(_propose(d, cfg, "surge_max_change_pct", _r(max(cfg["surge_min_change_pct"] + 3, med), 1),
-                                              "이미 너무 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 이상에서 산 거래 평균 {st.mean(high):+.2f}% vs 미만 {st.mean(low):+.2f}%"))
+                                              "이미 너무 오른 종목을 산 게 성적이 나빠요", f"상승률 {med:.1f}% 이상에서 산 거래 평균 {st.fmean(high):+.2f}% vs 미만 {st.fmean(low):+.2f}%"))
             # 6) 거래량 배수
             rt = [t for t in recent if t.get("features", {}).get("ratio") is not None and not t["features"].get("pre")]
             if len(rt) >= 6:
                 med = st.median(t["features"]["ratio"] for t in rt)
                 low = [t["pnl_pct"] for t in rt if t["features"]["ratio"] < med]
                 high = [t["pnl_pct"] for t in rt if t["features"]["ratio"] >= med]
-                if low and high and st.mean(low) < 0 < st.mean(high) and st.mean(high) - st.mean(low) > 2:
+                if low and high and st.fmean(low) < 0 < st.fmean(high) and st.fmean(high) - st.fmean(low) > 2:
                     proposals.append(_propose(d, cfg, "surge_volume_ratio", _r(max(cfg["surge_volume_ratio"] + 0.5, med)),
-                                              "거래량이 덜 붙은 종목을 산 게 성적이 나빠요", f"거래량 {med:.1f}배 미만 평균 {st.mean(low):+.2f}% vs 이상 {st.mean(high):+.2f}%"))
+                                              "거래량이 덜 붙은 종목을 산 게 성적이 나빠요", f"거래량 {med:.1f}배 미만 평균 {st.fmean(low):+.2f}% vs 이상 {st.fmean(high):+.2f}%"))
         rep["proposals"] = [p["id"] for p in proposals if p]
         rep["note"] = "" if len(recent) >= MIN_TRADES else f"거래가 {len(recent)}건뿐이라 규칙 조정 제안은 {MIN_TRADES}건 이상 쌓이면 시작해요"
         d["reviews"] = [r for r in d["reviews"] if not (r["day"] == day and r["mode"] == mode and r.get("market", "US") == mk)] + [rep]
@@ -623,8 +662,8 @@ def _grp(ts: list[dict]) -> dict:
     if not n:
         return {"n": 0, "win_rate": 0, "avg": 0.0, "mfe_avg": 0.0}
     return {"n": n, "win_rate": round(sum(1 for t in ts if float(t.get("pnl_pct") or 0) > 0) / n * 100),
-            "avg": round(st.mean(float(t.get("pnl_pct") or 0) for t in ts), 2),
-            "mfe_avg": round(st.mean(float(t.get("mfe") or 0) for t in ts), 2)}
+            "avg": round(st.fmean(float(t.get("pnl_pct") or 0) for t in ts), 2),
+            "mfe_avg": round(st.fmean(float(t.get("mfe") or 0) for t in ts), 2)}
 
 
 def rebound_stats(market: str, d: dict | None = None) -> dict:
@@ -690,6 +729,16 @@ def trades_since(mode: str, since: str, market: str | None = None) -> list[dict]
         return [t for t in _load()["trades"] if t["mode"] == mode and t["closed"] and t["entry_time"] >= since and (not market or _tm(t) == market)]
 
 
+def month_closed_stats(market: str, month_key: str) -> dict:
+    """그 달(YYYY-MM)에 끝난 거래의 건수·승률 (실전+가상, 읽기만)"""
+    with _lock:
+        ts = [t for t in _load()["trades"] if t["closed"] and t.get("exits") and _tm(t) == market
+              and str(t["exits"][-1].get("t", "")).startswith(month_key)]
+    n = len(ts)
+    wins = sum(1 for t in ts if float(t.get("pnl_pct") or 0) > 0)
+    return {"n": n, "wins": wins, "win_rate": round(wins / n * 100) if n else 0}
+
+
 # ── 🚀 30% 초과 급등주 전략만의 실전 성적 ──
 def hot_stats(market: str, mode: str = "live") -> dict:
     """누적 수익률 = 실현 손익 합 ÷ 투입 원금 합 (수수료·세금 포함), 건수, 승률, 최고점 대비 최대 하락(누적 수익률 곡선, %p)"""
@@ -753,39 +802,32 @@ REPEAT_TO_RULE = 3   # 같은 교훈이 이만큼 반복되면 → 규칙 반영
 
 def _similar(a: str, b: str) -> bool:
     import difflib
-    import re as _re
-    na, nb = (_re.sub(r"[\s\[\]()·,.'\"]+", "", x).lower() for x in (a, b))
+    na, nb = (re.sub(r"[\s\[\]()·,.'\"]+", "", x).lower() for x in (a, b))
     return bool(na and nb) and (na == nb or difflib.SequenceMatcher(None, na, nb).ratio() >= 0.75)
 
 
 def add_lesson(market: str, text: str, by: str = "") -> None:
-    """공유 노트에 교훈 추가 · 비슷한 교훈이 이미 있으면 새로 안 쌓고 반복 횟수만 올림 →
-    REPEAT_TO_RULE 번 반복되면 '규칙에 반영' 개선 제안을 자동으로 올림 (한 번만)"""
+    """공유 노트에 교훈 추가 (원본은 그대로 쌓음 — 합치기는 📒 노트 정리 회의가 함)
+    🔁 비슷한 교훈이 REPEAT_TO_RULE 번 쌓였는데 아직 제안 안 했으면 → '규칙에 반영' 개선 제안을 자동으로 (한 번만)"""
     text = text.strip()
     with _lock:
         d = store.load(LESSONS, lambda: {"items": []})
-        old = next((x for x in reversed(d["items"]) if x.get("market") == market and _similar(x.get("text", ""), text)), None)
-        if old:
-            old["count"] = int(old.get("count", 1)) + 1
-            old["last"] = _now()
-            propose = old["count"] >= REPEAT_TO_RULE and not old.get("proposed")
-            if propose:
-                old["proposed"] = _now()
-            store.save(LESSONS, d)
-        else:
-            d["items"] = (d["items"] + [{"t": _now(), "market": market, "text": text[:300], "by": by, "count": 1}])[-200:]
-            store.save(LESSONS, d)
-            propose = False
-    if old:
+        sim = [x for x in d["items"] if x.get("market") == market and x.get("kind") != "owner_ref" and _similar(x.get("text", ""), text)]
+        n_rep = len(sim) + 1
+        propose = n_rep >= REPEAT_TO_RULE and not any(x.get("proposed") for x in sim)
+        item = {"t": _now(), "market": market, "text": text[:300], "by": by}
         if propose:
-            try:
-                from . import improve
-                improve.create(f"반복되는 교훈을 매매 규칙(코드나 설정)에 반영: {old['text'][:200]}",
-                               f"공유 노트에 같은 교훈이 {old['count']}번 반복됐는데 규칙은 그대로예요 ({'미장' if market == 'US' else '국장'} · {by or old.get('by', '')}). "
-                               "근거 숫자를 학습 기록에서 확인하고, 맞으면 규칙에 반영 · 틀리면 교훈을 고쳐 주세요", team="자동매매 팀")
-            except Exception:
-                pass
-        return
+            item["proposed"] = _now()
+        d["items"] = (d["items"] + [item])[-200:]
+        store.save(LESSONS, d)
+    if propose:
+        try:
+            from . import improve
+            improve.create(f"반복되는 교훈을 매매 규칙(코드나 설정)에 반영: {text[:200]}",
+                           f"공유 노트에 비슷한 교훈이 {n_rep}번 쌓였는데 규칙은 그대로예요 ({'미장' if market == 'US' else '국장'} · {by}). "
+                           "근거 숫자를 학습 기록에서 확인하고, 맞으면 규칙에 반영 · 틀리면 교훈을 고쳐 주세요", team="자동매매 팀")
+        except Exception:
+            pass
     try:   # 자동매매 팀 기억에도 한 줄 (채팅 AI 가 항상 보게)
         from .agents import Agent
         Agent("trader").remember(f"📒 교훈({'미장' if market == 'US' else '국장'}): {text[:200]}")
@@ -793,15 +835,64 @@ def add_lesson(market: str, text: str, by: str = "") -> None:
         pass
 
 
+def add_owner_note(market: str, text: str, to: str) -> str:
+    """💬 사장님 참고 의견 — 검증 전이라 '교훈'과 구분해서 공유 노트에만 (팀 기억엔 안 넣음). 기록한 문구 반환"""
+    line = f"💬 사장님 참고 의견(→{to[:20]}, 검증 전): {text.strip()[:240]}"
+    with _lock:
+        d = store.load(LESSONS, lambda: {"items": []})
+        d["items"] = (d["items"] + [{"t": _now(), "market": market, "text": line, "by": "owner", "kind": "owner_ref"}])[-200:]
+        store.save(LESSONS, d)
+    return line
+
+
 def lessons(market: str | None = None, n: int = 10) -> list[dict]:
     with _lock:
         items = store.load(LESSONS, lambda: {"items": []}).get("items", [])
-    items = sorted(items, key=lambda x: x.get("last") or x.get("t", ""))   # 반복된 교훈은 최근 것으로
     return [x for x in items if not market or x.get("market") == market][-n:][::-1]
 
 
 def lessons_text(market: str | None, n: int = 6) -> str:
-    return " / ".join(x["text"] + (f" ({x['count']}번 반복)" if int(x.get("count", 1)) > 1 else "") for x in lessons(market, n)[::-1])
+    """AI 들이 판단할 때 읽는 공유 노트.
+    📒 노트 정리 회의가 합의한 핵심 노트가 있으면: 핵심 노트(중요한 순) 앞 n개 + 그 뒤 새로 생긴 교훈 몇 개
+    없으면: 최근 교훈 n개"""
+    c = core(market) if market else {}
+    if c.get("items"):
+        newer = [x for x in lessons(market, 50) if x.get("t", "") > c.get("t", "")][: max(1, n // 3)]
+        return " / ".join([x["text"] for x in c["items"][:n]] + [x["text"] for x in newer[::-1]])
+    return " / ".join(x["text"] for x in lessons(market, n)[::-1])
+
+
+# ── 📒 핵심 노트 (노트 정리 회의 합의본 · 원본 교훈은 그대로 보관) ──
+CORE = COMPANY_DIR / "_cache" / "notes_core.json"
+
+
+def core(market: str) -> dict:
+    """{"t": 정리한 시각, "items": [{"text", "from", "evidence", "votes"}], ...} — 없으면 {}"""
+    with _lock:
+        return (store.load(CORE, lambda: {}).get(market) or {}).get("cur") or {}
+
+
+def set_core(market: str, items: list[dict], **meta) -> None:
+    with _lock:
+        d = store.load(CORE, lambda: {})
+        slot = d.setdefault(market, {})
+        if slot.get("cur"):
+            slot["prev"] = slot["cur"]
+        slot["cur"] = {"t": _now(), "items": items, **meta}
+        store.save(CORE, d)
+
+
+def undo_core(market: str) -> dict:
+    """마지막 정리 되돌리기 (그 전 핵심 노트로 · 없으면 핵심 노트 없이 최근 교훈으로)"""
+    with _lock:
+        d = store.load(CORE, lambda: {})
+        slot = d.get(market) or {}
+        if not slot.get("cur"):
+            return {"ok": False, "message": "되돌릴 정리가 없어요"}
+        slot["cur"], slot["prev"] = slot.get("prev"), None
+        d[market] = slot
+        store.save(CORE, d)
+    return {"ok": True, "message": "노트 정리를 되돌렸어요" + ("" if slot["cur"] else " (이제 최근 교훈을 그대로 읽어요)")}
 
 
 def last_review_text(mode: str, market: str | None = None) -> str:

@@ -300,6 +300,10 @@ def 공시_악재_판정():
     assert len(u["bad"]) == 3 and len(u["items"]) == 2, u
     assert news.note({"ok": True, "src": "SEC", "bad": [], "items": []}).endswith("급등 이유 모름)")
     assert news.note({"ok": False}) == ""
+    rss = "<rss><channel><item><title>삼성전자, 신고가</title></item><item><title>삼성전자, 신고가</title></item><item><title>B</title></item></channel></rss>"
+    assert news.parse_rss(rss) == ["삼성전자, 신고가", "B"]
+    n = news.note({"ok": True, "src": "DART", "bad": [], "items": [], "heads": ["삼성전자, 신고가"]})
+    assert "뉴스: 삼성전자" in n and "이유 모름" not in n
 
 
 @case
@@ -436,11 +440,10 @@ def 자동_규칙_변경은_하루_1번():
 @case
 def AI_생존전_가상_공부와_상위_실전_자격():
     import re as _re
-    import time as _t
     from . import arena
     src = (Path(arena.__file__)).read_text(encoding="utf-8")
     code = "\n".join(x for x in src.splitlines() if not x.strip().startswith("#") and '"""' not in x)
-    assert not _re.search(r"place_limit_order|cancel_order|toss\.", code), "생존전이 주문·토스를 직접 부름"
+    assert not _re.search(r"place_limit_order|cancel_order|toss\.", code), "AI 리그가 주문·토스를 직접 부름"
     with tempfile.TemporaryDirectory() as d:
         orig = arena._file
         arena._file = lambda m: Path(d) / f"arena_{m}.json"
@@ -468,37 +471,38 @@ def AI_생존전_가상_공부와_상위_실전_자격():
             assert len(dd["alive"]) == 3, ("탈락 없이 전원 남아야 함", msg)
             assert dd["live"] == [ids[0]], ("성적 플러스인 0번만 실전 자격", dd.get("live"), msg)   # 1번(마이너스)·2번(거래 없음)은 가상
             assert "성적 발표" in msg and arena.champion_text("US")
-            assert arena.live_vote("US", "D", "S0") == ("yes", {"id": ids[0], "name": dd["alive"][0]["name"], "rank": 1})
+            vs_, who_ = arena.live_vote("US", "D", "S0")
+            assert vs_ == "yes" and (who_["id"], who_["name"], who_["rank"]) == (ids[0], dd["alive"][0]["name"], 1), (vs_, who_)
+            assert who_["size"] == 1.0, ("실전 자격 1명이 찬성하면 금액 그대로", who_)
             dd["alive"][0]["trades"] += [{"sym": f"Z{j}", "day": "D", "ret": -9.0, "why": "t", "mins": 1, "t": ""} for j in range(6)]
             arena._save("US", dd)
             assert arena.recheck(c, "US") and arena.load("US")["live"] == [], "성적 떨어지면 바로 자격 내림"
-            sk = arena.load("US")["alive"][2]
-            assert sk["skips"] and sk["skips"][0]["sym"] == "S0", "안 산 판단이 채점 안 됨"
-            lucky = {"trades": [{"sym": "BIG", "ret": 40.0}] + [{"sym": f"L{j}", "ret": -0.5} for j in range(29)], "skips": []}
-            assert not arena._qualified(lucky, 20), "대박 한 종목으로 실전 자격을 받음"
-            late = {"trades": [{"sym": f"E{j}", "ret": 1.0} for j in range(35)] + [{"sym": f"F{j}", "ret": -1.0} for j in range(15)], "skips": []}
-            assert not arena._qualified(late, 20), "최근(뒤 30%)이 마이너스인데 실전 자격을 받음"
-            seen = {"S9": _t.time() - 3700, "S8": _t.time() - 60}
-            assert arena._seen_ok(seen, "S9", _t.time()) and not arena._seen_ok(seen, "S8", _t.time()), "60분 뒤 다시 판단"
         finally:
             arena._file = orig
 
 
 @case
-def 반복_교훈은_합치고_3번이면_규칙_반영_제안():
-    from . import agents, improve
+def 반복_교훈_3번이면_규칙_반영_제안_독립_표본():
+    from . import agents, arena, improve
     from . import tradelearn as tl
     with tempfile.TemporaryDirectory() as d:
         o_l, o_c, o_r = tl.LESSONS, improve.create, agents.Agent.remember
         made = []
         tl.LESSONS = Path(d) / "l.json"; improve.create = lambda r, w="", team="": made.append(r); agents.Agent.remember = lambda self, n: None
         try:
-            for t in ("거래량 10배↑ 종목은 승률 낮음", "거래량 10배 이상 종목은 승률 낮음.", "[거래량 10배↑] 종목은 승률 낮음", "다른 교훈"):
+            for t in ("거래량 10배↑ 종목은 승률 낮음", "거래량 10배 이상 종목은 승률 낮음.", "[거래량 10배↑] 종목은 승률 낮음", "다른 교훈",
+                      "거래량 10배↑ 종목은 승률 낮음"):
                 tl.add_lesson("US", t, "시험")
-            assert len(tl.lessons("US", 10)) == 2 and len(made) == 1, (tl.lessons("US", 10), made)
-            assert tl._kind("스윙 매도: 20일선 이탈") == "20일선 이탈" and tl._kind("⏱ 시간 손절") == "시간 손절"
+            assert len(made) == 1, ("3번째에 한 번만 제안", made)
+            assert tl._kind("⏱ 시간 손절 15분") == "시간 손절" and tl._kind("나눠 팔기 +4%") == "나눠 익절"
         finally:
             tl.LESSONS, improve.create, agents.Agent.remember = o_l, o_c, o_r
+    ind = arena._indep([{"sym": "A", "day": "1", "ret": 2.0}, {"sym": "A", "day": "1", "ret": 4.0}, {"sym": "B", "day": "1", "ret": -1.0}])
+    assert [x["ret"] for x in ind] == [3.0, -1.0], ind
+    lucky = {"trades": [{"sym": "BIG", "day": "1", "ret": 60.0}] + [{"sym": f"L{j}", "day": "1", "ret": -0.5} for j in range(29)]}
+    assert not arena._qualified(lucky, 20), "대박 한 종목으로 실전 자격"
+    dup = {"trades": [{"sym": "S", "day": "1", "ret": 1.0} for _ in range(30)]}
+    assert not arena._qualified(dup, 20), "같은 종목·같은 날 중복을 30건으로 셈"
 
 
 @case

@@ -110,6 +110,23 @@ def save_conv(conv: dict) -> None:
     (d / "chat.md").write_text("".join(lines), encoding="utf-8")
 
 
+CONV_LOCK = threading.RLock()   # 대화 파일 쓰기는 한 번에 하나 (채팅 답변 중에 🗣️ AI 리그 의견이 붙어도 안 덮어씀)
+
+
+def save_conv_merged(conv: dict, base: int) -> int:
+    """conv["messages"][base:] 만 '내가 새로 붙인 것' 으로 보고, 그사이 파일에 붙은 메시지(다른 곳에서 보낸 것)를 살려서 저장.
+    다음 호출에 쓸 base(지금 메시지 수) 반환"""
+    with CONV_LOCK:
+        mine = conv["messages"][base:]
+        try:
+            disk = load_conv(conv["id"])["messages"]
+        except (OSError, ValueError, KeyError):
+            disk = conv["messages"][:base]
+        conv["messages"] = disk + mine
+        save_conv(conv)
+        return len(conv["messages"])
+
+
 def new_conv(title: str) -> dict:
     cid = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     return {"id": cid, "title": title[:40] or "새 대화", "agent": None, "messages": []}
@@ -128,6 +145,15 @@ def list_convs() -> list[dict]:
 
 
 # ── 요청 처리 ─────────────────────────────────────────────────────────────
+class _Server(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        """화면을 닫거나 새로 고쳐서 브라우저가 먼저 끊은 건 정상 — 검은 창에 오류로 안 찍음"""
+        import sys
+        if isinstance(sys.exc_info()[1], ConnectionError):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "CompanyAI/1.0"
 
@@ -250,12 +276,28 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             if card and card.get("status") in ("applied", "ignored"):
                 return self._json({"ok": False, "message": "이미 처리한 카드예요", "status": card["status"]})
-            r = {"ok": True, "message": "무시했어요"} if body.get("ignore") else at.apply_action(a)
+            r = {"ok": True, "message": "무시했어요"} if body.get("ignore") else at.apply_action(card or a)   # 저장된 카드 내용 그대로 적용
             if card is not None and (r.get("ok") or body.get("ignore")):
-                card["status"] = "ignored" if body.get("ignore") else "applied"
-                card["result"] = str(r.get("message") or "바꿨어요")[:200]
-                save_conv(conv)
+                with CONV_LOCK:   # 다시 읽고 표시 (그사이 붙은 메시지 안 덮어씀)
+                    try:
+                        conv = load_conv(conv["id"])
+                        card = next((x for m in conv["messages"] for x in (m.get("trade_actions") or []) if x.get("id") == a.get("id")), None)
+                    except (OSError, ValueError, KeyError):
+                        card = None
+                    if card is not None:
+                        card["status"] = "ignored" if body.get("ignore") else "applied"
+                        card["result"] = str(r.get("message") or "바꿨어요")[:200]
+                        save_conv(conv)
             return self._json(r)
+        if path == "/api/autotrade/arena-voice":   # 🗣️ 리그 AI 의견 지금 받기 (뒤에서 · 채팅으로 옴)
+            from . import arena_voice
+            c = at.config()
+            if not c.get("arena_on"):
+                return self._json({"ok": False, "message": "AI 리그이 꺼져 있어요"})
+            return self._json(arena_voice.run_bg(c, at.markets()))
+        if path == "/api/autotrade/notes-council":   # 📒 노트 정리 회의 지금 (뒤에서 · 채팅으로 옴)
+            from . import notes_council
+            return self._json(notes_council.run_bg(at.config(), at.markets()))
         if path == "/api/autotrade/unhalt":   # 화면 버튼 전용 (채팅 카드로는 없음)
             return self._json(at.unhalt())
         if path == "/api/autotrade/review":
@@ -316,6 +358,15 @@ class Handler(BaseHTTPRequestHandler):
                 "models": [{"label": l, "value": v} for l, v in MODEL_CHOICES],
                 "company": "자동매매 AI", "team_mode": "off",
             })
+        if path == "/api/autotrade/digest":   # 📋 제안 현황 (읽기 전용)
+            from . import digest
+            out = {}
+            for m in at.markets():
+                try:
+                    out[m] = digest.text(m)
+                except Exception as e:
+                    out[m] = f"제안 현황을 못 만들었어요 ({type(e).__name__})"
+            return self._json(out)
         if path == "/api/conversations":
             return self._json(list_convs())
         m = re.match(r"^/api/conversations/([\w\-]+)/live$", path)
@@ -532,6 +583,16 @@ class Handler(BaseHTTPRequestHandler):
                                                        if pv.claude_cli() else pv.LOGIN_HELP))})
         cid = body.get("conversation_id")
         conv = load_conv(cid) if cid else new_conv(text)
+        try:   # 🗣️ '1호야 …' · '@눌림목 …' 처럼 AI 를 부르면 그 AI 가 읽기 전용으로 답함
+            from . import ai_ask
+            who = ai_ask.match(text)
+            lm = re.search(r"-arena(US|KR)$", conv.get("id", ""))
+            if who and who["kind"] == "all" and lm:   # 이름 없이 물으면 자동매매 봇 혼자 답함 · '다들 …' 만 리그 전원 (이 방의 시장)
+                who = ai_ask.everyone(lm.group(1), who["question"])
+        except Exception:
+            who = None
+        if who:
+            return self._ask_ai(conv, who, text, body)
         agent_id = ag.TRADER
         override = body.get("model") or None
         conv["agent"] = agent_id
@@ -544,8 +605,9 @@ class Handler(BaseHTTPRequestHandler):
             history.append({"role": "user", "content": text})
         if images:
             history[-1]["content"] += f"\n\n[화면 캡처 {len(images)}장 첨부]"
+        base = len(conv["messages"])
         conv["messages"].append({"role": "user", "content": text, "images": image_ids})
-        save_conv(conv)
+        base = save_conv_merged(conv, base)
         self._live = LIVE.setdefault(conv["id"], {})
         self._live.clear(); self._live.update(text="", status="답변 준비 중", t=time.time(), done=False, started=time.time())
         self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
@@ -557,17 +619,6 @@ class Handler(BaseHTTPRequestHandler):
             extra += "\n\n" + market
             images = images + [str(UPLOAD_DIR / c["id"]) for c in self._charts]   # AI 가 차트를 그림으로 직접 보게
         extra += "\n\n" + at.engine_context() + "\n\n" + at.TRADE_GUIDE   # 🤖 엔진 전체 상태 + [적용] 카드용 행동 태그
-        try:   # 💬 생존전 AI 에게 직접 묻기: 질문에 생존전·참가자 이름이 있으면 그 AI 들의 답을 받아 붙임
-            from . import arena
-            for m_ in at.markets():
-                who = arena.ask_needed(text, m_)
-                if who:
-                    self._live.update(status="생존전 AI 들에게 묻는 중")
-                    ans = arena.ask(m_, text, who)
-                    if ans:
-                        extra += "\n\n" + ans
-        except Exception:
-            pass
         if toss.enabled() and toss.ACCOUNT_WORDS.search(text):   # "내 잔고" 질문이면 계좌 조회 (조회 전용)
             try:
                 extra += "\n\n" + toss.portfolio_for_prompt()
@@ -590,6 +641,10 @@ class Handler(BaseHTTPRequestHandler):
             log(f"  🛠️ 개선 제안: {what[:40]}")
             self._send("improve_request", job)
         acts = at.find_actions(reply)
+        if acts:   # 이미 [적용] 대기 중인 같은 카드는 또 안 만듦
+            from . import digest
+            waiting = {p["label"] for p in digest._pending_cards()}
+            acts = [a for a in acts if a["label"] not in waiting]
         if acts:   # 바로 실행하지 않고 [적용] 카드로
             conv["messages"][-1]["trade_actions"] = acts
             for a in acts:
@@ -603,8 +658,75 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"  🧰 도구 요청: {r['name']} ({r['status']})")
                 self._send("tool_request", {**r, "desc": t.get("desc", ""), "signup": t.get("signup", ""),
                                             "steps": t.get("steps", []), "tool_status": tl.status(t) if t else ""})
-        save_conv(conv)
+        save_conv_merged(conv, base)   # 답변 만드는 사이 붙은 🗣️ AI 리그 의견 등은 살림
         log("  ✅ 답변 완료")
+        LIVE.pop(conv["id"], None)
+        self._live = None
+        self._send("done", {"conversation_id": conv["id"]})
+
+    def _ask_ai(self, conv: dict, who: dict, text: str, body: dict):
+        """🗣️ 지정한 AI(1호·2호·AI 리그) 이름으로 답 — 읽기 전용: [적용] 카드·개선 제안·도구 요청 안 만듦"""
+        from . import ai_ask
+        agent_id = ag.TRADER
+        conv["agent"] = agent_id
+        spec = pv.parse_model(body.get("model") or ag.Agent(agent_id).model_spec())
+        log(f"💬 🗣️ {who['name']} 에게: {text[:40]}")
+        history = chat_history(conv)[-8:]
+        while history and history[0]["role"] != "user":   # 첫 메시지는 사용자 것이어야 함
+            history.pop(0)
+        if history and history[-1]["role"] == "user":
+            history[-1]["content"] += "\n\n" + text
+        else:
+            history.append({"role": "user", "content": text})
+        base = len(conv["messages"])
+        conv["messages"].append({"role": "user", "content": text, "images": []})
+        base = save_conv_merged(conv, base)
+        self._live = LIVE.setdefault(conv["id"], {})
+        self._live.clear(); self._live.update(text="", status=f"{who['name']} 답변 준비 중", t=time.time(), done=False, started=time.time())
+        self._send("meta", {"conversation_id": conv["id"], "title": conv["title"], "agent": agent_id,
+                            "model": str(spec), "reason": "", "sources": [], "team": 1, "router_model": "", "member_model": ""})
+        ok, used = ai_ask.take()
+        head = f"**🗣️ {who['name']}** · 읽기 전용 답변 (오늘 AI 지정 질문 {used}/{ai_ask.ASK_PER_DAY})\n\n"
+        if not ok:
+            reply = (f"**🗣️ {who['name']}**\n\n오늘 AI 지정 질문 한도({ai_ask.ASK_PER_DAY}번)를 다 썼어요. "
+                     "내일 다시 물어보시거나, AI 이름 없이 물으면 자동매매 팀이 답해요.")
+        else:
+            each = who["kind"] == "all"
+            self._send("status", {"text": f"🗣️ {who['name']} 기록 모으는 중..." + (" (전원 답을 한 번에 받아요)" if each else "")})
+            if not each:   # 전원 답은 JSON 이라 다 받은 뒤 AI 별로 나눠 보여 줌
+                self._send("delta", {"text": head})
+            try:
+                system = ai_ask.system_prompt(who)
+                ans = pv.chat(spec, system, history, on_text=None if each else (lambda t: self._send("delta", {"text": t})),
+                              effort=body.get("effort") or "low", on_activity=lambda a: self._send("activity", a))
+            except BaseException:
+                ai_ask.refund()   # 실패는 한도로 안 셈
+                raise
+            parts = ai_ask.split_answers(ans, who["markets"][0]) if each else []
+            try:   # 자료·도구 답을 한 AI 는 다음엔 안 물음
+                ai_ask.mark_tools(who, [n for n, a in parts if "🧰" in a] if each else ([who["name"]] if "🧰" in ans else []))
+            except Exception:
+                pass
+            if parts:   # AI 마다 자기 이름으로 메시지 하나씩
+                msgs = [{"role": "assistant", "content": f"**🗣️ {n}**\n\n{a}", "agent": agent_id, "model": str(spec), "sources": [],
+                         "drafts": [], "steps": [], "asked_ai": n} for n, a in parts]
+                self._send("replace", {"text": "\n\n---\n\n".join(m_["content"] for m_ in msgs)})
+                conv["messages"] += msgs
+                save_conv_merged(conv, base)
+                log(f"  ✅ 리그 AI {len(msgs)}명 답변 완료 (읽기 전용)")
+                LIVE.pop(conv["id"], None)
+                self._live = None
+                return self._send("done", {"conversation_id": conv["id"]})
+            reply = head + ans.strip()
+        note = ai_ask.save_opinion(who, text)
+        if note:
+            reply += f"\n\n📒 공유 노트에 기록했어요 (참고용 · 규칙은 안 바뀜): {note}"
+            log(f"  📒 {note[:60]}")
+        self._send("replace", {"text": reply})
+        conv["messages"].append({"role": "assistant", "content": reply, "agent": agent_id, "model": str(spec), "sources": [],
+                                 "drafts": [], "steps": [], "asked_ai": who["name"]})
+        save_conv_merged(conv, base)
+        log("  ✅ 답변 완료 (읽기 전용)")
         LIVE.pop(conv["id"], None)
         self._live = None
         self._send("done", {"conversation_id": conv["id"]})
@@ -840,7 +962,7 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     server = None
     for _ in range(30 if handoff else 1):   # 재시작이면 옛 앱의 주소가 풀릴 때까지 잠깐 다시 시도
         try:
-            server = ThreadingHTTPServer(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
+            server = _Server(("0.0.0.0" if ip else "127.0.0.1", port), Handler)
             break
         except OSError:
             if handoff:
@@ -885,6 +1007,14 @@ def serve(port: int = 8765, open_browser: bool = True, phone: bool = False) -> N
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n종료")
+        print("\n종료 — 기록 저장 중...")
+        try:   # 그림자 매매는 3분마다만 쓰므로 끌 때 남은 것 저장
+            from . import shadow, store
+            shadow.flush()
+            left = store.flush()
+            if left:
+                print("⚠️ 못 쓴 기록:", ", ".join(left))
+        except Exception as e:
+            print(f"⚠️ 기록 저장 실패: {type(e).__name__}: {e}")
     finally:
         server.server_close()

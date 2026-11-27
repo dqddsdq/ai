@@ -70,8 +70,8 @@ def pattern_study(market: str, log=print, max_syms: int = 400, days: int = 130) 
     def agg(xs):
         if not xs:
             return {"n": 0}
-        return {"n": len(xs), "d1_avg": round(st.mean(x["d1"] for x in xs), 2), "d1_up": round(sum(x["d1"] > 0 for x in xs) / len(xs) * 100),
-                "d3_avg": round(st.mean(x["d3"] for x in xs), 2), "low3_avg": round(st.mean(x["low3"] for x in xs), 2)}
+        return {"n": len(xs), "d1_avg": round(st.fmean(x["d1"] for x in xs), 2), "d1_up": round(sum(x["d1"] > 0 for x in xs) / len(xs) * 100),
+                "d3_avg": round(st.fmean(x["d3"] for x in xs), 2), "low3_avg": round(st.fmean(x["low3"] for x in xs), 2)}
     out = {"t": datetime.now(KST).isoformat(timespec="seconds"), "market": market, "n_syms": len(syms), "all": agg(events),
            "by_chg": {k: agg([e for e in events if lo <= e["chg"] < hi]) for k, lo, hi in (("20~30%", 20, 30), ("30~50%", 30, 50), ("50%+", 50, 1e9))},
            "by_vol": {k: agg([e for e in events if lo <= e["vr"] < hi]) for k, lo, hi in (("3~5배", 3, 5), ("5~10배", 5, 10), ("10배+", 10, 1e9))}}
@@ -105,9 +105,9 @@ def missed_study(market: str, days: int = 30) -> dict:
     def agg(xs):
         if not xs:
             return {"n": 0}
-        return {"n": len(xs), "up_avg": round(st.mean(x["up"] for x in xs), 2), "down_avg": round(st.mean(x["down"] for x in xs), 2),
-                "chg_avg": round(st.mean(float(x.get("change") or 0) for x in xs), 1),
-                "ratio_avg": round(st.mean(float(x.get("ratio") or 0) for x in xs), 2), "pre_pct": round(sum(bool(x.get("pre")) for x in xs) / len(xs) * 100)}
+        return {"n": len(xs), "up_avg": round(st.fmean(x["up"] for x in xs), 2), "down_avg": round(st.fmean(x["down"] for x in xs), 2),
+                "chg_avg": round(st.fmean(float(x.get("change") or 0) for x in xs), 1),
+                "ratio_avg": round(st.fmean(float(x.get("ratio") or 0) for x in xs), 2), "pre_pct": round(sum(bool(x.get("pre")) for x in xs) / len(xs) * 100)}
     bought, missed = [p for p in picks if p.get("bought")], [p for p in picks if not p.get("bought")]
     big = sorted(missed, key=lambda p: -p["up"])[:5]
     return {"bought": agg(bought), "missed": agg(missed), "missed_top": [(p["sym"], p["day"], round(p["up"], 1)) for p in big]}
@@ -149,11 +149,11 @@ def run(log=print) -> dict:
                 except Exception as e:
                     r["pattern"] = {"note": f"실패 {type(e).__name__}"}
                 r["missed"] = missed_study(m)
-                try:   # 🏟️ AI 생존전: 꼴찌 탈락 · 1등 변형 투입 · 챔피언
+                try:   # 🏟️ AI 리그: 꼴찌 탈락 · 1등 변형 투입 · 챔피언
                     from . import arena
                     r["arena"] = arena.evolve(at.config(), m, arena.ai_json, tl.add_lesson, tl.lessons_text(m, 8))
                 except Exception as e:
-                    r["arena"] = f"🏟️ 생존전 정리 실패: {type(e).__name__}"
+                    r["arena"] = f"🏟️ AI 리그 정리 실패: {type(e).__name__}"
                 try:
                     s = at.state()
                     fx = 1.0 if m == "KR" else at.usd_krw(c)
@@ -163,6 +163,12 @@ def run(log=print) -> dict:
                 except Exception as e:
                     r["score"] = f"성적표 실패 {type(e).__name__}"
                 r["ai"] = _ai_review(m, r)
+                if at.config().get("notes_council", True):   # 📒 이번 주 교훈까지 넣고 AI 셋이 회의해서 공유 노트 정리
+                    try:
+                        from . import notes_council
+                        r["notes"] = notes_council.run_and_post(at.config(), m, log=log).get("message", "")
+                    except Exception as e:
+                        r["notes"] = f"노트 정리 실패: {type(e).__name__}"
                 store.save(_file(f"weekend_{m}.json"), {"t": datetime.now(KST).isoformat(timespec="seconds"), **r})
                 out[m] = r
                 flag = "🇺🇸 미장" if m == "US" else "🇰🇷 국장"
@@ -173,7 +179,7 @@ def run(log=print) -> dict:
                        + (f"\n{r['fixloop']}" if r.get("fixloop") else "") + (" (그림자에 추가)" if r.get("fix_seed") else "")
                        + (f"\n📈 {pt}" if pt else "") + (f"\n{r['arena']}" if r.get("arena") else "")
                        + (f"\n🔎 놓친 종목 {ms['missed']['n']}개 평균 최고 {ms['missed']['up_avg']:+.1f}% vs 산 종목 {ms['bought']['n']}개 {ms['bought'].get('up_avg', 0):+.1f}%" if ms["missed"].get("n") else "")
-                       + (f"\n🤖 {r['ai']}" if r.get("ai") else ""))
+                       + (f"\n🤖 {r['ai']}" if r.get("ai") else "") + (f"\n📒 {r['notes']}" if r.get("notes") else ""))
                 notify.send(msg[:3500])
                 at.event("주말 공부", msg[:400])
         _mark_done()
@@ -186,7 +192,7 @@ def _ai_review(market: str, r: dict) -> str:
     """주간 종합 복기 (AI 1번) → 교훈 2~3개를 공유 노트에"""
     from . import providers as pv
     from . import team as tm
-    data = {"성적": r.get("score", ""), "AI생존전": r.get("arena", ""), "백테스트": r.get("backtest", ""), "원인별수정": r.get("fixloop", ""), "과거급등패턴": (r.get("pattern") or {}).get("all"),
+    data = {"성적": r.get("score", ""), "AI 리그": r.get("arena", ""), "백테스트": r.get("backtest", ""), "원인별수정": r.get("fixloop", ""), "과거급등패턴": (r.get("pattern") or {}).get("all"),
             "급등구간별": (r.get("pattern") or {}).get("by_chg"), "놓친vs산": r.get("missed"), "공유노트": tl.lessons_text(market, 8)}
     prompt = ("자동매매 엔진의 이번 주 기록이에요. 다음 주 매매에 바로 쓸 교훈 2~3개를 한 줄씩 써 주세요 "
               "(숫자는 아래 자료만, 이미 공유 노트에 있는 건 빼고, 투자 권유 문구 없이).\n"

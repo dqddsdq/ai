@@ -240,6 +240,67 @@ button { cursor: pointer; }
 .tlog { font-size: 12.5px; line-height: 1.6; max-height: 320px; overflow: auto; }
 .tlog div { border-bottom: 1px dashed var(--line); padding: 3px 0; }
 .tlog .k { display: inline-block; min-width: 68px; font-weight: 600; }
+
+/* 자동매매: 화면 나누기 + 카드 정리 */
+#view-trade .page-sub { font-size: 13px; margin-bottom: 10px; }
+#view-trade .card { padding: 18px 20px; }
+#view-trade .card[data-tt] > b:first-child { display: block; font-size: 15.5px; font-weight: 600; letter-spacing: -.01em; }
+#view-trade .card[data-tt] > b:first-child + span.muted { display: block; margin-top: 2px; font-size: 12.5px; line-height: 1.5; }
+#view-trade .card[data-tt] > b:first-child ~ .btn, #view-trade .card[data-tt] > span[style*="float"] { margin-top: -26px; }
+#trade-ctl { border-color: var(--line-strong); }
+#trade-ctl #trade-both, #trade-ctl #trade-status, #trade-ctl #trade-pre { line-height: 1.7; }
+#trade-ctl #trade-goal { padding: 10px 12px; background: var(--code-bg); border-radius: 10px; }
+#trade-ctl #trade-goal:empty, #trade-ctl #trade-pre:empty, #trade-ctl #trade-run-out:empty { display: none; }
+.tt-nav { position: sticky; top: 0; z-index: 3; display: flex; gap: 4px; padding: 6px; margin: 4px 0 2px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; scrollbar-width: none; }
+.tt-nav::-webkit-scrollbar { display: none; }
+.tt-nav button { flex: 1 0 auto; border: 0; background: none; color: var(--muted); padding: 7px 14px; border-radius: 8px; font-size: 13.5px; white-space: nowrap; }
+.tt-nav button:hover { color: var(--text); background: var(--code-bg); }
+.tt-nav button.on { background: var(--panel); color: var(--text); font-weight: 600; box-shadow: var(--shadow); }
+.tt-nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+#view-trade .card[data-tt].tt-off { display: none; }
+#view-trade .trade-grid { gap: 10px 14px; }
+.ar { display: grid; gap: 4px; }
+.ar-head { font-size: 13px; }
+.ar-cols, .ar-row > summary { display: grid; grid-template-columns: 22px minmax(110px, 1.4fr) minmax(96px, 1.1fr) repeat(4, minmax(58px, .8fr)); gap: 8px; align-items: center; }
+.ar-cols { font-size: 11.5px; color: var(--faint); padding: 4px 12px 0; }
+.ar-cols span:nth-child(n+4) { text-align: right; }
+.ar-row { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.ar-row > summary { list-style: none; cursor: pointer; padding: 8px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.ar-row > summary::-webkit-details-marker { display: none; }
+.ar-row > summary:hover { background: var(--code-bg); border-radius: 10px; }
+.ar-row.idle > summary { color: var(--muted); }
+.ar-row.ctrl { border-style: dashed; background: var(--code-bg); }
+.ar-rank { font-weight: 600; color: var(--muted); text-align: center; }
+.ar-name { display: flex; gap: 6px; align-items: center; min-width: 0; white-space: nowrap; }
+.ar-name b { overflow: hidden; text-overflow: ellipsis; }
+.ar-trades { display: flex; gap: 6px; align-items: center; }
+.ar-bar { flex: 1; height: 6px; border-radius: 3px; background: var(--code-bg); overflow: hidden; min-width: 30px; }
+.ar-bar i { display: block; height: 100%; background: var(--muted); border-radius: 3px; }
+.ar-bar i.full { background: var(--ok); }
+.ar-n { font-size: 11.5px; color: var(--muted); }
+.ar-c { text-align: right; }
+.ar-up { color: var(--ok); font-weight: 600; }
+.ar-down { color: #d1453b; font-weight: 600; }
+.ar-na { color: var(--faint); }
+.ar-main { min-width: 0; display: grid; gap: 3px; padding: 0 12px 10px 42px; }
+@media (max-width: 560px) {
+  .ar-cols, .ar-row > summary { grid-template-columns: 16px minmax(0, 1fr) 62px 54px 38px; gap: 6px; padding-left: 8px; padding-right: 8px; }
+  .ar-cols span:nth-child(n+6), .ar-row > summary > :nth-child(n+6), .ar-name .ar-pill:not(.live):not(.base) { display: none; }
+  .ar-main { padding-left: 12px; }
+}
+.ar-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ar-pill { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: var(--code-bg); color: var(--muted); }
+.ar-pill.live { background: var(--live-soft); color: var(--live); font-weight: 600; }
+.ar-pill.base { background: var(--panel); border: 1px solid var(--line-strong); }
+.ar-edge { font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ar-edge.up, .ar-sit.up { color: var(--ok); }
+.ar-edge.down, .ar-sit.down { color: #d1453b; }
+.ar-nums { font-size: 13px; font-variant-numeric: tabular-nums; }
+.ar-sub { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.ar-sits { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.ar-sit { font-size: 11.5px; padding: 1px 7px; border-radius: 6px; background: var(--code-bg); color: var(--muted); font-variant-numeric: tabular-nums; }
+#view-trade .trade-grid label { line-height: 1.4; }
 /* 폰 접속 안내 */
 .phone-pop { position: fixed; left: 16px; bottom: 56px; z-index: 50; width: min(300px, calc(100vw - 32px)); background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; box-shadow: 0 8px 30px rgba(0,0,0,.18); font-size: 13.5px; }
 .phone-pop .big { font: 600 22px/1.3 ui-monospace, Consolas, monospace; letter-spacing: 1px; margin: 2px 0 8px; word-break: break-all; }
@@ -464,7 +525,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
     <div class="scroll"><div class="column">
       <div class="page-head">자동매매</div>
       <p class="page-sub">규칙이 종목을 골라 토스 계좌에서 사고팔아요. 사장님이 직접 산 주식·직접 낸 주문은 안 건드려요. <b>돈을 계좌 밖으로 옮기는 기능은 없어요</b> (토스 API 에 출금·이체가 없고, 앱은 지정가 주문·취소만 보내요).</p>
-      <div class="card">
+      <div class="card" id="trade-ctl">
         <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           <div class="seg" id="trade-mode"><button data-m="off">끄기</button><button data-m="paper">가상 매매</button><button data-m="live">실전</button></div>
           <div class="spacer"></div>
@@ -478,14 +539,17 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="trade-pre" style="margin-top:6px;font-size:13px"></div>
         <div id="trade-run-out" class="tlog" style="margin-top:6px"></div>
       </div>
-      <div class="card"><b>💬 엔진에게 묻기·시키기</b>
+      <nav class="tt-nav" id="tt-nav" aria-label="자동매매 화면">
+        <button data-tt="home" class="on">한눈에</button><button data-tt="team">AI 팀</button><button data-tt="charts">차트</button><button data-tt="perf">성적·실험</button><button data-tt="log">학습·기록</button><button data-tt="set">설정</button>
+      </nav>
+      <div class="card" data-tt="home"><b>💬 엔진에게 묻기·시키기</b>
         <div class="row" style="display:flex;gap:8px;margin-top:6px"><input class="field" id="trade-ask" style="flex:1" placeholder="예: 오늘 왜 아무것도 안 샀어? / 익절 8%로 바꿔 / TSLA는 사지 마"><button class="btn primary" id="trade-ask-go">보내기</button></div>
         <div class="muted" style="font-size:12.5px;margin-top:4px">채팅의 🤖 자동매매 팀으로 이어져요. 설정을 바꾸는 말은 [적용] 카드로 떠요 (실전 켜기는 여기 위 버튼으로만).</div>
       </div>
-      <div class="card"><b>📊 실시간 차트</b> <span class="muted" style="font-size:12.5px">자동매매가 가진 종목 + 방금 고른 종목 · 종목을 누르면 그 차트만 펼쳐짐 · 1분마다 갱신 · 차트 누르면 크게</span>
+      <div class="card" data-tt="charts"><b>📊 실시간 차트</b> <span class="muted" style="font-size:12.5px">자동매매가 가진 종목 + 방금 고른 종목 · 종목을 누르면 그 차트만 펼쳐짐 · 1분마다 갱신 · 차트 누르면 크게</span>
         <div id="live-charts" style="display:grid;gap:6px;margin-top:8px"></div>
       </div>
-      <div class="card"><b>📊 차트</b> <span class="muted" style="font-size:12.5px">토스 데이터로 그린 차트 = AI 가 보는 그림. 자동매매가 가진 종목은 산 가격·손절·나눠 팔기선까지</span>
+      <div class="card" data-tt="charts"><b>📊 차트</b> <span class="muted" style="font-size:12.5px">토스 데이터로 그린 차트 = AI 가 보는 그림. 자동매매가 가진 종목은 산 가격·손절·나눠 팔기선까지</span>
         <div class="row" style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
           <input class="field" id="chart-sym" style="flex:1;min-width:120px" placeholder="종목 (예: NVDA, 005930)">
           <button class="btn primary" data-iv="1m" id="chart-1m">1분봉</button><button class="btn" data-iv="1d" id="chart-1d">일봉</button>
@@ -493,31 +557,37 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div id="chart-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px"></div>
         <div class="chart-view" id="chart-view" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
+      <div class="card" data-tt="team"><b>🤝 두 AI</b> <span class="muted" style="font-size:12.5px">1호 일반(스윙) · 2호 급등주(단타) — 같은 후보·같은 시세로 각자 매매, 장 마감 후 서로 복기해서 공유 노트에 교훈</span>
         <div id="lanes" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>🏟️ AI 생존전</b> <span class="muted" style="font-size:12.5px">💰 상위 2명만 실전 · 📘 나머지는 성적 오를 때까지 가상으로 공부 · 토요일 아침 성적 발표 · 모두 같은 공유 노트</span>
-        <div id="arena" class="tlog" style="margin-top:8px"></div>
+      <div class="card" data-tt="team"><b>🏟️ AI 리그</b> <span class="muted" style="font-size:12.5px">전원 가상으로 매매 · 🎲 무작위 대조군보다 확실히 나은 AI 만 💰 실전 (나은 만큼 비중) · 최근 거래일수록 크게 침 · 상황별로 약했던 곳에선 실전 안 감 · 토요일 아침 발표</span>
+        <div id="arena" class="ar" style="margin-top:10px"></div>
+        <div class="row" style="margin-top:10px"><button class="btn" id="arena-voice">🗣️ 지금 의견 묻기</button><span class="muted" id="arena-voice-out">AI 가 의견이 생기면 채팅 '🏟️ 리그 AI 의견' 으로 바로 보내요 · 지금 묻고 싶으면 이 버튼 · [적용]을 눌러야 바뀜</span></div>
       </div>
-      <div class="card"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
+      <div class="card" data-tt="perf"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
         <div id="scorecard" class="tlog" style="margin-top:8px;white-space:pre-wrap"></div>
         <div id="gates" class="muted" style="margin-top:6px;font-size:13px"></div>
+        <div id="stopslip" class="muted" style="margin-top:6px;font-size:13px;white-space:pre-line"></div>
         <div id="rules" class="tlog" style="margin-top:6px"></div>
         <div id="lessons" class="tlog" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>🧪 규칙 실험실</b> <span class="muted" style="font-size:12.5px">규칙 조합 여러 개를 실전과 동시에 가상으로 · 확실히 나은 조합은 실전 규칙으로 자동 교체</span>
+      <div class="card" data-tt="perf"><b>🧪 규칙 실험실</b> <span class="muted" style="font-size:12.5px">규칙 조합 여러 개를 실전과 동시에 가상으로 · 확실히 나은 조합은 실전 규칙으로 자동 교체</span>
         <span style="float:right"><button class="btn" id="lab-bt" style="padding:3px 10px;font-size:12px">지금 백테스트</button> <button class="btn" id="lab-reset" style="padding:3px 10px;font-size:12px">조합 새로 만들기</button></span>
         <div id="lab-shadow" class="tlog" style="margin-top:8px"></div>
         <div id="lab-bt-out" class="tlog" style="margin-top:8px"></div>
       </div>
-      <div class="card"><b>📚 학습·복기</b> <button class="btn" id="trade-weekend" style="float:right;padding:3px 10px;margin-left:6px">📚 지금 공부하기</button><button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
+      <div class="card" data-tt="log"><b>📋 제안 현황</b> <button class="btn" id="digest-refresh" style="float:right;padding:3px 10px;font-size:12px">새로고침</button>
+        <span class="muted" style="font-size:12.5px">대기 중인 [적용] 카드·개선·학습 제안, 최근 24시간 적용, 바꾼 뒤 성적 · 장 마감 뒤 하루 한 번 텔레그램으로도</span>
+        <div id="digest" class="tlog" style="margin-top:8px;white-space:pre-wrap"><span class="muted">'학습·기록' 칸을 열면 불러와요</span></div>
+      </div>
+      <div class="card" data-tt="log"><b>📚 학습·복기</b> <button class="btn" id="notes-council" style="float:right;padding:3px 10px;margin-left:6px;font-size:12px">📒 지금 노트 정리</button><button class="btn" id="trade-weekend" style="float:right;padding:3px 10px;margin-left:6px">📚 지금 공부하기</button><button class="btn" id="trade-review" style="float:right;padding:3px 10px;font-size:12px">지금 복기하기</button>
         <div id="learn-today" style="margin-top:6px;font-size:13.5px"></div>
         <div id="learn-props" style="margin-top:8px"></div>
         <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13.5px">최근 복기 자세히</summary><div id="learn-review" class="tlog" style="margin-top:6px"></div></details>
         <details style="margin-top:6px"><summary style="cursor:pointer;font-size:13.5px">거래 일지</summary><div id="learn-trades" class="tlog" style="margin-top:6px"></div></details>
       </div>
-      <div class="card"><b>지금 고른 종목</b> <button class="btn" id="trade-scan" style="float:right;padding:3px 10px;font-size:12px">기준값 다시 준비</button><div id="trade-picks" class="tlog" style="margin-top:6px"></div></div>
-      <div class="card">
+      <div class="card" data-tt="home"><b>지금 고른 종목</b> <button class="btn" id="trade-scan" style="float:right;padding:3px 10px;font-size:12px">기준값 다시 준비</button><div id="trade-picks" class="tlog" style="margin-top:6px"></div></div>
+      <div class="card" data-tt="set">
         <b>설정</b>
         <div class="trade-grid">
           <label>시장 (둘 다 가능)<span style="display:flex;gap:10px;margin-top:6px;color:var(--text)"><label style="flex-direction:row;gap:4px"><input type="checkbox" id="t-mk-US"> 🇺🇸 미장</label><label style="flex-direction:row;gap:4px"><input type="checkbox" id="t-mk-KR"> 🇰🇷 국장</label></span></label>
@@ -527,6 +597,9 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
           <label><b>한 달 목표 수익률 (%)</b><input id="t-monthly_target_pct" type="number" step="0.5"></label>
           <label>하루 손실 한도 (예산의 %)<input id="t-max_daily_loss_pct" type="number" step="0.5"></label>
           <label>손절 (%)<input id="t-stop_loss_pct" type="number" step="0.5"></label>
+        </div>
+        <details style="margin-top:10px"><summary style="cursor:pointer;font-size:13.5px"><b>고급 설정</b> <span class="muted">— 나머지 전부 (평소엔 안 바꿔도 돼요)</span></summary>
+        <div class="trade-grid">
           <label>고점 대비 하락 시 팔기 (%) — 최고 수익이 이만큼 난 뒤부터<input id="t-trail_pct" type="number" step="0.5"></label>
           <label>최고 수익이 이 % 이상이면…<input id="t-trail_wide_after_pct" type="number" step="0.5"></label>
           <label>…고점 대비 기준을 이만큼으로 넓힘 (%)<input id="t-trail_wide_pct" type="number" step="0.5"></label>
@@ -602,10 +675,14 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><b>🤖 AI 스스로 판단</b></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_decide"> 거래마다 AI 판단 — 사기 전 살지·얼마나, 보유 중 일찍 팔지 (손절·마감 정리·한도는 못 바꿈, 판단 중에도 손절 확인은 계속)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-shadow_on"> 🧪 그림자 가상 매매 (규칙 조합 여러 개 동시에 가상으로)</label>
-        <div class="trade-grid"><label>그림자 조합 수 (2~1000)<input id="t-shadow_count" type="number"></label></div>
-        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 생존전 (성격 다른 AI 들이 같은 후보를 각자 판단 · 토요일 아침 성적 발표)</label>
-        <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수 (0=제한 없음)<input id="t-arena_ai_per_day" type="number"></label><label>실전 자격 최소 거래<input id="t-arena_min_trades" type="number"></label><label>실전 자격 인원 (0~5)<input id="t-arena_live_n" type="number"></label><label>실전 예산 중 생존전 몫(%)<input id="t-arena_live_pct" type="number"></label></div>
+        <div class="trade-grid"><label>그림자 조합 수 (2~1000 · 많을수록 교체 문턱이 높아져요, 권장 60)<input id="t-shadow_count" type="number"></label></div>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_on"> 🏟️ AI 리그 (성격 다른 AI 들이 같은 후보를 각자 판단 · 토요일 아침 성적 발표)</label>
+        <div class="trade-grid"><label>참가자 수 (2~12)<input id="t-arena_size" type="number"></label><label>하루 AI 판단 횟수 (0=제한 없음)<input id="t-arena_ai_per_day" type="number"></label><label>실전 자격 최소 거래<input id="t-arena_min_trades" type="number"></label><label>실전 자격 인원 (0~5)<input id="t-arena_live_n" type="number"></label><label>실전 예산 중 AI 리그 몫(%)<input id="t-arena_live_pct" type="number"></label><label>🎲 대조군보다 나아야 할 폭 (%p)<input id="t-arena_ctrl_margin" type="number" step="0.1"></label><label>⏳ 성적 반감 일수 (이만큼 지나면 절반 무게)<input id="t-arena_half_life_days" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_live"> 💰 상위 AI(거래 충분·평균 플러스·앞뒤 절반 모두 플러스)가 '산다'고 하면 실전 매수 — 나머지는 가상으로 공부 (실전 모드일 때만 · 현금만·봇 장부·손실 한도 그대로)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-daily_digest"> 📋 장 마감 뒤 제안 현황(대기 중인 제안·최근 적용·바꾼 뒤 성적)을 텔레그램으로 하루 한 번</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-notes_council"> 📒 주말 공부 끝에 AI 셋이 회의해서 공유 노트 정리 (다수 동의한 것만 핵심 노트 · 원본 보관 · 채팅에서 되돌리기)</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_voice"> 🗣️ 리그 AI 가 의견이 생기면 바로 채팅으로 (거래가 쌓이거나 연속 손실일 때 물어봄 · 할 말 없으면 안 옴 · 적용은 직접)</label>
+        <div class="trade-grid"><label>의견 물어볼 거래 간격 (건)<input id="t-arena_voice_every" type="number"></label><label>하루 최대 의견 수 (AI 한 명은 하루 1번)<input id="t-arena_voice_per_day" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_promote"> 🏆 1등 전략을 2호 급등주 AI 판단에도 참고로</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-backtest_on"> 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로</label>
@@ -639,11 +716,12 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:10px;font-size:13.5px"><input type="checkbox" id="t-prob_sizing"> 🎲 학습 기록으로 승률을 추정해서 살 금액 조절 (낮으면 적게, 높으면 많이 · 한도는 안 넘음 · 기대 수익이 마이너스인 조건은 건너뜀)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_chart_check"> 📊 사기 직전에 AI 가 1분봉 차트 그림을 보고 판단 (10~20초 늦어짐 · 판단한 차트는 주문 기록에 남음)</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-ai_check"> 주문 전에 AI 가 한 번 더 검토 (글만, 느려짐)</label>
+        </details>
         <div class="row" style="margin-top:10px;display:flex"><div class="spacer"></div><button class="btn primary" id="trade-save">저장</button></div>
       </div>
-      <div class="card"><b>가상 장부</b> <button class="btn" id="trade-reset" style="float:right;padding:3px 10px;font-size:12px">처음부터</button><div id="trade-paper" style="margin-top:6px;font-size:13.5px"></div></div>
-      <div class="card"><b>주문 기록</b><div id="trade-orders" class="tlog" style="margin-top:6px"></div></div>
-      <div class="card"><b>활동 기록</b><div id="trade-events" class="tlog" style="margin-top:6px"></div></div>
+      <div class="card" data-tt="home"><b>가상 장부</b> <button class="btn" id="trade-reset" style="float:right;padding:3px 10px;font-size:12px">처음부터</button><div id="trade-paper" style="margin-top:6px;font-size:13.5px"></div></div>
+      <div class="card" data-tt="log"><b>주문 기록</b><div id="trade-orders" class="tlog" style="margin-top:6px"></div></div>
+      <div class="card" data-tt="log"><b>활동 기록</b><div id="trade-events" class="tlog" style="margin-top:6px"></div></div>
     </div></div>
   </section>
 
@@ -1406,10 +1484,80 @@ async function renderToolsPage() {
 }
 
 // ── 자동매매 ──
-const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day", "arena_min_trades", "arena_live_n", "arena_live_pct","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
+const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day", "arena_min_trades", "arena_live_n", "arena_live_pct", "arena_ctrl_margin", "arena_half_life_days", "arena_voice_every", "arena_voice_per_day","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades", "regime_half_pct", "regime_stop_pct", "max_per_sector", "live_quality_change", "live_quality_ratio", "live_proof_n", "time_stop_min", "time_stop_up_pct", "stop_slip_pct", "surge_min_change_regular", "surge_buy_cutoff_min"];
-const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
+const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "shadow_on", "arena_on", "arena_voice", "notes_council", "daily_digest", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
+// 🏟️ AI 리그 표: 순위 · 실전/가상 · 대조군 대비 · 비중 · 상황별
+function arenaHtml(ar, mt = 20) {
+  const pct = v => `${v >= 0 ? "+" : ""}${(+v).toFixed(2)}%`;
+  const ctrl = ar.board.find(r => r.ctrl), rows = ar.board.filter(r => !r.ctrl), ch = ar.champion;
+  const sits = r => Object.entries(r.sits || {}).sort((a, b) => b[1].n - a[1].n).slice(0, 4)
+    .map(([k, v]) => `<span class="ar-sit${v.n >= 8 ? (v.avg > 0 ? " up" : " down") : ""}" title="${v.n >= 8 ? "표본 충분" : "표본 부족 (8건부터 판단에 씀)"}">${esc(k)} ${v.n}건 ${pct(v.avg)}</span>`).join("");
+  // 한 줄 = AI 하나 (누르면 성격·채점·구간 펼침) — 거래 0건은 숫자 대신 '—'
+  const sg = (v, unit = "%") => v == null ? `<span class="ar-na">—</span>` : `<span class="${v > 0 ? "ar-up" : v < 0 ? "ar-down" : ""}">${v > 0 ? "+" : ""}${(+v).toFixed(2)}${unit}</span>`;
+  const row = (r, i) => {
+    const has = r.n > 0, sk = (r.card || {}).skill;
+    const st = r.ctrl ? `<span class="ar-pill base">기준선</span>` : r.live ? `<span class="ar-pill live">💰 실전 ${r.live}등</span>`
+      : `<span class="ar-pill">${r.n >= mt ? "자격 심사" : "가상"}</span>`;
+    const bar = r.ctrl ? `${r.n}건` : `<span class="ar-bar" title="실전 자격까지 ${Math.max(0, mt - r.n)}건 남음"><i style="width:${Math.min(100, r.n / mt * 100)}%"${r.n >= mt ? ' class="full"' : ""}></i></span><span class="ar-n">${r.n}/${mt}</span>`;
+    return `<details class="ar-row${r.ctrl ? " ctrl" : ""}${has ? "" : " idle"}"><summary>
+      <span class="ar-rank">${r.ctrl ? "🎲" : i + 1}</span>
+      <span class="ar-name"><b>${esc(r.name)}</b>${st}</span>
+      <span class="ar-trades">${bar}</span>
+      <span class="ar-c" title="최근 거래일수록 크게 친 평균 수익">${has ? sg(r.wavg ?? r.avg) : sg(null)}</span>
+      <span class="ar-c">${has ? `${r.win}%` : sg(null)}</span>
+      <span class="ar-c" title="산 것 평균 − 안 산 것 평균 (판단을 잘하는지)">${sg(sk, "%p")}</span>
+      <span class="ar-c" title="무작위 대조군보다 얼마나 나은지">${r.ctrl ? "기준" : sg(has ? r.edge : null, "%p")}</span>
+    </summary><div class="ar-main">
+        <div class="ar-sub">익절 ${r.tp}% · 손절 ${r.sl}% · 최대 ${r.hold}분 · 보유 ${r.held} — ${esc(r.persona)}</div>
+        ${cardHtml(r.card)}
+        ${Object.keys(r.sits || {}).length ? `<div class="ar-sits">${sits(r)}</div>` : ""}
+        ${(r.blocks || []).length ? `<div class="ar-sits">${r.blocks.map(k => `<span class="ar-sit down" title="이 구간에서 '산다' 결과가 계속 마이너스라 이 AI 에겐 안 물어봐요 (가끔은 물어봐서 다시 배움)">🚫 ${esc(k)}</span>`).join("")}</div>` : ""}
+      </div></details>`;
+  };
+  const cardHtml = c => {   // 🧮 모든 판단 채점: 산 것 vs 안 산 것
+    if (!c || (!c.yes_n && !c.no_n)) return "";
+    const f = (n, a) => n ? `${n}건 ${pct(a)}` : "없음";
+    return `<div class="ar-sub" title="후보마다 이 AI 의 익절·손절·보유 시간으로 '샀다면' 결과를 계산해서 매긴 판단 성적이에요">🧮 판단 채점: 산 것 ${f(c.yes_n, c.yes_avg)} · 안 산 것 ${f(c.no_n, c.no_avg)}`
+      + (c.no_n ? ` · 놓친 기회 ${c.missed}건` : "") + (c.skill != null ? ` · <b class="ar-edge ${c.skill > 0 ? "up" : "down"}">판단력 ${c.skill > 0 ? "+" : ""}${(+c.skill).toFixed(2)}%p</b>` : "") + `</div>`;
+  };
+  const sv = ar.saved || {};
+  return (ch ? `<div class="ar-head">🏆 1등 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${pct(ch.avg)} · 승률 ${ch.win}%</div>` : "")
+    + `<div class="ar-head muted">🧭 지금 상황: <b>${esc(ar.situation || "장 밖")}</b> · 🎲 대조군은 후보의 ${ar.ctrl_p ?? 35}% 를 무작위로 삼</div>`
+    + `<div class="ar-head muted">🧮 채점 끝난 후보 ${ar.graded ?? 0}개 · 지켜보는 중 ${ar.probes ?? 0}개${sv.asks ? ` · 🚫 거름망으로 오늘 ${sv.asks}번 안 물어봄${sv.calls ? ` (AI 호출 ${sv.calls}번 아낌)` : ""}` : ""}</div>`
+    + `<div class="ar-cols"><span>#</span><span>AI</span><span title="실전 자격은 ${mt}건부터">거래 / 자격</span><span>최근 평균</span><span>승률</span><span>판단력</span><span>대조군 대비</span></div>`
+    + rows.map(row).join("") + (ctrl ? row(ctrl) : "");
+}
+$("#notes-council").onclick = async () => {   // 📒 노트 정리 회의 지금
+  const b = $("#notes-council"); b.disabled = true;
+  try { const r = await api("/api/autotrade/notes-council", {}); b.textContent = r.ok ? "📒 회의 중… (채팅으로 와요)" : "📒 " + (r.message || "실패"); if (r.ok) setTimeout(loadConvs, 180000); }
+  catch (e) { b.textContent = "📒 요청 실패"; }
+  setTimeout(() => { b.disabled = false; b.textContent = "📒 지금 노트 정리"; }, 20000);
+};
+$("#arena-voice").onclick = async () => {   // 🗣️ 리그 AI 의견 지금 받기
+  const b = $("#arena-voice"), o = $("#arena-voice-out"); b.disabled = true;
+  try { const r = await api("/api/autotrade/arena-voice", {}); o.textContent = r.message || (r.ok ? "요청했어요" : "실패했어요"); if (r.ok) setTimeout(loadConvs, 90000); }
+  catch (e) { o.textContent = "요청 실패: " + e; }
+  setTimeout(() => { b.disabled = false; }, 5000);
+};
+// 자동매매 화면 나누기 (한눈에 · AI 팀 · 차트 · 성적·실험 · 학습·기록 · 설정) — 고른 칸은 기억
+function showTradeTab(t) {
+  const tabs = [...document.querySelectorAll("#tt-nav button")].map(b => b.dataset.tt);
+  if (!tabs.includes(t)) t = "home";
+  document.querySelectorAll("#tt-nav button").forEach(b => { b.classList.toggle("on", b.dataset.tt === t); b.setAttribute("aria-pressed", b.dataset.tt === t); });
+  document.querySelectorAll("#view-trade .card[data-tt]").forEach(c => c.classList.toggle("tt-off", c.dataset.tt !== t));
+  try { localStorage.setItem("tradeTab", t); } catch {}
+  if (t === "log") loadDigest();
+}
+async function loadDigest() {   // 📋 제안 현황 (읽기 전용)
+  const el = $("#digest"); if (!el) return;
+  try { const d = await api("/api/autotrade/digest"); el.textContent = Object.values(d || {}).join("\n\n") || "제안 현황이 비어 있어요"; }
+  catch (e) { el.textContent = "제안 현황을 못 불러왔어요: " + e; }
+}
+$("#digest-refresh").onclick = loadDigest;
+document.querySelectorAll("#tt-nav button").forEach(b => b.onclick = () => showTradeTab(b.dataset.tt));
+showTradeTab((() => { try { return localStorage.getItem("tradeTab") || "home"; } catch { return "home"; } })());
 function tradeMk() { try { return localStorage.getItem("tradeMk") || "US"; } catch { return "US"; } }
 document.querySelectorAll("#trade-mk button").forEach(b => b.onclick = () => { try { localStorage.setItem("tradeMk", b.dataset.mk); } catch {} renderTrade(); renderLiveCharts(true); });
 function tradeBadge(d) {
@@ -1459,14 +1607,13 @@ async function renderTrade(fillForm = true) {
   $("#trade-picks").innerHTML = ph || "<span class='muted'>아직 없어요</span>";
   renderLearn(d.learn || {});
   renderLab(d.lab || {});
-  renderLanes(d.lanes || {}, d.lessons || [], d.halted_lane || {});
+  renderLanes(d.lanes || {}, d.lessons || [], d.halted_lane || {}, d.notes_core || {});
   $("#trade-weekend").onclick = async () => { const r = await api("/api/autotrade/weekend", { market: tradeMk() }); alert(r.message); };
   $("#scorecard").textContent = (d.scorecard || {}).text || "아직 기록 없음";
   const ar = d.arena || {}, ch = ar.champion;
-  $("#arena").innerHTML = (ar.board || []).length ? (ch ? `<div>🏆 1등 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${(+ch.avg).toFixed(2)}% · 승률 ${ch.win}%</div>` : "")
-    + ar.board.map((r, i) => `<div>${i + 1}. ${r.live ? "💰" : "📘"} <b>${esc(r.name)}</b>${r.gen > 1 ? ` <span class="muted">${r.gen}세대</span>` : ""} — ${r.n}건 평균 ${(+r.avg).toFixed(2)}% 승률 ${r.win}% · 안 산 판단 ${r.skips}건 정확도 ${r.skip_ok}% · 점수 ${(+r.q).toFixed(2)} · 보유 ${r.held} <span class="muted">(익절 ${r.tp}% 손절 ${r.sl}% 최대 ${r.hold}분 · ${esc(r.persona)})</span></div>`).join("")
-    : "<span class='muted'>장 열리면 시작해요</span>";
+  $("#arena").innerHTML = (ar.board || []).length ? arenaHtml(ar, +c.arena_min_trades || 20) : "<span class='muted'>장 열리면 시작해요</span>";
   $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
+  if ($("#stopslip")) $("#stopslip").textContent = (d.stop_slip || {}).text || "🔻 손절 슬리피지: 아직 손절 기록 없음";
   $("#rules").innerHTML = (d.rules || []).length ? `<div><b>🧮 자동 규칙 변경</b> <span class="muted">(하루 1번 · 8건 뒤 나빠지면 그 변경만 되돌림)</span></div>` + d.rules.map(x =>
     `<div>${esc(x.t.slice(5, 16))} ${x.revert ? "↩️ " : ""}${esc(Object.entries(x.after).map(([k, v]) => `${k} ${x.before[k]}→${v}`).join(", "))} <span class="muted">${esc(x.result || (x.checked ? "" : "효과 확인 중"))}</span></div>`).join("") : "";
   const pf = d.preflight || {};
@@ -1495,13 +1642,13 @@ function openChart(id) { window.open("/api/upload/" + encodeURIComponent(id), "_
 function tradeActionCard(a, container) {
   const el = document.createElement("div"); el.className = "treq";
   const done = (status, msg) => {   // 적용됨·무시 상태 (대화에 저장돼서 다시 열어도 그대로)
-    el.querySelector(".tb").textContent = { applied: "적용됨", ignored: "무시", failed: "실패" }[status] || status;
+    el.querySelector(".tb").textContent = { applied: /undo$/.test(a.type) ? "되돌림" : "적용됨", ignored: "무시", failed: "실패" }[status] || status;
     el.querySelector(".tb").className = "tb " + (status === "applied" ? "ok" : "");
     el.querySelector(".acts").innerHTML = `<span class="muted">${esc(msg || "")}</span>`;
   };
   el.innerHTML = `<div class="th">🤖 <b>자동매매에 지시</b><span class="tb wait">적용 대기</span></div>
     <div class="why"><b>${esc(a.label || a.type)}</b>${a.why ? `<br>${esc(a.why)}` : ""}</div>
-    <div class="acts"><button class="btn ${a.type === "stop" ? "danger" : "primary"}" data-a="ok">${a.type === "stop" ? "⛔ 지금 정지" : "적용"}</button><button class="btn" data-a="no">무시</button></div>`;
+    <div class="acts"><button class="btn ${a.type === "stop" ? "danger" : "primary"}" data-a="ok">${a.type === "stop" ? "⛔ 지금 정지" : /undo$/.test(a.type) ? "↩️ 되돌리기" : "적용"}</button><button class="btn" data-a="no">무시</button></div>`;
   container.appendChild(el);
   if (a.status) return done(a.status, a.result || (a.status === "ignored" ? "무시했어요" : "바꿨어요"));
   const send = async (ignore) => {
@@ -1514,11 +1661,19 @@ function tradeActionCard(a, container) {
   el.querySelector('[data-a="ok"]').onclick = () => send(false);
   el.querySelector('[data-a="no"]').onclick = () => send(true);
 }
-function renderLanes(L, lessons, halted) {
+function renderLanes(L, lessons, halted, core) {
   const modeKo = { live: "🔴 실전", paper: "📝 가상", off: "⏸️ 쉼" };
   $("#lanes").innerHTML = Object.entries(L).map(([st, v]) => `<div class="chk" style="margin-bottom:4px"><b>${esc(v.name)}</b> ${modeKo[v.mode] || v.mode}${v.mode === "live" && !v.live ? ' <span class="muted">(전체 모드가 실전이 아니라 지금은 가상)</span>' : ""} · 예산 몫 ${v.share}%
     · 최근 ${v.days}일 ${v.n || 0}건${v.n ? ` · 승률 ${v.win_rate}% · 평균 ${v.avg > 0 ? "+" : ""}${v.avg}% · 합 ${v.sum > 0 ? "+" : ""}${v.sum}%` : ""}${v.n_paper ? ` <span class="muted">(가상 ${v.n_paper}건)</span>` : ""}${halted[st] ? ` <span class="tb">⛔ 오늘 정지</span>` : ""}</div>`).join("")
     || `<div class="muted">아직 기록 없음</div>`;
+  if ((core?.items || []).length) {   // 📒 노트 정리 회의가 합의한 핵심 노트 + 그 뒤 새 교훈
+    const newer = lessons.filter(x => (x.t || "") > (core.t || ""));
+    $("#lessons").innerHTML = `<div><b>📒 핵심 노트</b> <span class="muted">(${esc((core.t || "").slice(5, 16))} 노트 정리 회의 합의 · 교훈 ${core.n_src || "?"}개 → ${core.items.length}개 · AI 들이 판단할 때 읽음)</span></div>`
+      + core.items.map((x, i) => `<div>${i + 1}. ${esc(x.text)} <span class="muted">찬성 ${esc(x.votes || "")}${x.evidence ? " · " + esc(x.evidence) : ""}</span></div>`).join("")
+      + ((core.split || []).length ? `<div class="muted">⚖️ 의견 갈림 ${core.split.length}개 (핵심 노트엔 안 넣음): ${core.split.map(x => esc(x.text)).join(" / ")}</div>` : "")
+      + (newer.length ? `<div><b>그 뒤 새 교훈</b></div>` + newer.map(x => `<div>${esc(x.t.slice(5, 16))} ${esc(x.text)}</div>`).join("") : "");
+    return;
+  }
   $("#lessons").innerHTML = lessons.length ? `<div><b>📒 공유 노트</b> <span class="muted">(교차 복기 교훈 · 두 AI 가 판단할 때 같이 읽음)</span></div>` + lessons.map(x => `<div>${esc(x.t.slice(5, 16))} ${esc(x.text)}</div>`).join("") : `<div class="muted">📒 공유 노트: 첫 교차 복기(장 마감 후) 뒤에 생겨요</div>`;
 }
 function renderLab(L) {
@@ -1534,7 +1689,7 @@ function renderLab(L) {
     + (sh.rule ? `<div class="muted">${esc(sh.rule)}</div>` : "") + ((sh.total || 0) > vs.length ? `<div class="muted">위쪽 ${vs.length}개만 표시</div>` : "") + vs.map(v =>
     `<div>${v.name === "현재" ? "📌" : ""} <b>${esc(v.name)}</b> <span class="muted">(${esc(v.origin)})</span> · ${allS(v)} · 최근 총 ${v.ret_pct > 0 ? "+" : ""}${v.ret_pct}% · 보유 ${v.holding}<br><span class="muted">${esc(v.diff)}</span></div>`).join("")
     + ((sh.hot || []).length ? `<div style="margin-top:6px"><b>🚀 30% 초과 급등 검증 (따로 보관 · 교체 안 함)</b>${sh.hot.map(v => `<div>${esc(v.name)} · ${allS(v)}</div>`).join("")}</div>` : "")
-    + ((sh.flash || []).length ? `<div style="margin-top:6px"><b>📉 급락 신호 검증 (따로 보관 · 교체 안 함)</b>${sh.flash.map(v => `<div>${esc(v.name)} · ${allS(v)} · 신호 ${v.signals}건 · 보유 ${v.holding}</div>`).join("")}</div>` : "")
+    + ((sh.flash || []).length ? `<div style="margin-top:6px"><b>📉 급락·📈 거래량 초기 진입 검증 (따로 보관 · 교체 안 함)</b>${sh.flash.map(v => `<div>${esc(v.name)} · ${allS(v)} · 신호 ${v.signals}건 · 보유 ${v.holding}</div>`).join("")}</div>` : "")
     + ((sh.pruned || []).length ? `<div style="margin-top:6px"><b>정리된 조합</b>${sh.pruned.map(p => `<div class="muted">${esc(p.t)} · ${esc(p.name)} · ${p.n_all}건 평균 ${pctS(p.avg_all)}</div>`).join("")}</div>` : "")
     + ((sh.promotions || []).length ? `<div style="margin-top:6px"><b>자동 교체 기록</b>${sh.promotions.map(p => `<div class="muted">${esc(p.t)} · ${esc(p.name)}: ${esc(p.diff)} — ${esc(p.evidence)}</div>`).join("")}</div>` : "")
     : `<span class="muted">그림자 매매 조합이 아직 없어요 — 자동매매가 켜져 있으면 장중에 자동으로 시작해요</span>`;

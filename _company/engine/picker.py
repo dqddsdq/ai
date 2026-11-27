@@ -332,6 +332,9 @@ FLASH_EXIT_DROP = -2.0    # 1분 안에 -2% 이상 급락
 FLASH_CRASH_PCT = -5.0    # 반등 진입: 1~3분 안에 -5% 이상 급락
 FLASH_CRASH_VOL = 3.0     #   그때 거래량 직전 평균의 3배 이상
 FLASH_HOLD_VOL = 0.5      #   반등 1분봉 거래량이 급락 때 최대의 50% 이상 (거래량 유지)
+VE_VOL = 3.0              # 📈 거래량 증가 초기 진입: 1분봉 거래량이 직전 평균의 3배 이상
+VE_MAX_RISE = 3.0         #   급증 시작 전 종가 대비 상승폭 3% 이하 (초입만)
+VE_PEAK_KEEP = 0.8        #   마지막 봉 거래량이 최근 급증 봉 최대의 80% 미만이면 '정점 후 감소' → 제외
 
 
 def _vbase(bars: list[dict]) -> float | None:
@@ -359,6 +362,39 @@ def flash_exit_signal(bars: list[dict], price: float) -> str:
     return ""
 
 
+VF_VOL = 0.6              # 📉 거래량 감소+VWAP 아래: 최근 3봉 평균 거래량이 직전 평균의 60% 이하
+OB_WEAK = 0.5             # 📚 호가 약화: 매수잔량/매도잔량 0.5 이하
+OB_DROP = 0.6             #   그리고 산 직후 비율의 60% 이하로 떨어짐
+
+
+def vwap_fade_signal(bars: list[dict], price: float) -> str:
+    """보유 중 청산 신호 (그림자 검증 전용). bars = 오늘 다 끝난 1분봉(오래된→최신).
+    최근 3봉 거래량이 직전 평균보다 줄고 + 현재가가 오늘 VWAP 아래면 이유, 아니면 ''"""
+    if len(bars) < 13 or not price:
+        return ""
+    base = _vbase(bars[:-3])
+    if not base:
+        return ""
+    rv = sum(b["v"] for b in bars[-3:]) / 3
+    if rv > base * VF_VOL:
+        return ""
+    pv = sum((b["h"] + b["l"] + b["c"]) / 3 * b["v"] for b in bars)
+    vs = sum(b["v"] for b in bars)
+    vwap = pv / vs if vs else 0
+    if not vwap or price >= vwap:
+        return ""
+    return f"거래량 감소 {rv / base * 100:.0f}%·VWAP 아래 {(price / vwap - 1) * 100:+.1f}%"
+
+
+def book_weak_signal(ratio: float | None, ratio0: float | None) -> str:
+    """호가 약화 청산 신호 (그림자 검증 전용). ratio = 지금 매수잔량/매도잔량, ratio0 = 산 직후 값"""
+    if not ratio or not ratio0:
+        return ""
+    if ratio <= OB_WEAK and ratio <= ratio0 * OB_DROP:
+        return f"호가 약화 매수/매도 잔량 {ratio:.2f} (산 직후 {ratio0:.2f})"
+    return ""
+
+
 def flash_rebound_signal(bars: list[dict], price: float) -> dict | None:
     """급락 반등 진입: 1~3분 안에 -5%↓ + 거래량 3배↑ → 바로 다음 1분봉이 양봉 반등 + 거래량 유지.
     bars = 다 끝난 1분봉 (마지막 = 반등 봉). 신호면 {low, crash_t, drop, vol, why}"""
@@ -383,6 +419,39 @@ def flash_rebound_signal(bars: list[dict], price: float) -> dict | None:
         return {"low": low, "crash_t": win[-1]["t"], "drop": round(drop, 1), "vol": round(vmax / base, 1),
                 "why": f"{w}분 {drop:+.1f}%·거래량 {vmax / base:.1f}배 → 반등"}
     return None
+
+
+def vol_early_signal(bars: list[dict], price: float) -> dict | None:
+    """📈 거래량 증가 초기 진입 (그림자 검증 전용). bars = 오늘 다 끝난 1분봉(오래된→최신).
+    최근 1~3봉에서 거래량이 직전 평균의 VE_VOL 배↑로 막 늘기 시작 + 시작 전 대비 상승 0~VE_MAX_RISE% + VWAP 위.
+    거래량 정점 뒤 줄어드는 중이면 제외. 신호면 {start_t, vol, rise, vwap_gap, hi_gap, why}"""
+    if len(bars) < 16 or not price:
+        return None
+    base = _vbase(bars[:-3])
+    if not base:
+        return None
+    rec = bars[-3:]
+    hits = [i for i, b in enumerate(rec) if b["v"] >= base * VE_VOL]
+    if not hits:
+        return None
+    if any(b["v"] >= base * VE_VOL for b in bars[-6:-3]):   # 이미 그 전부터 급증 중 → 초기 아님
+        return None
+    vmax = max(b["v"] for b in rec[hits[0]:])
+    if rec[-1]["v"] < vmax * VE_PEAK_KEEP:   # 거래량 정점 뒤 감소 구간 제외
+        return None
+    ref = bars[-4 + hits[0]]["c"]            # 급증 시작 직전 봉 종가
+    rise = (price / ref - 1) * 100 if ref else 0
+    if rise <= 0 or rise > VE_MAX_RISE:
+        return None
+    pv = sum((b["h"] + b["l"] + b["c"]) / 3 * b["v"] for b in bars)
+    vs = sum(b["v"] for b in bars)
+    vwap = pv / vs if vs else 0
+    if not vwap or price <= vwap:
+        return None
+    hi = max(b["h"] for b in bars)
+    vr, vg, hg = rec[-1]["v"] / base, (price / vwap - 1) * 100, (price / hi - 1) * 100
+    return {"start_t": rec[hits[0]]["t"], "vol": round(vr, 1), "rise": round(rise, 2), "vwap_gap": round(vg, 2),
+            "hi_gap": round(hg, 2), "why": f"거래량 {vr:.1f}배 시작·상승 {rise:+.1f}%·VWAP {vg:+.1f}%·고점 대비 {hg:+.1f}%"}
 
 
 # ── 추세 (국장, 하루 한 번) ──
@@ -422,6 +491,7 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
     afford = [x for x in cands if min_price <= prices.get(x, 0) <= max_price]
     log(f"🔎 스윙(추세) 후보 찾기: {len(afford)}개 차트 확인 (동시 {workers}개)")
     today = session_date(market)
+    _pb_found: list[dict] = []   # 눌림 반등 후보 (그림자 검증 전용)
 
     def one(sym):
         try:
@@ -438,6 +508,11 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
         value20 = sum(c * v for c, v in zip(closes[-20:], vols[-20:])) / 20 * fx
         if value20 < cfg["min_trading_value_krw"]:
             return None
+        hist = cs[:-1] if cs[-1]["timestamp"][:10] == today else cs   # 끝난 일봉만 (눌림 검증용)
+        pb = pullback_setup(hist, value20, cfg)   # 🧪 같은 일봉으로 눌림 후보도 (추가 조회 없음)
+        if pb:
+            pb.update(symbol=sym, name=names.get(sym, sym))
+            _pb_found.append(pb)
         ma20, ma60, rsi = sum(series[-20:]) / 20, sum(series[-60:]) / 60, _rsi(series)
         if not (price > ma20 > ma60 and rsi is not None and 45 <= rsi <= cfg["rsi_max_buy"]):
             return None
@@ -462,7 +537,62 @@ def scan(cfg: dict, log=print, exclude: set[str] | None = None, workers: int = 6
             pass
         picks.append(c)
     note = f"{len(afford)}개 중 추세 조건 통과 {len(scored)}개 → {len(picks)}개"
-    return {"day": today, "picks": picks, "note": note, "strategy": "trend", "market": market}
+    pbs = []   # 거래대금 큰 순으로 PB_MAX 개 (경고 종목 제외)
+    for x in sorted(_pb_found, key=lambda x: -x["value20"]):
+        if len(pbs) >= PB_MAX:
+            break
+        try:
+            if toss._get(f"/api/v1/stocks/{x['symbol']}/warnings"):
+                continue
+        except toss.TossError:
+            pass
+        pbs.append(x)
+    return {"day": today, "picks": picks, "note": note, "strategy": "trend", "market": market, "pullback": pbs}
+
+
+# ── 🧪 눌림 반등 (그림자 검증 전용 · 일봉 계산만, 조회 없음) ──
+PB_VALUE_X = 3.0        # 거래대금: 최소 기준의 3배 이상 (큰 종목만)
+PB_DIP = (4.0, 15.0)    # 20일 고점 대비 최근 5일 저점 -4~-15% 눌림
+PB_MA_TOUCH = 1.03      # 최근 5일 저점이 20일선 +3% 안까지 내려옴
+PB_R20_MAX = 20.0       # 과열 제외: 20일 상승률 20% 이하
+PB_RSI_MAX = 62         # 과열 제외: RSI 62 이하
+PB_MAX = 20             # 하루 후보 최대 개수
+PB_NEAR_HI = 0.97       # 장중: 20일 고점의 97% 넘으면 고점 근처 → 제외
+PB_DAY_MAX = 5.0        # 장중: 오늘 +5% 넘으면 급등 → 제외
+
+
+def pullback_setup(cs: list[dict], value20: float, cfg: dict) -> dict | None:
+    """상승 추세(20일선>60일선·60일선 오름) 중 20일선 근처까지 눌린 종목. cs = 끝난 일봉(오래된→최신).
+    반등 확인은 장중에 (전일 고가 돌파) 그림자에서 함. 조건 맞으면 기준값, 아니면 None"""
+    if len(cs) < 68 or value20 < cfg["min_trading_value_krw"] * PB_VALUE_X:
+        return None
+    closes = [float(c["closePrice"]) for c in cs]
+    lows = [float(c.get("lowPrice") or c["closePrice"]) for c in cs]
+    highs = [float(c.get("highPrice") or c["closePrice"]) for c in cs]
+    ma20, ma60 = sum(closes[-20:]) / 20, sum(closes[-60:]) / 60
+    ma60_old = sum(closes[-68:-8]) / 60   # 8일 전 60일선
+    if not (ma20 > ma60 and closes[-1] > ma60 and ma60 > ma60_old):
+        return None
+    hi20, lo5 = max(highs[-20:]), min(lows[-5:])
+    dip = (1 - lo5 / hi20) * 100 if hi20 else 0
+    r20 = (closes[-1] / closes[-21] - 1) * 100 if closes[-21] else 0
+    rsi = _rsi(closes)
+    if not (PB_DIP[0] <= dip <= PB_DIP[1] and lo5 <= ma20 * PB_MA_TOUCH and r20 <= PB_R20_MAX
+            and rsi is not None and rsi <= PB_RSI_MAX):
+        return None
+    return {"prev": closes[-1], "prev_high": highs[-1], "hi20": hi20, "ma20": round(ma20, 4), "value20": round(value20),
+            "dip": round(dip, 1), "r20": round(r20, 1), "rsi": round(rsi),
+            "why": f"20일 고점 대비 -{dip:.1f}% 눌림·20일선 근처·RSI {rsi:.0f}·거래대금 {value20 / 1e8:,.0f}억원/일"}
+
+
+def pullback_rebound(pb: dict, price: float) -> str:
+    """장중 반등 확인: 전일 고가 돌파 + 20일선 위 + 고점 근처·오늘 급등 아님. 맞으면 이유, 아니면 ''"""
+    if not price or not pb.get("prev"):
+        return ""
+    chg = (price / pb["prev"] - 1) * 100
+    if price <= pb["prev_high"] or price < pb["ma20"] or price > pb["hi20"] * PB_NEAR_HI or not 0 < chg <= PB_DAY_MAX:
+        return ""
+    return f"[눌림반등] {pb['why']} → 전일 고가 돌파 {chg:+.1f}%"
 
 
 # ── 초반 돌파 감지 (1분봉 기준 VWAP 돌파) ──

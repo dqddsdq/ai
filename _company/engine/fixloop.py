@@ -84,7 +84,7 @@ def _score(ts: list[dict]) -> dict:
     if not ts:
         return {"n": 0, "total": 0.0, "avg": 0.0, "win": 0}
     rs = [t["ret"] for t in ts]
-    return {"n": len(rs), "total": round(sum(rs), 2), "avg": round(st.mean(rs), 2), "win": round(sum(r > 0 for r in rs) / len(rs) * 100)}
+    return {"n": len(rs), "total": round(sum(rs), 2), "avg": round(st.fmean(rs), 2), "win": round(sum(r > 0 for r in rs) / len(rs) * 100)}
 
 
 CAUSES = {   # 원인 → (판단, 수정 후보 만들기)
