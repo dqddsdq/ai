@@ -562,6 +562,7 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
       </div>
       <div class="card" data-tt="team"><b>🏟️ AI 리그</b> <span class="muted" style="font-size:12.5px">전원 가상으로 매매 · 🎲 무작위 대조군보다 확실히 나은 AI 만 💰 실전 (나은 만큼 비중) · 최근 거래일수록 크게 침 · 상황별로 약했던 곳에선 실전 안 감 · 토요일 아침 발표</span>
         <div id="arena" class="ar" style="margin-top:10px"></div>
+        <div id="arena-replay" class="muted" style="margin-top:6px;font-size:13px"></div>
         <div class="row" style="margin-top:10px"><button class="btn" id="arena-voice">🗣️ 지금 의견 묻기</button><span class="muted" id="arena-voice-out">AI 가 의견이 생기면 채팅 '🏟️ 리그 AI 의견' 으로 바로 보내요 · 지금 묻고 싶으면 이 버튼 · [적용]을 눌러야 바뀜</span></div>
       </div>
       <div class="card" data-tt="perf"><b>📊 이번 달 성적표</b> <span class="muted" style="font-size:12.5px">최대 낙폭 · 시장 대비 · 체결률 · AI 판단 · 시간대 · (미장) 양도세·환율</span>
@@ -686,6 +687,8 @@ pre.result { background: var(--code-bg); border-radius: 10px; padding: 12px 14px
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_voice"> 🗣️ 리그 AI 가 의견이 생기면 바로 채팅으로 (거래가 쌓이거나 연속 손실일 때 물어봄 · 할 말 없으면 안 옴 · 적용은 직접)</label>
         <div class="trade-grid"><label>의견 물어볼 거래 간격 (건)<input id="t-arena_voice_every" type="number"></label><label>하루 최대 의견 수 (AI 한 명은 하루 1번)<input id="t-arena_voice_per_day" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_promote"> 🏆 1등 전략을 2호 급등주 AI 판단에도 참고로</label>
+        <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-arena_replay"> 📼 과거 장 복습 — 장 닫힌 뒤 지난 30일 후보를 그 시점 차트로 다시 판단 → 실제 결과로 채점 (공부용 · 실전 자격엔 안 씀)</label>
+        <div class="trade-grid"><label>하루 과거 장 복습 후보 수 (토요일 3배)<input id="t-arena_replay_per_day" type="number"></label></div>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-auto_promote"> 더 나은 조합이면 실전 규칙으로 자동 교체</label>
         <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13.5px"><input type="checkbox" id="t-backtest_on"> 📼 매일 장 끝나고 백테스트 → 상위 조합을 그림자 매매로</label>
         <div class="trade-grid">
@@ -1486,9 +1489,9 @@ async function renderToolsPage() {
 }
 
 // ── 자동매매 ──
-const TRADE_NUM = ["pick_count", "shadow_count", "arena_size", "arena_ai_per_day", "arena_min_trades", "arena_live_n", "arena_live_pct", "arena_ctrl_margin", "arena_half_life_days", "arena_voice_every", "arena_voice_per_day","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
+const TRADE_NUM = ["pick_count", "shadow_count", "arena_replay_per_day", "arena_size", "arena_ai_per_day", "arena_min_trades", "arena_live_n", "arena_live_pct", "arena_ctrl_margin", "arena_half_life_days", "arena_voice_every", "arena_voice_per_day","monthly_target_pct", "max_daily_loss_pct", "stop_loss_pct", "trail_pct", "trail_wide_after_pct", "trail_wide_pct", "partial_tp_pct", "partial_tp_ratio", "take_profit_pct", "surge_min_change_pct",
   "surge_max_change_pct", "surge_volume_ratio", "pre_volume_ratio", "min_trading_value_krw", "max_orders_per_day", "interval_min", "exit_check_sec", "loss_streak_pause", "pause_min", "swing_stop_pct", "swing_trail_pct", "swing_max_days", "ai_max_per_hour", "ai_hold_check_min", "promote_min_trades", "promote_margin_pct", "promote_window_days", "min_size_ratio", "min_win_prob", "stop_min", "stop_max", "limit_min_mult", "limit_max_mult", "loss_pct_min", "loss_pct_max", "mode_down_days", "mode_down_month_pct", "mode_up_trades", "max_position_krw", "max_order_krw", "max_total_krw", "max_daily_loss_krw", "paper_cash_krw", "fee_us_pct", "fee_kr_pct", "tax_kr_pct", "focus_max_pct", "focus_min_samples", "focus_min_ev_pct", "ai_tp_guard_peak", "ai_tp_guard_floor", "lane_share_surge", "lane_share_min", "lane_share_max", "lane_live_days", "lane_live_trades", "regime_half_pct", "regime_stop_pct", "max_per_sector", "live_quality_change", "live_quality_ratio", "live_proof_n", "time_stop_min", "time_stop_up_pct", "stop_slip_pct", "surge_min_change_regular", "surge_buy_cutoff_min"];
-const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "swing_auto_off", "shadow_on", "arena_on", "arena_voice", "notes_council", "daily_digest", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
+const TRADE_SEL = ["strategy", "budget_mode", "ai_take_profit", "lane_swing_mode", "lane_surge_mode"], TRADE_CHK = ["live_quality", "swing_live", "live_needs_proof", "weekend_study", "regime_on", "tod_filter", "backup_on", "weekly_report", "tomorrow_plan", "improve_effect_check", "lane_auto_share", "lane_auto_live", "lane_cross_review", "ai_decide", "swing_auto_off", "arena_replay", "shadow_on", "arena_on", "arena_voice", "notes_council", "daily_digest", "arena_promote", "arena_live", "auto_promote", "backtest_on", "auto_pick", "us_premarket", "stop_at_target", "prob_sizing", "ai_chart_check", "ai_check", "auto_tune", "auto_rules", "auto_stop", "auto_limits", "auto_loss", "auto_mode"];
 let tradeTimer = null;
 // 🏟️ AI 리그 표: 순위 · 실전/가상 · 대조군 대비 · 비중 · 상황별
 function arenaHtml(ar, mt = 20) {
@@ -1614,6 +1617,7 @@ async function renderTrade(fillForm = true) {
   $("#scorecard").textContent = (d.scorecard || {}).text || "아직 기록 없음";
   const ar = d.arena || {}, ch = ar.champion;
   $("#arena").innerHTML = (ar.board || []).length ? arenaHtml(ar, +c.arena_min_trades || 20) : "<span class='muted'>장 열리면 시작해요</span>";
+  if ($("#arena-replay")) $("#arena-replay").textContent = d.arena_replay || "📼 과거 장 복습: 장 닫힌 뒤 자동으로 시작해요";
   $("#gates").textContent = d.gates || "🚧 오늘은 아직 걸러진 후보가 없어요";
   $("#edge").textContent = d.edge ? "🎯 판단 질 점검 — " + d.edge : "🎯 판단 질 점검: 기록이 쌓이면 AI 반대 검증·지는 구간 차단·승률 보정이 자동으로 돌아요";
   if ($("#stopslip")) $("#stopslip").textContent = (d.stop_slip || {}).text || "🔻 손절 슬리피지: 아직 손절 기록 없음";

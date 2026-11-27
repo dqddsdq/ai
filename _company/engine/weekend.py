@@ -149,6 +149,12 @@ def run(log=print) -> dict:
                 except Exception as e:
                     r["pattern"] = {"note": f"실패 {type(e).__name__}"}
                 r["missed"] = missed_study(m)
+
+                try:   # 📼 AI 리그 과거 장 복습 (토요일은 평일의 3배)
+                    from . import arena_replay
+                    r["replay"] = arena_replay.run(at.config(), m, log, limit=int(at.config().get("arena_replay_per_day", 40)) * 3)
+                except Exception as e:
+                    r["replay"] = f"📼 과거 장 복습 실패: {type(e).__name__}"
                 try:   # 🏟️ AI 리그: 꼴찌 탈락 · 1등 변형 투입 · 챔피언
                     from . import arena
                     r["arena"] = arena.evolve(at.config(), m, arena.ai_json, tl.add_lesson, tl.lessons_text(m, 8))
@@ -177,7 +183,7 @@ def run(log=print) -> dict:
                 msg = (f"📚 {flag} 주말 공부 끝\n{r['score']}\n🧪 백테스트(30일): {r.get('backtest', '')}"
                        + (f" · 그림자에 {r['seeds']}개 추가" if r.get("seeds") else "") + (f" · {r['prune']}" if r.get("prune") else "")
                        + (f"\n{r['fixloop']}" if r.get("fixloop") else "") + (" (그림자에 추가)" if r.get("fix_seed") else "")
-                       + (f"\n📈 {pt}" if pt else "") + (f"\n{r['arena']}" if r.get("arena") else "")
+                       + (f"\n📈 {pt}" if pt else "") + (f"\n{r['arena']}" if r.get("arena") else "") + (f"\n{r['replay']}" if r.get("replay") else "")
                        + (f"\n🔎 놓친 종목 {ms['missed']['n']}개 평균 최고 {ms['missed']['up_avg']:+.1f}% vs 산 종목 {ms['bought']['n']}개 {ms['bought'].get('up_avg', 0):+.1f}%" if ms["missed"].get("n") else "")
                        + (f"\n🤖 {r['ai']}" if r.get("ai") else "") + (f"\n📒 {r['notes']}" if r.get("notes") else ""))
                 notify.send(msg[:3500])

@@ -568,6 +568,40 @@ def 판단_질_점검_AI반대검증_지는구간_승률보정():
 
 
 @case
+def 과거_장_복습은_그시점_정보만_채점하고_한번만():
+    import re as _re
+    from . import arena, arena_replay as ar
+    src = Path(ar.__file__).read_text(encoding="utf-8")
+    assert not _re.search(r"place_limit_order|cancel_order|toss\.", src), "과거 장 복습이 주문·토스를 직접 부름"
+    # 한 봉에서 손절·익절이 같이 닿으면 손절 (보수적)
+    assert ar._sim([{"h": 110, "l": 90, "c": 100}], 100, 5, 3, 60, "US") < 0
+    assert ar._sim([{"h": 101, "l": 99.5, "c": 100}, {"h": 106, "l": 100, "c": 105}], 100, 5, 3, 60, "US") > 4
+    with tempfile.TemporaryDirectory() as d:
+        o = (arena._file, ar._candidates, ar._bars_around)
+        arena._file = lambda m: Path(d) / f"arena_{m}.json"
+        bef = [{"t": "", "h": 100, "l": 99, "c": 99.5}] * 20
+        up = [{"t": "", "h": 100.5, "l": 99.8, "c": 100}] * 4 + [{"t": "", "h": 108, "l": 100, "c": 107}] * 2
+        ar._candidates = lambda m, days=30: [{"key": f"2026-01-0{i}:S{i}", "sym": f"S{i}", "day": f"2026-01-0{i}", "t": "2026-01-01 10:00:00",
+                                              "pick_px": 100, "change": 20, "ratio": 5} for i in range(1, 4)]
+        ar._bars_around = lambda sym, day, t, m: (bef, up)
+        seen = []
+        try:
+            dd = arena.load("US", 3); ids = [a["id"] for a in dd["alive"]]; arena._save("US", dd)
+            fake = lambda p: (seen.append(p), {ids[0]: True})[1]
+            c = {"arena_on": True, "arena_size": 3, "arena_replay": True, "arena_replay_per_day": 10}
+            ar.run(c, "US", lambda *a: None, ai_fn=fake)
+            assert len(seen) == 3, ("복습 후보 수", len(seen))
+            assert not any(f"S{i}" in p or "2026-01" in p for p in seen for i in range(1, 4)), "종목·날짜가 프롬프트에 보임"
+            rows = {r["name"]: r for r in ar.summary("US")}
+            a0 = arena.load("US")["alive"][0]
+            assert rows[a0["name"]]["n_buy"] == 3 and rows[a0["name"]]["n"] == 3, rows
+            ar.run(c, "US", lambda *a: None, ai_fn=fake)
+            assert len(seen) == 3, "같은 후보를 또 복습함"
+        finally:
+            arena._file, ar._candidates, ar._bars_around = o
+
+
+@case
 def 스윙_매도_규칙():
     from . import autotrade as at
     c = _cfg(swing_stop_pct=6, swing_trail_pct=8, swing_max_days=20)
