@@ -1048,7 +1048,8 @@ def _hot_reports(d: dict, market: str) -> list[str]:
         worst = min(_ret(t) for t in fin)
         total = sum(t["pnl_krw"] for t in v["trades"]) / VIRTUAL * 100
         line = (f"{flag} [🧪 급등 검증] '{v['name']}' 끝난 거래 {n}건 (시작 {v['created'][:10]})\n"
-                f"승률 {win}% · 평균 {avg:+.2f}% · 최대 손실 {worst:+.2f}% · 총 {total:+.2f}% (가상 100만 원)")
+                f"승률 {win}% · 평균 {avg:+.2f}% · 최대 손실 {worst:+.2f}% · 총 {total:+.2f}% (가상 100만 원)"
+                f"\n📏 {summary(v)['ss']['text']}")
         if base_v:
             bf = [t for t in _fin(base_v) if t["t"] >= v["created"]]
             if bf:
@@ -1077,8 +1078,10 @@ def summary(v: dict) -> dict:
     """조합 전체 기록 요약: 건수·승률·평균·최대 손실 (수수료 뺀 거래 전체 수익률)"""
     fin = _fin(v)
     rs = [_ret(t) for t in fin]
+    from . import statwin as sw   # 📏 표시용: 기준 이후만 승률·평균 (이전은 학습용 표본)
     return {"n_all": len(rs), "win_all": round(sum(1 for r in rs if r > 0) / len(rs) * 100) if rs else 0,
-            "avg_all": round(st.fmean(rs), 2) if rs else 0, "worst": round(min(rs), 2) if rs else 0}
+            "avg_all": round(st.fmean(rs), 2) if rs else 0, "worst": round(min(rs), 2) if rs else 0,
+            "ss": sw.view(fin, ret=_ret)}
 
 
 def totals(market: str) -> dict:
@@ -1111,7 +1114,7 @@ def overview(c: dict, market: str) -> dict:
                       + (st_txt if v.get("key") == "ST" else ""),
               "signals": len(v.get("signals", [])), **stats(v, 3650), **summary(v)} for v in d.get("flash", [])]
     n_rows, rows = len(rows), rows[:50]   # 화면엔 위쪽 50개만 (조합이 많아도 응답 가볍게)
-    lines = [f"{r['name']}: {r['n_all']}건 · 승률 {r['win_all']}% · 평균 {r['avg_all']:+.2f}% · 최대 손실 {r['worst']:+.2f}%" for r in rows]
+    lines = [f"{r['name']}: {r['ss']['text']} · 최대 손실(전체) {r['worst']:+.2f}%" for r in rows]
     return {"variants": rows, "total": n_rows,"hot": hot, "flash": flash, "acct": _acct_view(d["acct"]), "promotions": d["promotions"][-10:][::-1], "pruned": d["pruned"][-10:][::-1],
             "summary": lines, "count": n_rows,
             "rule": f"교체: 조합별 {max(PROMOTE_N, int(c.get('promote_min_trades', 15)))}건↑ · 앞 {round((1 - HOLDOUT) * 100)}%로 1개 선정 → "

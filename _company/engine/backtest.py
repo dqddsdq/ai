@@ -138,6 +138,15 @@ def _sim_swing(closes_after: list[float], entry: float, params: dict, base_cfg: 
     return (fill_px(vc, closes_after[-1], "SELL", closes_after[-1]) / buy - 1) * 100
 
 
+def _since_view(xs: list[dict], ret) -> dict:
+    """📏 기준 이후 / 학습용 표본 (표시용 · 실패해도 빈 값)"""
+    try:
+        from . import statwin as sw
+        return sw.view(xs, ret=ret)
+    except Exception:
+        return {}
+
+
 def _score(rets: list[float], n_all: int) -> dict:
     n = len(rets)
     return {"n": n, "avg": round(st.fmean(rets), 2) if rets else 0, "total": round(sum(rets), 2),
@@ -318,7 +327,8 @@ def replay(cfg: dict, market: str, signal_surge, log=print) -> dict:
     out = {"all": part(done), "front": part([x for x in done if mid and x["day"] < mid]),
            "back": part([x for x in done if mid and x["day"] >= mid]),
            "events": len({(x["sym"], x["day"]) for x in done}), "surge_days": len(events), "syms": len(syms),
-           "range_1d": rng_d, "range_1m": rng_m, "cost_pct": round(cost, 3), "slip_pct": cfg.get("sim_slip_pct", 0.1)}
+           "range_1d": rng_d, "range_1m": rng_m, "cost_pct": round(cost, 3), "slip_pct": cfg.get("sim_slip_pct", 0.1),
+           "since": {k: _since_view([x for x in done if x["tag"] == k], lambda x: float(x["ret"])) for k in ("rebound", "plain")}}
     # 판정: 앞·뒤 기간 모두 반등 진입 평균이 더 좋아야 '우세' (각 기간 양쪽 3건 이상일 때만)
     ok = [p for p in (out["front"], out["back"]) if p["rebound"]["n"] >= 3 and p["plain"]["n"] >= 3]
     if len(ok) < 2:
@@ -476,6 +486,7 @@ def run(cfg: dict, market: str, signal_surge, signal_swing, swing_hist: list[dic
     out = {"replay": rp, "boost": boost, "shadow_base": sb, "rate_cut": cut,
            "day": datetime.now(KST).strftime("%Y-%m-%d %H:%M"), "market": market, "surge_samples": len(paths),
            "baseline": _score(base_rets, len(paths)) if paths else {}, "base_samples": base_detail, "top": results[:8],
+           "baseline_since": _since_view(base_detail, lambda x: float(x["ret"])) if paths else {},   # 📏 표시용 기준 이후
            "swing_samples": len(sw_samples), "swing_top": sw_results[:3],
            "note": (f"단타 표본 {len(paths)}개 · 조합 {len(results)}개 비교" if paths else "단타 표본이 아직 없어요 (며칠 돌리면 쌓여요)")
                    + (f" · 스윙 표본 {len(sw_samples)}일" if sw_samples else "")

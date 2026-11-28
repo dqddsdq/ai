@@ -494,20 +494,26 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
         d = _load()
     mk = cfg.get("market", "US")
     today = [t for t in d["trades"] if t["day"] == day and t["closed"] and t["mode"] == mode and _tm(t) == mk]
-    recent = [t for t in d["trades"] if t["closed"] and t["mode"] == mode and _tm(t) == mk][-30:]
+    closed_all = [t for t in d["trades"] if t["closed"] and t["mode"] == mode and _tm(t) == mk]
+    recent = closed_all[-30:]   # 규칙 조정 제안용 (그대로)
+    from . import statwin as sw
+    rv_new, rv_old = sw.split(closed_all)   # 📏 표시용: 기준 이후만 · 이전은 학습용 표본
+    rv = rv_new[-30:]
     w = d["watch"].get(f"{mk}:{day}") or d["watch"].get(day, {})
     missed = [(s, (x["max"] / x["pick_px"] - 1) * 100) for s, x in w.items() if not x.get("bought") and x.get("pick_px")]
     rep = {"day": day, "mode": mode, "market": mk, "created": _now(),
-           "by_style": {k: v for k, v in (("단타", _stats([t for t in recent if _ts(t) == "surge"])), ("스윙", _stats([t for t in recent if _ts(t) == "swing"]))) if v["n"]}, "today": _stats(today), "recent": _stats(recent),
+           "by_style": {k: v for k, v in (("단타", _stats([t for t in rv if _ts(t) == "surge"])), ("스윙", _stats([t for t in rv if _ts(t) == "swing"]))) if v["n"]}, "today": _stats(today),
+           "recent": _stats(recent),   # 자동 조절(한도)용 — 그대로
+           "recent_since": _stats(rv), "since": sw.view(closed_all), "learn": _stats(rv_old[-200:]),   # 📏 표시용
            "by_exit": {k: _stats([t for t in today if t.get("exit_kind") == k]) for k in {t.get("exit_kind") for t in today}},
-           "by_change": _bucket(recent, "change", [0, 8, 12, 20, 1e9], "%"),
-           "by_ratio": _bucket(recent, "ratio", [0, 3, 5, 10, 1e9], "배"),
-           "by_session": {k: v for k, v in (("프리장", _stats([t for t in recent if t.get("features", {}).get("pre")])),
-                                            ("정규장", _stats([t for t in recent if not t.get("features", {}).get("pre")]))) if v["n"]},
+           "by_change": _bucket(rv, "change", [0, 8, 12, 20, 1e9], "%"),
+           "by_ratio": _bucket(rv, "ratio", [0, 3, 5, 10, 1e9], "배"),
+           "by_session": {k: v for k, v in (("프리장", _stats([t for t in rv if t.get("features", {}).get("pre")])),
+                                            ("정규장", _stats([t for t in rv if not t.get("features", {}).get("pre")]))) if v["n"]},
            "missed": {"n": len(missed), "avg_max_up": round(st.fmean([m for _, m in missed]), 2) if missed else None,
                       "top": sorted(missed, key=lambda x: -x[1])[:3]},
-           "by_prob": _bucket(recent, "p", [0, 0.4, 0.5, 0.6, 1.01], ""),   # 추정 승률 구간별 실제 성적 (추정이 맞는지)
-           "ai_chart": {"찬성해서 산 거래": _stats([t for t in recent if (t.get("features") or {}).get("ai_chart") == "찬성"]),
+           "by_prob": _bucket(rv, "p", [0, 0.4, 0.5, 0.6, 1.01], ""),   # 추정 승률 구간별 실제 성적 (추정이 맞는지)
+           "ai_chart": {"찬성해서 산 거래": _stats([t for t in rv if (t.get("features") or {}).get("ai_chart") == "찬성"]),
                         "반대한 종목 그 뒤 최대 상승 평균": round(st.fmean([(x["max"] / x["pick_px"] - 1) * 100 for x in w.values()
                                                              if x.get("ai") == "반대" and x.get("pick_px")]), 2)
                         if any(x.get("ai") == "반대" for x in w.values()) else None},
@@ -597,9 +603,12 @@ def daily_review(day: str, cfg: dict, mode: str, use_ai: bool = True) -> dict:
 def _ai_text(rep: dict, proposals: list[dict]) -> str:
     from . import providers as pv
     from . import team as tm
-    data = {k: rep[k] for k in ("today", "recent", "by_exit", "by_change", "by_ratio", "by_session", "missed", "best", "worst")}
+    data = {k: rep.get(k) for k in ("today", "recent_since", "since", "by_exit", "by_change", "by_ratio", "by_session", "missed", "best", "worst")}
+    from . import statwin as sw
     prompt = ("자동매매 하루 기록이에요. 사장님께 5~7줄로 쉬운 말 복기를 써 주세요: 오늘 결과, 잘된 점, 아쉬운 점, 내일 주의할 점. "
               "숫자는 아래 값만 쓰고 지어내지 마세요. 투자 권유 문구는 빼고요.\n"
+              f"📏 recent_since·by_* 는 집계 기준({sw.since()}) 이후 거래만이에요. 기준 이전 거래는 '학습용 표본'(since.old)이라 성적에 섞지 마세요. "
+              f"거래가 {sw.MIN_N}건 미만인 묶음은 승률 대신 '표본 부족(n건)'이라고 쓰세요.\n"
               f"기록: {json.dumps(data, ensure_ascii=False)}\n제안된 규칙 조정: {json.dumps([{k: p[k] for k in ('label', 'from', 'to', 'why')} for p in proposals], ensure_ascii=False)}")
     try:
         return pv.chat(tm.fast_spec(), "너는 트레이딩 복기 담당이다. 짧고 정확하게.", [{"role": "user", "content": prompt}],
@@ -662,7 +671,9 @@ def overview(day: str, mode: str, market: str | None = None) -> dict:
     with _lock:
         d = _load()
     revs = [r for r in d["reviews"] if r["mode"] == mode and (not market or r.get("market", "US") == market)]
-    return {"today": today_stats(day, mode, market), "review": revs[-1] if revs else None,
+    from . import statwin as sw
+    ss = sw.view([t for t in d["trades"] if t["closed"] and t["mode"] == mode and (not market or _tm(t) == market)])
+    return {"today": today_stats(day, mode, market), "review": revs[-1] if revs else None, "since": ss,   # 📏 기준 이후 누적
             "proposals": [p for p in d["proposals"] if p["status"] in ("pending", "applied")][-20:][::-1],
             "trades": [t for t in d["trades"] if t["mode"] == mode and (not market or _tm(t) == market)][-30:][::-1],
             "rebound": rebound_stats(market or "US", d)}
@@ -691,7 +702,9 @@ def rebound_stats(market: str, d: dict | None = None) -> dict:
         if k in g:
             g[k].append(t)
     r, p = _grp(g[REB_TAG]), _grp(g[PLAIN_TAG])
-    return {"rebound": r, "plain": p, "goal_n": REB_GOAL_N, "ready": r["n"] >= REB_GOAL_N,
+    from . import statwin as sw   # 📏 표시용: 기준 이후만 (이전은 학습용 표본)
+    since = {"rebound": sw.view(g[REB_TAG]), "plain": sw.view(g[PLAIN_TAG])}
+    return {"rebound": r, "plain": p, "since": since, "goal_n": REB_GOAL_N, "ready": r["n"] >= REB_GOAL_N,
             "diff": {"win_rate": r["win_rate"] - p["win_rate"], "avg": round(r["avg"] - p["avg"], 2),
                      "mfe_avg": round(r["mfe_avg"] - p["mfe_avg"], 2)} if r["n"] and p["n"] else {}}
 
@@ -699,9 +712,13 @@ def rebound_stats(market: str, d: dict | None = None) -> dict:
 def rebound_text(market: str) -> str:
     s = rebound_stats(market)
     r, p = s["rebound"], s["plain"]
-    line = lambda name, x: f"{name} {x['n']}건 · 승률 {x['win_rate']}% · 평균 {x['avg']:+.2f}% · 평균 MFE {x['mfe_avg']:+.2f}%"
+    from . import statwin as sw
+    line = lambda name, x: f"{name} {x['n']}건 · {sw.win_text(x['n'], x['win_rate'])} · 평균 {x['avg']:+.2f}% · 평균 MFE {x['mfe_avg']:+.2f}%"
     if not s["ready"]:
         return f"🔄 반등 확인 진입 비교: {r['n']}/{REB_GOAL_N}건 쌓는 중 (기존 진입 {p['n']}건)"
+    ss = s.get("since") or {}
+    if ss:   # 📏 기준 이후만
+        return f"🔄 2호 진입 비교 — 반등 확인 {ss['rebound']['text']} / 기존 {ss['plain']['text']}"
     out = f"🔄 2호 진입 비교 — {line('반등 확인', r)} / {line('기존', p)}"
     if s["diff"]:
         dd = s["diff"]
@@ -773,7 +790,8 @@ def hot_stats(market: str, mode: str = "live") -> dict:
         mdd = max(mdd, peak - cur)
     n = len(ts)
     ret = round(rl / inv * 100, 2) if inv else 0.0
-    return {"n": n, "ret_pct": ret, "win_rate": round(wins / n * 100) if n else 0, "mdd_pct": round(mdd, 2),
+    from . import statwin as sw   # 📏 표시용 기준 이후 집계
+    return {"since": sw.view(ts), "n": n, "ret_pct": ret, "win_rate": round(wins / n * 100) if n else 0, "mdd_pct": round(mdd, 2),
             "realized": round(rl, 2), "invested": round(inv, 2), "goal": n >= HOT_GOAL_N and ret > HOT_GOAL_PCT}
 
 
@@ -781,8 +799,8 @@ def hot_text(market: str) -> str:
     s = hot_stats(market)
     if not s["n"]:
         return "🚀 30%초과 급등 전략(실전): 끝난 거래 없음"
-    return (f"🚀 30%초과 급등 전략(실전): {s['n']}건 · 누적 {s['ret_pct']:+.2f}% · 승률 {s['win_rate']}% · 최대 하락 {s['mdd_pct']:.2f}%p"
-            f" (확대 조건 {HOT_GOAL_N}건·+{HOT_GOAL_PCT:g}% {'도달 ✅' if s['goal'] else '미달'})")
+    return (f"🚀 30%초과 급등 전략(실전): 전체 {s['n']}건 · 누적 {s['ret_pct']:+.2f}% · 최대 하락 {s['mdd_pct']:.2f}%p"
+            f" (확대 조건 {HOT_GOAL_N}건·+{HOT_GOAL_PCT:g}% {'도달 ✅' if s['goal'] else '미달'}) · 📏 {s['since']['text']}")
 
 
 def hot_goal_check(market: str) -> str:
@@ -917,5 +935,12 @@ def last_review_text(mode: str, market: str | None = None) -> str:
         return ""
     r = revs[-1]
     t = r["today"]
-    head = f"최근 복기({r['day']}): 거래 {t.get('n', 0)}건" + (f" · 승률 {t['win_rate']}% · 평균 {t['avg']:+.2f}%" if t.get("n") else "")
+    from . import statwin as sw
+    head = f"최근 복기({r['day']}): 거래 {t.get('n', 0)}건" + (f" · {sw.win_text(t['n'], t['win_rate'])} · 평균 {t['avg']:+.2f}%" if t.get("n") else "")
+    try:   # 📏 기준 이후 누적 (이전 기록은 학습용 표본으로 따로)
+        with _lock:
+            ts = [x for x in _load()["trades"] if x["closed"] and x["mode"] == mode and (not market or _tm(x) == market)]
+        head += "\n📏 누적 성적 " + sw.view(ts)["text"]
+    except Exception:
+        pass
     return head + ("\n" + r["text"] if r.get("text") else "")

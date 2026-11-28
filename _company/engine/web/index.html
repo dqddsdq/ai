@@ -1512,7 +1512,7 @@ function arenaHtml(ar, mt = 20) {
       <span class="ar-name"><b>${esc(r.name)}</b>${st}</span>
       <span class="ar-trades">${bar}</span>
       <span class="ar-c" title="최근 거래일수록 크게 친 평균 수익">${has ? sg(r.wavg ?? r.avg) : sg(null)}</span>
-      <span class="ar-c">${has ? `${r.win}%` : sg(null)}</span>
+      <span class="ar-c" title="${esc((r.ss || {}).text || "")}">${r.ss ? (r.ss.ok ? `${r.ss.win}%` : `표본 부족(${r.ss.n}건)`) : has ? `${r.win}%` : sg(null)}</span>
       <span class="ar-c" title="산 것 평균 − 안 산 것 평균 (판단을 잘하는지)">${sg(sk, "%p")}</span>
       <span class="ar-c" title="무작위 대조군보다 얼마나 나은지">${r.ctrl ? "기준" : sg(has ? r.edge : null, "%p")}</span>
     </summary><div class="ar-main">
@@ -1529,10 +1529,11 @@ function arenaHtml(ar, mt = 20) {
       + (c.no_n ? ` · 놓친 기회 ${c.missed}건` : "") + (c.skill != null ? ` · <b class="ar-edge ${c.skill > 0 ? "up" : "down"}">판단력 ${c.skill > 0 ? "+" : ""}${(+c.skill).toFixed(2)}%p</b>` : "") + `</div>`;
   };
   const sv = ar.saved || {};
-  return (ch ? `<div class="ar-head">🏆 1등 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${pct(ch.avg)} · 승률 ${ch.win}%</div>` : "")
+  const chr = ch ? rows.find(r => r.name === ch.name) : null;   // 📏 1등도 기준 이후 성적으로
+  return (ch ? `<div class="ar-head">🏆 1등 <b>${esc(ch.name)}</b> ${ch.n}건 평균 ${pct(ch.avg)} · ${chr && chr.ss ? "📏 " + esc(chr.ss.text) : `승률 ${ch.win}%`}</div>` : "")
     + `<div class="ar-head muted">🧭 지금 상황: <b>${esc(ar.situation || "장 밖")}</b> · 🎲 대조군은 후보의 ${ar.ctrl_p ?? 35}% 를 무작위로 삼</div>`
     + `<div class="ar-head muted">🧮 채점 끝난 후보 ${ar.graded ?? 0}개 · 지켜보는 중 ${ar.probes ?? 0}개${sv.asks ? ` · 🚫 거름망으로 오늘 ${sv.asks}번 안 물어봄${sv.calls ? ` (AI 호출 ${sv.calls}번 아낌)` : ""}` : ""}</div>`
-    + `<div class="ar-cols"><span>#</span><span>AI</span><span title="실전 자격은 ${mt}건부터">거래 / 자격</span><span>최근 평균</span><span>승률</span><span>판단력</span><span>대조군 대비</span></div>`
+    + `<div class="ar-cols"><span>#</span><span>AI</span><span title="실전 자격은 ${mt}건부터">거래 / 자격</span><span>최근 평균</span><span title="집계 기준 이후 거래만 · 20건 미만이면 표본 부족">승률(기준 이후)</span><span>판단력</span><span>대조군 대비</span></div>`
     + rows.map(row).join("") + (ctrl ? row(ctrl) : "");
 }
 $("#notes-council").onclick = async () => {   // 📒 노트 정리 회의 지금
@@ -1672,7 +1673,7 @@ function tradeActionCard(a, container) {
 function renderLanes(L, lessons, halted, core) {
   const modeKo = { live: "🔴 실전", paper: "📝 가상", off: "⏸️ 쉼" };
   $("#lanes").innerHTML = Object.entries(L).map(([st, v]) => `<div class="chk" style="margin-bottom:4px"><b>${esc(v.name)}</b> ${modeKo[v.mode] || v.mode}${v.mode === "live" && !v.live ? ' <span class="muted">(전체 모드가 실전이 아니라 지금은 가상)</span>' : ""} · 예산 몫 ${v.share}%
-    · 최근 ${v.days}일 ${v.n || 0}건${v.n ? ` · 승률 ${v.win_rate}% · 평균 ${v.avg > 0 ? "+" : ""}${v.avg}% · 합 ${v.sum > 0 ? "+" : ""}${v.sum}%` : ""}${v.n_paper ? ` <span class="muted">(가상 ${v.n_paper}건)</span>` : ""}${halted[st] ? ` <span class="tb">⛔ 오늘 정지</span>` : ""}</div>`).join("")
+    · ${v.ss ? `📏 ${esc(v.ss.text)}` : `최근 ${v.days}일 ${v.n || 0}건${v.n ? ` · 승률 ${v.win_rate}% · 평균 ${v.avg > 0 ? "+" : ""}${v.avg}% · 합 ${v.sum > 0 ? "+" : ""}${v.sum}%` : ""}`}${v.n_paper ? ` <span class="muted">(최근 ${v.days}일 가상 ${v.n_paper}건)</span>` : ""}${halted[st] ? ` <span class="tb">⛔ 오늘 정지</span>` : ""}</div>`).join("")
     || `<div class="muted">아직 기록 없음</div>`;
   if ((core?.items || []).length) {   // 📒 노트 정리 회의가 합의한 핵심 노트 + 그 뒤 새 교훈
     const newer = lessons.filter(x => (x.t || "") > (core.t || ""));
@@ -1687,7 +1688,8 @@ function renderLanes(L, lessons, halted, core) {
 function renderLab(L) {
   const sh = L.shadow || {}, b = L.backtest || {};
   const vs = sh.variants || [];
-  const allS = v => v.n_all !== undefined ? `전체 ${v.n_all}건 · 승률 ${v.win_all}% · 평균 ${pctS(v.avg_all)} · 최대 손실 ${pctS(v.worst)}` : `${v.n}건 · 승률 ${v.win_rate}%`;
+  const allS = v => v.ss ? `📏 ${esc(v.ss.text)} · 최대 손실(전체) ${pctS(v.worst)}`   // 기준 이후만 승률 (이전은 학습용 표본)
+    : v.n_all !== undefined ? `전체 ${v.n_all}건 · 승률 ${v.win_all}% · 평균 ${pctS(v.avg_all)} · 최대 손실 ${pctS(v.worst)}` : `${v.n}건 · 승률 ${v.win_rate}%`;
   const ac = sh.acct, won = x => (x > 0 ? "+" : "") + Number(x || 0).toLocaleString() + "원";
   // 💰 100만 원 가상 계좌 누적 수익률 (실전 규칙 '현재' 조합 기준)
   const acHtml = ac ? `<div style="margin-bottom:6px;padding:8px 10px;border:1px solid var(--line);border-radius:10px"><b>💰 그림자 가상 계좌 (기준 ${Number(ac.base).toLocaleString()}원)</b> <span class="muted">시작 ${esc(String(ac.start).slice(0, 10))} · 실전 규칙('현재') 기준 · 수수료 뺀 값</span><br>`
@@ -1703,7 +1705,8 @@ function renderLab(L) {
     : `<span class="muted">그림자 매매 조합이 아직 없어요 — 자동매매가 켜져 있으면 장중에 자동으로 시작해요</span>`;
   const top = b.top || [];
   $("#lab-bt-out").innerHTML = b.day ? `<div><b>📼 백테스트</b> <span class="muted">${esc(b.day)} · ${esc(b.note || "")}</span></div>`
-    + (b.baseline && b.baseline.n ? `<div class="muted">지금 규칙: 평균 ${b.baseline.avg > 0 ? "+" : ""}${b.baseline.avg}% · 승률 ${b.baseline.win}% (${b.baseline.n}건)</div>` : "")
+    + (b.baseline_since && b.baseline_since.text ? `<div class="muted">지금 규칙: 📏 ${esc(b.baseline_since.text)}</div>`
+       : b.baseline && b.baseline.n ? `<div class="muted">지금 규칙: 평균 ${b.baseline.avg > 0 ? "+" : ""}${b.baseline.avg}% · 승률 ${b.baseline.win}% (${b.baseline.n}건)</div>` : "")
     + top.map((r, i) => `<div>${i + 1}. 평균 ${r.avg > 0 ? "+" : ""}${r.avg}% · 승률 ${r.win}% · ${r.n}건 <span class="muted">— 손절 ${r.params.stop_loss_pct}% · 나눠팔기 ${r.params.partial_tp_pct}% · 고점대비 ${r.params.trail_pct}% · 급등최소 ${r.params.surge_min_change_pct}% · 거래량 ${r.params.surge_volume_ratio}배</span></div>`).join("")
     + (b.swing_top || []).map(r => `<div>📈 스윙: 평균 ${r.avg > 0 ? "+" : ""}${r.avg}% · 승률 ${r.win}% · ${r.n}건 <span class="muted">— 손절 ${r.params.swing_stop_pct}% · 고점대비 ${r.params.swing_trail_pct}%</span></div>`).join("")
     + replayHtml(b.replay)
@@ -1726,10 +1729,11 @@ function replayHtml(rp) {
 $("#lab-bt").onclick = async () => { const r = await api("/api/autotrade/backtest", { market: tradeMk() }); alert(r.message || "시작했어요"); };
 $("#lab-reset").onclick = async () => { if (confirm("그림자 매매 조합을 새로 만들까요? (지금까지 가상 성적은 지워져요)")) { const r = await api("/api/autotrade/lab-reset", { market: tradeMk() }); alert(r.message); renderTrade(false); } };
 function pctS(x) { return x == null ? "-" : (x > 0 ? "+" : "") + Number(x).toFixed(1) + "%"; }
-function statLine(s) { return s && s.n ? `${s.n}건 · 승률 ${s.win_rate}% · 평균 ${pctS(s.avg)} (수익 평균 ${pctS(s.avg_win)} / 손실 평균 ${pctS(s.avg_loss)}) · 산 뒤 최대 상승 중간값 ${pctS(s.mfe_med)}` : "아직 없음"; }
+function statLine(s) { return s && s.n ? `${s.n}건 · ${s.n >= 20 ? `승률 ${s.win_rate}%` : `표본 부족(${s.n}건)`} · 평균 ${pctS(s.avg)} (수익 평균 ${pctS(s.avg_win)} / 손실 평균 ${pctS(s.avg_loss)}) · 산 뒤 최대 상승 중간값 ${pctS(s.mfe_med)}` : "아직 없음"; }
 function renderLearn(L) {
   const td = L.today || {}, g = td.guard || {};
-  let h = `<div><b>오늘(장중)</b> ${statLine(td)}</div>`;
+  let h = `<div><b>오늘(장중)</b> ${statLine(td)}</div>`
+    + (L.since && L.since.text ? `<div><b>📏 누적</b> ${esc(L.since.text)}</div>` : "");
   if ((td.open || []).length) h += `<div class="muted">보유 중: ${td.open.map(o => `${esc(o.sym)} 최대 ${pctS(o.mfe)} / 최저 ${pctS(o.mae)}`).join(" · ")}</div>`;
   if (g.pause_until) h += `<div>⏸️ ${esc(g.pause_why || "")} (~${esc(String(g.pause_until).slice(11, 16))})</div>`;
   if (g.no_premarket) h += `<div>⏸️ ${esc(g.no_premarket)}</div>`;
@@ -1739,7 +1743,8 @@ function renderLearn(L) {
     if (!rb.ready) h += `<div class="muted">🔄 반등 확인 진입 비교: ${rb.rebound.n}/${rb.goal_n}건 쌓는 중 (기존 진입 ${rb.plain.n}건)</div>`;
     else {
       const df = rb.diff || {};
-      h += `<div><b>🔄 2호 진입 비교</b><br>${rl("반등 확인", rb.rebound)}<br>${rl("기존", rb.plain)}` +
+      const sv = rb.since || {};   // 📏 기준 이후만
+      h += `<div><b>🔄 2호 진입 비교</b><br>${sv.rebound ? "반등 확인 " + esc(sv.rebound.text) : rl("반등 확인", rb.rebound)}<br>${sv.plain ? "기존 " + esc(sv.plain.text) : rl("기존", rb.plain)}` +
         (df.avg !== undefined ? `<br><span class="muted">차이: 승률 ${df.win_rate >= 0 ? "+" : ""}${df.win_rate}%p · 평균 ${pctS(df.avg)}p · MFE ${pctS(df.mfe_avg)}p</span>` : `<br><span class="muted">기존 진입 거래가 없어 비교 대상 없음</span>`) + `</div>`;
     }
   }
@@ -1758,7 +1763,8 @@ function renderLearn(L) {
   if (rv) {
     const tbl = (title, o) => Object.keys(o || {}).length ? `<div><b>${title}</b><br>${Object.entries(o).map(([k, v]) => `${esc(k)}: ${statLine(v)}`).join("<br>")}</div>` : "";
     $("#learn-review").innerHTML = `<div class="muted">${esc(rv.day)} 복기 (${esc(rv.created || "")})</div>` + (rv.text ? `<div class="md" style="font-size:13.5px">${md(rv.text)}</div>` : "") +
-      `<div><b>그날</b> ${statLine(rv.today)}</div><div><b>최근 30건</b> ${statLine(rv.recent)}</div>` +
+      `<div><b>그날</b> ${statLine(rv.today)}</div><div><b>최근 30건${rv.recent_since ? " (기준 이후)" : ""}</b> ${statLine(rv.recent_since || rv.recent)}</div>` +
+      (rv.learn && rv.learn.n ? `<div class="muted">📚 학습용 표본(기준 전) ${rv.learn.n}건 · 승률 ${rv.learn.win_rate}% · 평균 ${pctS(rv.learn.avg)} — 승률엔 안 섞음</div>` : "") +
       tbl("매도 이유별 (그날)", rv.by_exit) + tbl("살 때 상승률별 (최근)", rv.by_change) + tbl("살 때 거래량 배수별 (최근)", rv.by_ratio) + tbl("프리장/정규장 (최근)", rv.by_session) + tbl("추정 승률 구간별 실제 성적 (추정이 맞는지)", rv.by_prob) +
       (rv.missed && rv.missed.n ? `<div><b>골랐지만 못 산 종목</b> ${rv.missed.n}개 · 그 뒤 최대 상승 평균 ${pctS(rv.missed.avg_max_up)}</div>` : "");
   } else $("#learn-review").innerHTML = "<span class='muted'>아직 복기가 없어요 — 장이 끝나면 자동으로 해요</span>";

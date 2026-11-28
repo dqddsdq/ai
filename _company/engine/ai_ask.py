@@ -173,7 +173,7 @@ def _lane_block(style: str, m: str) -> str:
         ords = [o for o in s.get("orders", []) if (o.get("features") or {}).get("style") == style
                 or (o.get("side") != "BUY" and o.get("symbol") in syms)][-10:]
         lines = [f"[{_mk_name(m)}] 모드 {lv.get('mode', '?')}({'실전' if lv.get('live') else '가상'}) · 예산 몫 {lv.get('share', '?')}% · "
-                 f"최근 {lv.get('days', 14)}일 {lv.get('n', 0)}건" + (f" 승률 {lv.get('win_rate')}% 평균 {lv.get('avg', 0):+.2f}%" if lv.get("n") else ""),
+                 "📏 " + ((lv.get("ss") or {}).get("text") or f"최근 {lv.get('days', 14)}일 {lv.get('n', 0)}건"),
                  "지시문(성향+공유 노트): " + at.lane_persona(style, m)]
         lines.append("최근 주문 (이유 포함):" if ords else "최근 주문: 없음")
         lines += [f"- {o['t']} {o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {o['qty']}주 @ {o['price']:g} · "

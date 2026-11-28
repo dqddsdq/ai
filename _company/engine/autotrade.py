@@ -790,9 +790,13 @@ def _lane_day_sums(market: str, style: str, n: int) -> list[float]:
 def lanes_overview(market: str) -> dict:
     c = config()
     out = {}
+    from . import statwin as sw   # 📏 화면용: 기준 이후 성적 (자동 조정 판단은 lane_stats 그대로)
+    with tl._lock:
+        ts_ = [t for t in tl._load()["trades"] if t["closed"] and tl._tm(t) == market]
     for st, name in LANES.items():
         out[st] = {"name": name, "mode": lane_mode(c, st), "live": lane_live(c, st), "book": lane_book(c, st),
-                   "share": round(lane_share(c, st) * 100), **lane_stats(market, st, int(c.get("lane_live_days", 14)))}
+                   "share": round(lane_share(c, st) * 100), **lane_stats(market, st, int(c.get("lane_live_days", 14))),
+                   "ss": sw.view([t for t in ts_ if tl._ts(t) == st])}
     return out
 
 
@@ -2447,7 +2451,9 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
         with _lock:
             s = state(); s["reviewed_day"] = day; _save(s)
         t = r["today"]
-        event("복기", f"{day} 거래 {t.get('n', 0)}건" + (f" · 승률 {t['win_rate']}% · 평균 {t['avg']:+.2f}%" if t.get("n") else "")
+        from . import statwin as sw   # 📏 20건 미만이면 표본 부족 · 누적은 기준 이후만
+        event("복기", f"{day} 거래 {t.get('n', 0)}건" + (f" · {sw.win_text(t['n'], t['win_rate'])} · 평균 {t['avg']:+.2f}%" if t.get("n") else "")
+              + (f" · 누적 {r['since']['text']}" if (r.get("since") or {}).get("text") else "")
               + (f" · 조정 제안 {len(r['proposals'])}개" if r.get("proposals") else ""))
         if config()["auto_tune"]:
             auto_adjust(r, mode_key)
@@ -2545,32 +2551,48 @@ def _review_job(day: str, c: dict, mode_key: str) -> None:
 
 def verify_text(market: str) -> str:
     """그림자 매매·백테스트·반등 확인 진입 비교의 누적 건수·승률·평균 손익 (읽기만)"""
-    f = lambda x, n="n_all", w="win_all", a="avg_all": f"{x.get(n, 0)}건 · 승률 {x.get(w, 0)}% · 평균 {float(x.get(a, 0)):+.2f}%"  # noqa: E731
-    lines = [f"🧾 검증 누적 요약 ({'미장' if market == 'US' else '국장'} · 수수료 뺀 값)"]
+    from . import statwin as sw   # 📏 승률·평균은 기준 이후 거래만 (이전은 학습용 표본으로 따로)
+    f = lambda x, n="n_all", w="win_all", a="avg_all": (x["ss"]["text"] if isinstance(x.get("ss"), dict) else  # noqa: E731
+                                                       f"{x.get(n, 0)}건 · {sw.win_text(int(x.get(n, 0)), x.get(w, 0))} · 평균 {float(x.get(a, 0)):+.2f}%")
+    lines = [f"🧾 검증 누적 요약 ({'미장' if market == 'US' else '국장'} · 수수료 뺀 값 · 📏 집계 기준 {sw.since()} 이후)"]
     try:
         sh = shadow.totals(market)
         a = sh["acct"]
-        lines.append(f"🧪 그림자 '현재' 규칙: {f(sh['base'])} · 최대 손실 {sh['base'].get('worst', 0):+.2f}%")
+        lines.append(f"🧪 그림자 '현재' 규칙: {f(sh['base'])} · 최대 손실(전체) {sh['base'].get('worst', 0):+.2f}%")
         lines.append(f"🧪 그림자 조합 전체({sh['variants']}개): {f(sh['all'])}")
         lines.append(f"📉 급락반등 진입(가상): {f(sh['flash_rebound'])}")
-        lines.append(f"💰 100만 원 가상 계좌({a['start'][:10]}~): {a['n']}건 · 확정 {a['realized_pct']:+.2f}% · 평가 포함 {a['total_pct']:+.2f}%")
+        bn = ((sh["base"].get("ss") or {}).get("n", 0))
+        lines.append(f"💰 100만 원 가상 계좌({a['start'][:10]}~): 전체 {a['n']}건(기준 이후 {bn}건) · 확정 {a['realized_pct']:+.2f}% · 평가 포함 {a['total_pct']:+.2f}%")
     except Exception as e:
         lines.append(f"🧪 그림자: 집계 실패 ({type(e).__name__})")
     b = bt.load(market)
     if b.get("baseline"):
-        lines.append(f"📼 최근 백테스트({b.get('day', '')}) 현재 규칙: {f(b['baseline'], 'n', 'win', 'avg')}")
+        lines.append(f"📼 최근 백테스트({b.get('day', '')}) 현재 규칙: "
+                     + ((b.get("baseline_since") or {}).get("text") or f(b['baseline'], 'n', 'win', 'avg')))
     else:
         lines.append("📼 백테스트: " + (b.get("note") or "기록 없음"))
     rp = (b.get("replay") or {}).get("all") or {}
     if rp:
-        lines.append(f"🔄 과거 복기 반등 확인 {f(rp.get('rebound') or {}, 'n', 'win', 'avg')} / 기존 {f(rp.get('plain') or {}, 'n', 'win', 'avg')}"
-                     f" · {(b.get('replay') or {}).get('verdict', '')}")
+        rps = (b.get("replay") or {}).get("since") or {}
+        if (rps.get("rebound") or {}).get("text"):
+            lines.append(f"🔄 과거 복기 반등 확인 {rps['rebound']['text']} / 기존 {(rps.get('plain') or {}).get('text', '-')}"
+                         f" · (전체 기간 판정) {(b.get('replay') or {}).get('verdict', '')}")
+        else:
+            lines.append(f"🔄 과거 복기 반등 확인 {f(rp.get('rebound') or {}, 'n', 'win', 'avg')} / 기존 {f(rp.get('plain') or {}, 'n', 'win', 'avg')}"
+                         f" · {(b.get('replay') or {}).get('verdict', '')}")
     try:
         rs = tl.rebound_stats(market)
         r, p = rs["rebound"], rs["plain"]
-        lines.append(f"🔄 실제 2호 진입 비교: 반등 확인 {f(r, 'n', 'win_rate', 'avg')} ({r['n']}/{rs['goal_n']}건) / 기존 {f(p, 'n', 'win_rate', 'avg')}")
+        ss = rs.get("since") or {}
+        lines.append(f"🔄 실제 2호 진입 비교: 반등 확인 {ss['rebound']['text']} (전체 {r['n']}/{rs['goal_n']}건) / 기존 {ss['plain']['text']}")
     except Exception as e:
         lines.append(f"🔄 반등 비교: 집계 실패 ({type(e).__name__})")
+    try:   # 🤝 1호·2호 (기준 이후)
+        with tl._lock:
+            ts_ = [t for t in tl._load()["trades"] if t["closed"] and tl._tm(t) == market]
+        lines.append("🤝 " + " / ".join(f"{LANES[k]} {sw.view([t for t in ts_ if tl._ts(t) == k])['text']}" for k in LANES))
+    except Exception:
+        pass
     lines.append("※ 기록·보고만 해요 — 실전 전환은 사장님이 화면에서 직접 정해 주세요")
     return "\n".join(lines)
 
@@ -2969,8 +2991,8 @@ def _engine_one() -> str:
         lines.append(f"최근 종목 찾기 결과({pk.get('time', '')}): {pk.get('note', '')}")
         lines += [f"- {x['name']}({x['symbol']}) 점수 {x['score']} · {x['reason']}" for x in pk.get("picks", [])]
     lv = lanes_overview(c["market"])
-    lines.append("🤝 두 AI: " + " / ".join(f"{v['name']} 모드 {v['mode']} 몫 {v['share']}% · 최근 {v['days']}일 {v.get('n', 0)}건"
-                                        + (f" 승률 {v['win_rate']}% 평균 {v['avg']:+.2f}%" if v.get("n") else "") for v in lv.values()))
+    lines.append("🤝 두 AI: " + " / ".join(f"{v['name']} 모드 {v['mode']} 몫 {v['share']}% · 📏 {(v.get('ss') or {}).get('text', '')}"
+                                        for v in lv.values()))
     try:
         lines.append("📊 " + _scorecard_safe(c, s)["text"].replace("\n", " / "))
         gt = extras.gate_text(c["market"], s["day"])
@@ -3006,7 +3028,9 @@ def _engine_one() -> str:
     td, g = L["today"], L["today"].get("guard", {})
     line = f"오늘 학습: 끝난 거래 {td.get('n', 0)}건"
     if td.get("n"):
-        line += f" · 승률 {td['win_rate']}% · 평균 {td['avg']:+.2f}%"
+        line += f" · {'승률 ' + str(td['win_rate']) + '%' if td['n'] >= 20 else '표본 부족(' + str(td['n']) + '건)'} · 평균 {td['avg']:+.2f}%"
+    if (L.get("since") or {}).get("text"):   # 📏 기준 이후 누적
+        line += f" · 누적 {L['since']['text']}"
     if td.get("open"):
         line += " · 보유 중 " + ", ".join(f"{o['sym']} 최대{o['mfe']:+.1f}%/최저{o['mae']:+.1f}%" for o in td["open"])
     if g.get("pause_until") or g.get("no_premarket"):

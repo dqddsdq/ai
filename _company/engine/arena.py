@@ -34,6 +34,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from . import news, store
+from . import statwin as sw   # 📏 성적 표시 기준 시각
 from .agents import COMPANY_DIR
 
 KST = timezone(timedelta(hours=9))
@@ -762,7 +763,8 @@ def board(market: str, c: dict | None = None) -> list[dict]:
                 "weight": round(float(weights.get(a["id"], 0)) * 100) if a["id"] in live else 0,
                 "persona": a["persona"], "tp": a["tp"], "sl": a["sl"], "hold": a["hold"], "held": len(a["pos"]),
                 "edge": None if is_ctrl or sc["n"] < 5 else round(sc["wavg"] - ca, 2),
-                "sits": sit_stats(a, hl), **sc}
+                "sits": sit_stats(a, hl), **sc,
+                "ss": sw.view(a["trades"], ret=lambda t: float(t.get("ret") or 0))}   # 📏 표시용 기준 이후 (실전 자격은 그대로)
     rows = sorted((row(a) for a in d["alive"]), key=lambda r: (-(r["n"] >= 5), -r["wavg"]))
     return rows + [row(d["ctrl"], True)]
 
@@ -826,10 +828,11 @@ def evolve(c: dict, market: str, ai_fn=None, add_lesson=None, lessons: str = "")
     if add_lesson and best:
         add_lesson(market, f"[AI 리그 1등] '{best['persona'][:80]}' 전략이 {score(best)['n']}건 평균 {score(best)['avg']:+.2f}% (무작위 대조군 {ca:+.2f}%)", "AI 리그")
     rows = board(market, c)   # 📣 성적 발표: 전원 순위
-    rank = [f"{i + 1}. {'💰' if r['live'] else '📘'} {r['name']} — {r['n']}건 최근 평균 {r['wavg']:+.2f}% 승률 {r['win']}%"
+    rank = [f"{i + 1}. {'💰' if r['live'] else '📘'} {r['name']} — {r['n']}건 최근 평균 {r['wavg']:+.2f}% · 📏 {r['ss']['text']}"
             + (f" · 대조군 대비 {r['edge']:+.2f}%p" if r["edge"] is not None else "")
             + ("" if r["n"] >= min_n else f" (판정까지 {min_n - r['n']}건)") for i, r in enumerate(x for x in rows if not x["ctrl"])]
-    ctrl_line = f"🎲 무작위 대조군 — {ctrl_sc['n']}건 최근 평균 {ctrl_sc['wavg']:+.2f}% 승률 {ctrl_sc['win']}% (이보다 나아야 실력)"
+    ctrl_line = (f"🎲 무작위 대조군 — {ctrl_sc['n']}건 최근 평균 {ctrl_sc['wavg']:+.2f}% · 📏 "
+                 f"{sw.view(d['ctrl']['trades'], ret=lambda t: float(t.get('ret') or 0))['text']} (이보다 나아야 실력)")
     return "🏟️ AI 리그 주간 성적 발표 (💰 실전 · 📘 가상 공부)\n" + "\n".join(rank) + "\n" + ctrl_line + "\n" + "\n".join(msg)
 
 

@@ -242,7 +242,10 @@ def summary(market: str) -> list[dict]:
         avg_all = st.fmean(allr)
         avg_buy = st.fmean(buys) if buys else 0.0
         skips = [x["ret"] for x in rs if not x["buy"]]
-        out.append({"name": a["name"], "persona": a["persona"], "n": len(rs), "n_buy": len(buys), "avg_buy": round(avg_buy, 2),
+        from . import statwin as sw   # 📏 표시용: 그 장 날짜가 기준 이후인 '산다' 판단만 (이전 날짜는 학습용 표본)
+        ss = sw.view([{"day": str(x.get("k", "")).split(":")[0], "ret": x["ret"]} for x in rs if x["buy"]],
+                     ret=lambda t: float(t["ret"]))
+        out.append({"ss": ss, "name": a["name"], "persona": a["persona"], "n": len(rs), "n_buy": len(buys), "avg_buy": round(avg_buy, 2),
                     "avg_all": round(avg_all, 2), "edge": round(avg_buy - avg_all, 2) if buys else 0.0,
                     "skip_ok": round(sum(x <= 0 for x in skips) / len(skips) * 100) if skips else 0})
     return sorted(out, key=lambda r: (-(r["n_buy"] >= 5), -r["edge"]))
@@ -253,7 +256,7 @@ def text(market: str) -> str:
     if not rows:
         return ""
     return "📼 과거 장 복습(공부용·실전 자격엔 안 씀): " + " · ".join(
-        f"{r['name']} 선별력 {r['edge']:+.2f}%p({r['n_buy']}/{r['n']})" for r in rows[:5])
+        f"{r['name']} 선별력 {r['edge']:+.2f}%p({r['n_buy']}/{r['n']}) · 산 것 {r['ss']['text']}" for r in rows[:5])
 
 
 def start(c: dict, market: str, log=print, limit: int | None = None) -> None:
